@@ -530,3 +530,38 @@ Next steps / known risks:
 1. Conformal deposition is represented as interface-strip extrusion and can overlap at corners (no boolean merge yet).
 2. Interface extraction uses polygon exposure sampling and is robust for this prototype, but should be replaced by explicit topology adjacency for production.
 3. Ray-cast utility currently returns first-hit only; full ion-beam simulation needs multi-hit traversal + per-material removal update loop.
+
+## Update 2026-03-05 (Prototype Revision: Process/Material Separation + Iterative Growth Overlays)
+- Updated `cross_section_general_prototype.py` based on feedback:
+  - Removed process-specific etch rates from `MaterialDef`.
+  - Material DB now holds only material descriptors/properties:
+    - `material_id`, `name`, category/composition/crystallinity/morphology, optical constants, display colors.
+  - Added process-side interaction model `ProcessInteractionModel`:
+    - explicit mapping `etch_rate_by_material_nm_min`,
+    - optional fallback derived from material category.
+  - `CrossSectionState` now includes `process_models` and `active_process_id`.
+- Reworked conformal deposition model to avoid overlapping rectangle strips:
+  - implemented iterative shell-growth from base interface path with bounded passes,
+  - each pass builds the next shell and accumulates into one metal geometry,
+  - uses rounded joins to yield natural corner rounding behavior.
+- Added UI visualization controls (as requested):
+  - toggle button `Exposed Interfaces` (highlights exposed segments + normals),
+  - toggle button `Ray Casting` (top-down rays with hit/open visualization).
+- Added analysis/status output in card UI:
+  - exposed segment count,
+  - open-ray ratio,
+  - active process/material etch-rate summary from process model.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- smoke script (offscreen) verified:
+  - no process rates in material model,
+  - process-material rate lookup active,
+  - conformal metal regions generated with non-rectangular contour detail,
+  - exposed-interface extraction and ray-cast scanning,
+  - window + overlay controls create/show/update/close successfully.
+
+Next steps / known risks:
+1. Iterative shell-growth uses path-level geometric approximation (bounded passes) rather than full per-nm physical simulation.
+2. Ray-casting currently reports first-hit only; full ion-beam removal requires iterative material-removal updates with per-material etch rate integration.
+3. Exposure/dose scalar fields remain placeholders and are not yet coupled into geometry evolution.
