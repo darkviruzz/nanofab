@@ -497,3 +497,36 @@ Last updated: 2026-03-05
   - Git branching/commit practices,
   - safety rules for deletion and major changes.
 - Added strict rule: ask user before any future edit to `AGENTS.md`.
+
+## Update 2026-03-05 (General Cross-Section Prototype: Region/Interface Model)
+- Created new branch `feature/general-cross-section-prototype`.
+- Added standalone prototype file `cross_section_general_prototype.py` (no changes to existing app entrypoints):
+  - Introduces a minimal general cross-section state model:
+    - `CrossSectionState` (schema version, extent, materials, regions, scalar fields, operation log)
+    - `Region2D` polygon regions with material IDs/tags
+    - `InterfaceSegment` extraction from exposed boundaries
+    - `ScalarField2D` placeholder for future gradients
+  - Geometry scene built as requested:
+    - substrate with slight overetch profile,
+    - two-period patterned T-grating,
+    - conformal thin metal generated from orthonormal interface offset.
+  - Added conformal-thickness experiment control:
+    - slider changes thickness (nm),
+    - metal is rebuilt from exposed interfaces by normal-offset extrusion.
+  - Added vertical ray-cast utility (`vertical_ray_first_hit`) to demonstrate structural compatibility with top-down beam checks.
+  - UI is a single card-style window focused only on cross-section display.
+
+Why it changed:
+- Provide a minimal, testable implementation of a more general geometry representation (region/interface based) replacing column-placeholder ideas for experimentation before larger integration.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- Offscreen smoke test:
+  - state build with conformal metal,
+  - ray-cast hit query,
+  - `CrossSectionCardWindow` create/show/close.
+
+Next steps / known risks:
+1. Conformal deposition is represented as interface-strip extrusion and can overlap at corners (no boolean merge yet).
+2. Interface extraction uses polygon exposure sampling and is robust for this prototype, but should be replaced by explicit topology adjacency for production.
+3. Ray-cast utility currently returns first-hit only; full ion-beam simulation needs multi-hit traversal + per-material removal update loop.
