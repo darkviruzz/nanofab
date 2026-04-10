@@ -1899,12 +1899,12 @@ class TopBar(QFrame):
         root.setContentsMargins(14, 8, 14, 8)
         root.setSpacing(10)
 
-        logo = QLabel("N")
+        logo = QLabel("nF")
         logo.setObjectName("LogoBadge")
         logo.setAlignment(Qt.AlignCenter)
         logo.setFixedSize(28, 28)
 
-        brand = QLabel("NanoFab <span style='font-weight:300;'>Manager</span>")
+        brand = QLabel("nanoFab <span style='font-weight:300;'>Virtual Lab</span>")
         brand.setObjectName("BrandText")
         brand.setTextFormat(Qt.RichText)
 
