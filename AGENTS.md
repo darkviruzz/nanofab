@@ -46,12 +46,13 @@ This file defines how the **Coding Assistant** should operate in this repository
 - Avoid unnecessary GUI process loops; prefer compile/import/smoke checks unless UI behavior must be tested directly.
 
 ## 5) memory.md Policy (Keep Updated)
-After meaningful work, append an entry with:
+After meaningful work, append an entry with these mandatory fields:
 1. Date and short title.
 2. What changed.
 3. Why it changed.
-4. Validation run.
-5. Next steps or known risks.
+
+optional:
+How did you validate, next steps, known risks, reverted changes and why, what was tried and did not work, etc.
 
 Keep entries append-only and concrete.
 
