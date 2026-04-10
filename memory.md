@@ -565,3 +565,452 @@ Next steps / known risks:
 1. Iterative shell-growth uses path-level geometric approximation (bounded passes) rather than full per-nm physical simulation.
 2. Ray-casting currently reports first-hit only; full ion-beam removal requires iterative material-removal updates with per-material etch rate integration.
 3. Exposure/dose scalar fields remain placeholders and are not yet coupled into geometry evolution.
+
+## Update 2026-03-05 (Prototype Refresh: Curve-Segment Topology Testbed)
+- Replaced `cross_section_general_prototype.py` with a new prototype centered on explicit interface-loop topology:
+  - Segment primitives now include `LineSegment` and `ArcSegment` with analytic start/end/normal-tangent sampling.
+  - Geometry is represented by closed `InterfaceLoop` boundaries in `Region2D`, then converted to render/boolean paths through configurable arc sampling (`arc_chord_nm`).
+  - Added loop diagnostics (`LoopDiagnostic`) for closure and tangential continuity checks at segment joints.
+- Added a lightweight geometry/topology operation engine API in the prototype file:
+  - `deposit_blanket(...)`
+  - `deposit_conformal(...)` (iterative, capped-pass shell growth with rounded joins)
+  - `etch_isotropic(...)`
+  - `etch_anisotropic(...)` (ray-driven directional preview)
+  - `etch_selective(...)`
+  - `lift_off(...)`
+- Rebuilt the test scene from the new structure:
+  - substrate loop with rounded overetch trench,
+  - two-period T-shaped grating loops,
+  - conformal metal deposition as a process-layer preview.
+- Reworked UI into a single card-style prototype stress harness:
+  - mode selector (`Conformal`, `Isotropic`, `Directional`, `Combined`, `Diagnostics`),
+  - extended slider set for geometry/process/ray/sampling stress tests,
+  - overlay toggles for `Interfaces`, `Normals`, `Rays`, and `Shadow`,
+  - info panel reporting loop counts/warnings, exposed-edge counts, ray hit/open stats, and active process etch-rate table.
+- Added responsiveness guardrails:
+  - slider tracking disabled (apply on release),
+  - iterative conformal growth pass cap + boundary edge decimation to avoid runaway boolean complexity.
+
+Why it changed:
+- The previous polygon-only prototype was not enough to stress curved-interface topology and tangent continuity behavior. This refresh makes curved + linear interfaces first-class and keeps process interactions visible while still avoiding heavy physics.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- offscreen smoke:
+  - `QT_QPA_PLATFORM=offscreen` window init/create/close for `CrossSectionCardWindow`
+  - directional scene build check (`rays 36 / hits 33`) to verify ray + hit-normal pipeline.
+
+Next steps / known risks:
+1. Boolean geometry still relies on `QPainterPath` approximation; topology ownership at triple-junctions is heuristic (`contains` probe based).
+2. Directional etch currently uses first-hit ray cuts with fixed slit width; it is suitable for structure testing, not for physical rate accuracy yet.
+3. If this data model is accepted, split primitives/engine into a dedicated `nanofab_modular` geometry package and add deterministic geometry replay tests per operation.
+
+## Update 2026-03-05 (Prototype Fix Pass: Uniform Conformal Growth + Mode-Aware Controls)
+- Addressed clumpy conformal growth for small arc chords:
+  - replaced edge-fragment stroking with continuous closed-boundary offset shell generation in `deposit_conformal(...)`,
+  - uses one uniform dilation shell (`2 * thickness`) to avoid droplet artifacts and unequal growth spacing,
+  - remains smooth for curved and linear interfaces and is now fast for fine boundary sampling.
+- Added directional ray-mask smoothing control:
+  - `etch_anisotropic(...)` now accepts `ray_overlap_ratio`,
+  - switched to round-cap/round-join slit generation and simplified merged etch mask.
+- Updated UI controls to reduce ambiguity:
+  - added `Ray Overlap (%)` slider,
+  - renamed `Growth Step` to `Etch Step`,
+  - controls are now mode-aware (only parameters used by the current mode are shown),
+  - ray overlay toggles are auto-hidden outside ray-relevant modes.
+
+Why it changed:
+- User feedback showed non-uniform/clumpy layer growth and confusing parameter visibility. This pass makes growth mathematically uniform and improves test UX by showing only active controls.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- offscreen checks:
+  - conformal growth at fine sampling (`arc_chord=2`, `thickness=20`, `step=1`) completed quickly (`~0.018 s`) and produced non-empty merged shells,
+  - thin-shell case (`thickness=1`, `step=8`) produced non-empty conformal region,
+  - directional mode scene + window init smoke passed (`prototype smoke ok`).
+
+Next steps / known risks:
+1. Conformal growth now ignores pass-step in geometry generation (uniform final shell); this is intentional for robustness but no longer represents explicit per-pass evolution.
+2. Ray-based etch remains a geometric preview (first-hit + overlap mask), not a physical transport model.
+
+## Update 2026-03-05 (Directional Etch Rework: Surface-Marked Normal Removal)
+- Reworked directional etch in `cross_section_general_prototype.py` to remove the per-ray ripple artifact pattern:
+  - old approach: each hit ray generated an individual slit/circle-like subtraction stroke,
+  - new approach:
+    1. cast rays and collect first-hit points on target material,
+    2. map each hit to the nearest exposed surface edge,
+    3. mark a local interval around the hit on that edge (footprint set by ray spacing and overlap),
+    4. merge overlapping intervals per edge,
+    5. etch by offset-stroking the merged marked-surface path (normal-removal style, matching deposition-style interface offset behavior).
+- Added geometry helpers for robust interval marking:
+  - point-to-segment projection
+  - interval merge
+  - segment interpolation (`lerp`)
+- Kept `Ray Overlap (%)` as the smoothness/coverage control for directional mode:
+  - higher overlap increases marked interval width and reduces unetched gaps.
+
+Why it changed:
+- User feedback: directional mode should not etch isolated circles per ray; rays should mark impacted surface regions and removal should follow the interface normal continuously.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- offscreen directional checks:
+  - engine-level anisotropic etch with `ray_count=64` produced non-empty merged mask and valid hit counts,
+  - prototype mode build + window init smoke passed (`directional smoke ok`).
+
+Next steps / known risks:
+1. Hit-to-nearest-edge mapping is geometric (distance-based), so very tight corner cases may still need explicit topology adjacency for perfect material-boundary ownership.
+2. Directional etch remains a geometric response model; no physics transport/depth-rate coupling yet.
+
+## Update 2026-03-05 (Directional Etch Iteration: Adjacent-Ray Band Marking + Recast Loop)
+- Replaced the previous directional marking strategy with an iterative adjacent-ray band approach:
+  - per pass:
+    1. cast rays on current geometry,
+    2. find adjacent ray pairs that both hit the target material and are not blocked in between (pair adjacency),
+    3. mark the full surface segment between those two hits (instead of tiny point circles),
+    4. remove material via normal-offset stroke of the marked segment (etch opposite of deposition offset),
+    5. recast rays on updated surface and repeat until target depth is reached.
+- Added guardrails for efficiency:
+  - explicit step control via `step_nm` in `etch_anisotropic(...)`,
+  - adaptive pass cap (`max_passes=24`) to avoid runaway loops when very small step values are chosen.
+- Updated mode wiring:
+  - directional mode now uses `Etch Step` slider (`growth_step_nm`) in addition to depth/ray controls.
+
+Why it changed:
+- User requested marking of the whole region between adjacent open rays and iterative surface-following etch, not isolated per-ray imprint artifacts.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- offscreen checks:
+  - engine anisotropic etch (`depth=80nm`, `ray_count=64`, `step=4nm`) finished in ~2.0 s and produced non-empty etched geometry,
+  - small-step run (`step=1nm`) remained efficient (~2.3 s) due pass capping,
+  - full directional mode scene + window init smoke passed (`directional iterative smoke ok`).
+
+Next steps / known risks:
+1. Adjacent-pair marking still depends on ray density; very coarse ray counts can under-resolve steep local geometry.
+2. The model is geometric-topological, not a transport solver; rate/selectivity physics are still placeholders.
+
+## Update 2026-03-06 (Prototype Upgrade: Zoom/Inspect, Material Routing, Exact Ray-Interface Selection)
+- Implemented interactive view controls in `cross_section_general_prototype.py`:
+  - mouse-wheel zoom,
+  - right-drag panning,
+  - right-double-click or `Reset View` to return to fit view.
+- Added grid visibility toggle:
+  - new `Grid` button controls grid rendering on/off.
+- Added interface inspection mode (special mode):
+  - new `Inspect` button switches canvas to interface-only rendering,
+  - clicking an interface segment highlights it and shows detailed info (loop id, edge index, owner material, length, midpoint, normal) in the info panel.
+- Lowered default stress values for responsiveness:
+  - reduced default directional depth/ray count and coarsened default arc chord.
+- Reworked ray-hit model to fix normal mismatch / below-surface start:
+  - replaced inside-sampling hit detection with exact ray-segment intersection on extracted exposed interfaces,
+  - each ray hit now carries `loop_id`, `edge_index`, `edge_t`, and position along loop.
+- Reworked directional selection logic for etch/deposition:
+  - each ray marks a local interface segment at hit,
+  - adjacent rays on the same interface mark the complete boundary segment between hits,
+  - removal/growth is then applied only on these selected interface paths.
+- Added directional growth process mode:
+  - new mode `Directional Growth` with iterative recast loop and directional shell deposition.
+- Expanded process/material controls in UI:
+  - lists all used materials with checkboxes and per-material etch rates,
+  - `Isotropic Undercut`: selected materials + per-material rate scaling,
+  - `Conformal Growth`: selectable deposited material,
+  - `Directional Growth`: selectable deposited material + selectable affected surface materials,
+  - `Directional Etch`: selected materials + per-material rate scaling.
+- Updated topology diagnostics clarity:
+  - diagnostics mode now explicitly reports that it performs topology checks/boundary extraction/ray diagnostics without process mutation.
+
+Why it changed:
+- User requested robust interface-driven directional behavior, interactive detail inspection, and process-material configurability while keeping runtime efficient.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- offscreen smokes:
+  - all mode scene builds (`all modes build ok`),
+  - window initialization/update (`window smoke ok`),
+  - interface picking path (`inspect pick smoke ok`),
+  - directional etch + directional growth performance probe (default-like settings) remained fast (~0.07 s / ~0.05 s in engine-only checks).
+
+Next steps / known risks:
+1. Same-interface linking uses extracted polygon loops from current geometry booleans; at very complex topology junctions, explicit topological adjacency graphs would be more reliable.
+2. Per-material rate scaling currently uses relative depth scaling for prototype responsiveness; future integration should separate process time and physical rate units explicitly.
+
+## Update 2026-03-06 (Prototype Fix: Pan Direction + Etch Time Semantics)
+- Updated `cross_section_general_prototype.py`:
+  - fixed vertical panning sign in `CrossSectionCanvas.mouseMoveEvent(...)` so mouse drag up/down now moves the view in the same up/down direction as left/right drag behavior.
+  - completed/verified time-based etch/deposition control wiring in the UI + scene builder:
+    - sliders use `Isotropic Time (min)` and `Directional Time (min)`,
+    - per-material removal/deposition amount is computed as `rate_nm_min * time_min`.
+
+Why it changed:
+- User reported reversed vertical pan and requested process-time-driven etch control so different material etch rates are actually usable.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- `./.venv/Scripts/python.exe -m compileall nanofab_manager.py nanofab_modular`
+- model-level smoke (offscreen-independent) across all prototype modes with reduced load:
+  - `Conformal Growth`, `Isotropic Undercut`, `Directional Growth`, `Directional Etch`, `Combined Stress Test`, `Topology Diagnostics` all built successfully.
+
+Next steps / known risks:
+1. Full offscreen `CrossSectionCardWindow` smoke can be slow/hang depending on mode defaults and Qt/path complexity; model-level scene-build smoke is currently the reliable fast validation path.
+2. `Shadow` overlay remains a diagnostic process mask visualization (not a physical transport/shadowing solver field).
+
+## Update 2026-03-06 (Input Model Backlog: Physical Process Controls)
+- Captured additional process-input settings requested for later implementation (beyond the new unified base inputs `time_s`, `rate_nm_s_by_material`, `steps_per_s`):
+  - angular distribution / beam divergence,
+  - angle-dependent yield `f(theta)` for etch/deposition,
+  - selectivity model (process- and material-pair dependent),
+  - mask erosion rate,
+  - redeposition probability,
+  - temperature scaling factor,
+  - stop-condition mode (`time`, `target_thickness`, endpoint),
+  - sticking coefficient (deposition).
+
+Why it changed:
+- User requested these to be explicitly remembered for future solver/data-model restructuring.
+
+Validation run:
+- documentation update only (no code-path changes).
+
+Next steps / known risks:
+1. Integrate these as optional, mode-scoped parameters to avoid overloading the initial prototype UI.
+2. Move from depth-per-pass style internals to a consistent time-integration solver so these controls have a clear physical insertion point.
+
+## Update 2026-03-06 (Shared-Edge Inspect Topology)
+- Updated `cross_section_general_prototype.py` inspect/topology model to expose shared edges between regions/materials:
+  - added `TopologyEdge` representation (edge id, geometry, normal, primary/secondary material, shared flag, supporting materials),
+  - added `extract_topology_edges(...)` in `GeometryTopologyEngine` to build inspectable edges from per-material boundaries and deduplicate opposite-side/shared edges,
+  - `SceneSnapshot` now includes `topology_edges`.
+- Reworked inspect mode rendering/selection:
+  - inspect mode now shows topology edges (shared + exposed), not only exposed outer edges,
+  - clicking an edge highlights that segment and highlights the full supporting material region(s),
+  - selected-edge info text now reports material relationship and shared status:
+    - `materials=...`,
+    - `shared=yes/no`,
+    - `relation=<mat_a><-><mat_b|void>`,
+    - source loop/segment id, length, midpoint, and normal.
+- Kept process/raycast behavior stable:
+  - directional/isotropic process operations still use exposed-edge extraction for process evolution,
+  - shared-edge topology is added primarily for inspect/debug visualization.
+
+Why it changed:
+- User requested transition from “connected/open interface feeling” to explicit shared-edge interpretation and inspect tooling that can show which regions a segment belongs to.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- model smoke across all modes (reduced-load params):
+  - verified non-empty `topology_edges` and shared-edge counts per mode.
+- offscreen inspect smoke:
+  - `CrossSectionCardWindow` create/refresh/select-edge/close path.
+
+Next steps / known risks:
+1. Shared-edge dedup currently uses geometric quantization; near-colinear mismatched segmentation can still produce split/duplicate inspect edges.
+2. Full topological half-edge ownership (exact adjacency graph) is not yet implemented; current approach is robust for prototype inspection but still geometry-derived.
+
+## Update 2026-03-06 (Time-Integrated Solver Refactor + Directional Corner Fix)
+- Refactored prototype process inputs and internals to unified time-based controls:
+  - `PrototypeParams` now uses:
+    - `process_time_s`,
+    - `steps_per_s`,
+    - `rate_nm_s_by_material`.
+  - Removed old mixed control path (`nm/pass`, separate minute-based etch/depo time sliders).
+- Updated process interaction model to `nm/s`:
+  - `ProcessInteractionModel.rate_nm_s_by_material`,
+  - base placeholder rates converted from prior minute-scale values.
+- Reworked operation engine to use a shared time-step integrator:
+  - added `_iter_time_steps(time_s, steps_per_s)` using full steps + remainder,
+  - `deposit_conformal(...)`, `etch_isotropic(...)`, `etch_anisotropic(...)`, and `deposit_directional(...)` now advance by `delta_nm = rate_nm_s * dt`.
+- Fixed directional marking artifact around single-ray hits and corners:
+  - local hit marking now stays on the hit edge (`_local_hit_span_on_edge`) instead of wrapping across loop corners,
+  - directional etch/deposition masks now use round-cap/round-join stroking via `_band_from_marked_surface(...)` to avoid open-end wedges,
+  - tightened adjacent-ray connection distance gating to reduce incorrect long-span bridging.
+- Updated UI controls to match unified solver:
+  - added `Process Time (s)` and `Steps Per Second`,
+  - material rate spinboxes now use `nm/s`,
+  - lowered default time/sampling values for faster initial responsiveness,
+  - mode visibility updated to show only relevant controls under new model.
+- Updated scene info text to display:
+  - current time/sampling (`s @ Hz`),
+  - per-material rates in `nm/s`.
+
+Why it changed:
+- User reported growth/etch artifacts at corners with single-ray local marking and requested the previously discussed full time-integrated solver architecture (`time_s`, `rate_nm_s`, `steps_per_s`) for all modes.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- `./.venv/Scripts/python.exe -m compileall nanofab_manager.py nanofab_modular`
+- model smoke across all modes (new params):
+  - `Conformal Growth`, `Isotropic Undercut`, `Directional Growth`, `Directional Etch`, `Combined Stress Test`, `Topology Diagnostics` scene builds succeeded.
+- targeted single-step directional scenario smoke (`1s`, `1 step/s`, low sampling chord/ray count) succeeded without runtime errors.
+
+Next steps / known risks:
+1. The solver is now time-integrated, but geometry updates still rely on `QPainterPath` booleans; pathological tiny-feature cases can still create sliver artifacts.
+2. Full half-edge topology ownership and physically richer process factors (angular spread, yield models, redeposition, mask erosion, temperature coupling) remain future extensions.
+
+## Update 2026-03-06 (One-Shot Span Solver for Conformal + Directional)
+- Addressed severe runtime blow-up seen in conformal mode for larger `time_s * steps_per_s`:
+  - root cause: repeated per-step boolean updates causing geometry fragmentation and superlinear cost growth.
+- Reworked conformal and directional operations to one-shot span/band application while preserving unified inputs:
+  - conformal deposition now computes total thickness once (`rate_nm_s * time_s`) and applies a single boundary band operation.
+  - directional deposition/etch now:
+    1. builds ray-selected boundary spans (`start/end` via local hit spans + adjacent-ray spans on same loop),
+    2. assigns per-span incidence weight from ray direction vs interface normal,
+    3. applies one-shot band generation with coarse weight binning (piecewise one-shot),
+    4. performs collision-safe boolean composition (`band - occupied` for deposition, `target ∩ band` then subtract for etch).
+- Added helper primitives for the new kernel:
+  - `_total_delta_nm(...)`
+  - `_directional_incidence_weight(...)`
+  - `_directional_spans_from_adjacent_rays(...)`
+  - `_directional_band_from_spans(...)`
+- Kept unified user inputs unchanged:
+  - `process_time_s`, `steps_per_s`, `rate_nm_s_by_material`.
+
+Why it changed:
+- User reported that conformal growth became much slower than earlier and requested a one-shot approach for selected interface parts, including shading/edge behavior handling.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- performance probe:
+  - conformal `time=4s`, `2Hz` reduced from multi-minute behavior to ~0.01 s scene-build level in current smoke.
+- model smoke:
+  - all modes scene build passed,
+  - targeted directional single-step coarse-sampling scenarios executed without runtime errors and without tiny-sliver polygon artifacts in quick checks.
+
+Next steps / known risks:
+1. Span weighting currently uses a simple incidence term; angular spread and material-dependent yield are still placeholders for future physics fidelity.
+2. Boundary-span extraction still depends on polygonized paths; exact half-edge topology ownership remains a future upgrade for maximal robustness.
+
+## Update 2026-03-06 (Inspect Geometry Cleanup: Segment Merge, Shared Edge Handling, Selection Cycling)
+- Improved boundary extraction quality to avoid unnecessary segment splitting:
+  - added closed-loop collinear simplification in boundary point processing,
+  - applied this simplification to exposed-boundary and topology-edge extraction.
+- Updated normal direction handling for topology edges:
+  - normal orientation is now determined by explicit material-side probes (`inside/outside`) per edge rather than relying only on polygon winding,
+  - this stabilizes “outward” normals for selected material edges.
+- Reworked shared-edge representation for inspect mode:
+  - removed artificial global dedup that collapsed opposite shared sides into one edge,
+  - topology extraction now keeps per-material edge ownership and marks `secondary_material_id`/`is_shared` from side probes.
+- Added inspect click cycling for overlapping/shared edges:
+  - repeated clicks at the same location now cycle through candidate edges under the cursor (e.g., both sides of a shared interface).
+- Adjusted conformal one-shot growth surface selection to avoid domain-cut artifacts:
+  - conformal deposition now uses exposed interface edges excluding domain clip boundaries (left/right/bottom extent edges),
+  - this prevents spurious lower/side conformal loops from finite-domain clipping and reduced observed multi-loop artifacts in tested conformal case.
+
+Why it changed:
+- User reported excessive segment splitting in inspect view, incorrect shared-status labeling on straight segments, confusing normal direction display on selected edges, hard selection of overlapping shared segments, and undesired multi-loop conformal artifacts linked to finite substrate clipping.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- all-mode model smoke passed.
+- conformal performance smoke remained fast after cleanup (`4s @ 2Hz` stayed in millisecond-scale scene build in current tests).
+- targeted check confirmed conformal metal path produced a single subpath in the tested scenario.
+
+Next steps / known risks:
+1. Segment simplification currently merges collinear polyline fragments; true arc reconstruction (line+arc primitive preservation through booleans) is still future work.
+2. Finite simulation extent remains a numerical domain boundary; semi-infinite substrate behavior is approximated by boundary-edge filtering in conformal growth, not by an unbounded geometry kernel.
+
+## Update 2026-03-06 (Directional Span Selection Fix + Adaptive Ray Refinement)
+- Updated directional deposition/etch span construction to better follow loop edge sequences between ray hits:
+  - adjacent-hit span path selection now uses a constrained loop traversal (`_loop_path_between_hits_constrained`) rather than relying only on shortest-path selection,
+  - added strip-based path scoring so the chosen boundary path remains between the two ray origins instead of wrapping across unrelated loop parts.
+- Added occlusion guard for adjacent-hit linking:
+  - if the direct chord midpoint between adjacent hits lies inside solid union, span-connection is rejected (prevents wrong bridges across blocked corners/steps).
+- Added adaptive ray refinement (2 passes in directional modes):
+  - starts with user ray count,
+  - inserts midpoint rays where adjacent rays indicate likely under-resolution (hit/no-hit transitions, material/loop/edge changes, strong normal changes, excessive hit separation),
+  - all refined rays are used for process computation and returned for plotting.
+- Kept conformal one-shot fast path and unified input model unchanged (`process_time_s`, `steps_per_s`, `rate_nm_s_by_material`).
+
+Why it changed:
+- User reported directional modes still selecting wrong between-hit regions and requested that actual segment lists be respected plus intelligent ray densification near difficult geometry transitions.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- directional mode smokes with adaptive rays:
+  - user ray count `12` refined to `24` rays in tested cases,
+  - directional growth and etch scene builds completed with non-empty hit sets.
+- all-mode build smoke passed with current defaults.
+
+Next steps / known risks:
+1. Boundary geometry is still polygonized after booleans; constrained span traversal is robust but cannot recover exact analytic arcs once flattened.
+2. Adaptive refinement currently uses geometric heuristics; future work can include explicit error estimators tied to hit-angle and curvature fields.
+
+## Update 2026-03-06 (Directional Segment-Gap Fix at Loop Vertices)
+- Fixed directional span path traversal at exact loop vertices in `cross_section_general_prototype.py`:
+  - updated `_loop_edge_index_at_position(...)` to use half-open edge intervals (`[start, end)`) instead of closed intervals.
+  - this prevents selecting the previous edge when `s` lands exactly on a vertex, which had caused diagonal shortcut segments in `_loop_path_forward(...)`.
+- Resulting behavior:
+  - adjacent-ray span paths now stay on the true boundary sequence across corners/fillets,
+  - directional deposition selection no longer drops corner segments due vertex-index ambiguity.
+
+Why it changed:
+- User reported that not all segments were selected and there were visible gaps between rays in directional growth.
+- Root cause was geometric traversal ambiguity at cumulative-distance edge boundaries (vertex hits).
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall cross_section_general_prototype.py`
+- directional growth smoke (user test settings):
+  - mode: `Directional Growth`
+  - `ray_count=8`, `process_time_s=4`, defaults otherwise
+  - result: `metal_loops 5` (expected), `rays 17`, `hits 17`, refinement passes `[0, 1, 2]`.
+- targeted span trace check confirmed trench-corner spans now include intermediate corner points (no diagonal shortcuts).
+
+Next steps / known risks:
+1. Core geometry still relies on boolean operations over polygonized paths; tiny-feature robustness can still be affected by path simplification tolerance.
+2. If needed, add a debug toggle to disable adaptive refinement at runtime for direct A/B inspection against base-ray behavior.
+
+## Update 2026-03-09 (Directional Chain Selection Fix + Pass-Color Rays)
+- Reworked directional growth/etch span selection in `cross_section_general_prototype.py`:
+  - directional ray hits are now resolved against exposed surface chains extracted from the original region segment lists instead of the polygonized union loop,
+  - exposed chains are split at hidden intervals so spans only follow truly continuous exposed surfaces,
+  - between-hit selection now walks the actual ordered chain segments, including arcs/corners, instead of shortcutting across the union outline,
+  - uncovered hits still fall back to local per-hit spans without any ray-overlap widening control.
+- Updated directional ray rendering:
+  - refinement passes now use a linear bright-red to dark-red ramp, so added rays are visually grouped by pass depth.
+
+Why it changed:
+- User reported that directional growth and etch still selected the wrong between-hit surfaces, left visible gaps, and should not rely on any overlap-style smoothing control to hide those errors.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall nanofab_manager.py nanofab_modular cross_section_general_prototype.py`
+- directional growth smoke with requested settings:
+  - mode: `Directional Growth`
+  - `ray_count=8`, `process_time_s=4`, `ray_angle_deg=-19`, defaults otherwise
+  - result: `metal_loops 5` (expected), `rays 21`, `hits 19`, refinement passes `[0, 1, 2]`
+- offscreen render smoke for the same growth case confirmed continuous shell coverage across the exposed cap/trench surfaces.
+- directional etch smoke with the same ray settings completed with non-empty etch mask output.
+
+Next steps / known risks:
+1. The directional solver now follows source-region segment chains for the pre-process geometry; if a future workflow needs repeated directional re-casts after arbitrary boolean-mutated geometry, those regenerated surfaces will still need a segment-aware reconstruction path.
+2. Final deposited/etched solids still use `QPainterPath` boolean operations, so extremely tiny features can still be limited by polygonization tolerance.
+
+## Update 2026-03-10 (Directional Outer-Surface Visibility Solver)
+- Reworked directional growth/etch in `cross_section_general_prototype.py` around exact outer-surface segments:
+  - directional visibility now evaluates the real line/arc outer loops from the prototype regions, not polygonized arc approximations,
+  - deposition/etch selection is derived from front-facing segment incidence against the ray direction,
+  - reverse visibility now traces back to the top source boundary and rejects segments whose source line exits through the side walls or is blocked by another outer segment,
+  - diagnostic rays now stop only on front-facing exact segments and no longer use folded-away/back-facing hits.
+- Adjusted directional band construction:
+  - visible chain intervals are built from the exact segment chains,
+  - chain continuity around corners is preserved by stroking the exact interval path with square caps instead of creating isolated local patches.
+
+Why it changed:
+- User identified two remaining major bugs:
+  - rays could appear to penetrate the surface,
+  - folded/shadowed segments were still sometimes selected.
+- The goal was to make directional growth/etch depend on exact outer-surface geometry and segment normals, then verify stable metal-loop counts across multiple angle/ray-count cases.
+
+Validation run:
+- `./.venv/Scripts/python.exe -m compileall nanofab_manager.py nanofab_modular cross_section_general_prototype.py`
+- directional growth checks:
+  - `angle=-18`, `ray_count=8` -> `metal_loops 5`
+  - `angle=-12`, `ray_count=12` -> `metal_loops 5`
+  - `angle=-8`, `ray_count=24` -> `metal_loops 5`
+- requested baseline still holds:
+  - `angle=-19`, `ray_count=8`, `process_time_s=4` -> `metal_loops 5`
+- directional etch smoke:
+  - `angle=-12`, `ray_count=12` completed with non-empty shadow/etch output and no runtime errors.
+
+Next steps / known risks:
+1. The current directional visibility uses the prototype’s source-region outer loops as occluders; if later workflows depend on repeated re-casts after arbitrary boolean-mutated geometry, those occluders will also need a regenerated exact-segment representation.
+2. The geometry mutation step still finishes through `QPainterPath` booleans, so sub-nanometer slivers can still be limited by Qt path simplification behavior.
