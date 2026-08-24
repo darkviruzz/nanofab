@@ -1014,3 +1014,29 @@ Validation run:
 Next steps / known risks:
 1. The current directional visibility uses the prototype’s source-region outer loops as occluders; if later workflows depend on repeated re-casts after arbitrary boolean-mutated geometry, those occluders will also need a regenerated exact-segment representation.
 2. The geometry mutation step still finishes through `QPainterPath` booleans, so sub-nanometer slivers can still be limited by Qt path simplification behavior.
+
+## Update 2026-08-24 (Data-Model Review for Iterative Etch/Deposition — ADR-0001)
+- Reviewed the cross-section prototype's data model against the requirement "isotropic/anisotropic etch + deposition, applied iteratively (remove a little, inspect, remove more) without artifact build-up".
+- Wrote `docs/adr/0001-cross-section-model-for-iterative-process-steps.md` (first ADR in the repo) with 10 findings (F1-F10) and 9 decisions (D1-D9).
+- Measurements were taken headless (PySide6 6.11.2, `QT_QPA_PLATFORM=offscreen`) against the prototype's own default scene (`cap_corner_radius_nm=18`, `trench_depth_nm=60`, `trench_radius_nm=40`, `arc_chord_nm=4.0`).
+
+Key measured facts:
+- Anisotropic etch **stalls after the first iteration**: `_extract_directional_surface_chains()` and `_extract_full_outer_surface_chains()` read `self.state.regions` (the frozen base loops), so process-created surfaces are invisible. Over 8 x 0.5 s the exposed-chain length stays at exactly 1305.1 nm and the core area stops changing after step 1 (46652.6 from i=1 to i=7). 1 x 4.0 s removes *more* material than 20 x 0.2 s (area 45930.7 vs 46713.5).
+- Isotropic etch iterated 60 x 0.2 s: vertex count 58 -> 2602 (~+43/step), cumulative wall 0.00 s -> 85.29 s, per-step cost ~0.02 s -> ~3.7 s. At i=50 the core transiently splits into 8 subpaths (sliver artifacts) and is back to 2 at i=60.
+- Conformal deposition 20 x 0.2 s: 3273 points / 54.16 s versus 275 points / 0.01 s for the equivalent single shot; area drifts -0.4 %.
+- Post-boolean canonicalisation is the effective mitigation: with RDP eps=0.25 nm after each step, 40 iterations give 50 points and 0.15 s instead of 1704 points and 22.32 s (~150x faster, vertex count flat) — but naive RDP leaves ~+1.07 % more material, so an area-preserving decimation criterion is required, not plain RDP.
+- Dead code confirmed: `_iter_time_steps`, `_directional_band_from_spans`, `_offset_band_from_segment_piece`, `_directional_spans_from_surface_rays`, `_local_hit_span_on_chain`, `_surface_chain_path_between_hits`, `_path_strip_score`, `_directional_incidence_weight` have no call sites (~250-300 lines). `steps_per_s` is threaded through the whole API and then discarded (`del steps_per_s`) — the prototype has no sub-stepping at all. `Region2D.tags`, `Region2D.props` and `CrossSectionState.operation_log` are never used. `scan_surface_rays()` traces are display-only; the physics runs on `_directional_band_from_surface_chains`.
+- `_offset_band_from_chain_span` does `del outward` and strokes the surface curve symmetrically, so etch and deposition are the same geometric operation with different masking; `RoundJoin` rounds every convex corner by `delta_nm` per step, which compounds over iterations. Removal depth uses `avg_incidence` over a whole span, so trench bottom and sidewall get the same depth.
+- `etch_isotropic(top_only=True)` uses a hard-coded cut plane `extent[1] + 0.42*(extent[3]-extent[1])` = -33.20 nm for the default extent.
+
+Why it changed:
+- User asked what has to be improved in the prototype's data model so etching/coating work well, and what has to be restructured so an iterative process is possible without large artifacts.
+
+Validation run:
+- `python -m compileall cross_section_general_prototype.py nanofab_modular` (PySide6 installed into the session container; `apt-get install libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1` was needed for offscreen QtGui).
+- Three measurement scripts were run headless (iteration-count sweep, anisotropic stall trace, canonicalisation A/B). They live in the session scratchpad and were intentionally not committed.
+
+Next steps / known risks:
+1. Recommended implementation order is in the ADR's Consequences section; D5 (exposure from current state) is the single change that unblocks iteration, D3 (canonicalisation) is what bounds the artifacts.
+2. ADR decision D2 accepts polyline-only geometry for now; analytic arcs stay lost through booleans until the hybrid provenance model (D2c) is built.
+3. Take a `ui_backups/` snapshot per AGENTS.md §7 before starting the persistent-revision refactor (D1) — it changes public signatures inside the prototype.
