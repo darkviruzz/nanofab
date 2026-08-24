@@ -98,3 +98,17 @@ The **Coding Assistant** may propose improvements to `AGENTS.md`, but must **alw
 - Do not delete files/folders without explicit user approval of exact targets.
 - If unexpected file changes appear, stop and ask the user how to proceed.
 - For major refactors, summarize plan before editing.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in this repo (darkviruzz/nanofab), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Standard label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
