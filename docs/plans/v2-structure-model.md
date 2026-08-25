@@ -116,7 +116,9 @@ class Structure:
   interfaces are never advected, so they keep their sub-cell shape until re-exposed —
   this is why per-material fields were chosen over a single φ + index map
   (ADR-0002): lift-off re-exposes buried interfaces, and a single-φ model would
-  return them cell-quantised (staircase).
+  return them cell-quantised (staircase). *(→ §18.7: where a directional
+  deposition grew nothing, the deposit formula leaves a zero level with no
+  interior behind it.)*
 - Measured mechanism checks (this environment): a half-plane SDF is exact on the
   grid (linear function, bilinear reconstruction exact); constructed materials are
   overlap-free; conformal growth is one array op (`phi_solid - t`, 20 offsets in
@@ -128,7 +130,9 @@ class Structure:
   `|∇phi| ≈ 1` within a narrow band around each zero level; pairwise-disjoint
   interiors (guaranteed by construction, verified cheaply). *(→ §17.4: the band
   invariant holds at a high quantile, not at the worst cell — a concave crease is
-  a point where a correct distance field is not differentiable.)*
+  a point where a correct distance field is not differentiable; → §18.6: so is
+  the medial axis of any film thinner than twice the band, which is most of
+  them.)*
 
 ### 3.3 Fields
 
@@ -232,13 +236,16 @@ exactly representable; corners are exact to the corner-rounding of ~½ cell.
 
 Interface `FluxModel2D`: given front samples (points + normals from `∇phi`), a
 source (direction θ₀, angular distribution g(θ)), and an occupancy grid, return
-flux per sample.
+flux per sample. *(→ §18.3: the samples became front cells with sub-cell foot
+points; → §18.5: what the solver consumes is that array extended into a collar.)*
 
 - **Reverse marching**: visibility is computed from each front sample **toward** the
   source over the quadrature angles of g(θ) — exactly the "backwards-ray casting
   from the structure" requested in the interview, and the grid-native successor of
   v1's reverse-visibility solver (memory 2026-03-10). Shadow boundaries emerge at
   visibility transitions; refinement concentrates samples near transitions.
+  *(→ §18.4: the whole accuracy of this sits in how a ray is tested against the
+  field, not in how finely it is sampled.)*
 - Angular distributions parameterise the techniques: δ(θ) evaporation; narrow lobe
   RIE/IBE (plus an isotropic chemical fraction for RIE); cosⁿ sputter (plus a surface
   mobility kernel that smears deposited flux along the front); isotropic ALD/wet
@@ -249,7 +256,8 @@ flux per sample.
 - Budget: front ≈ 2–5 k samples × 8–32 angles, marching on a coarsened occupancy
   (2–4 nm) — estimated 10–100 ms per rebuild; rebuilt every K sub-steps
   (K ≈ 5–10, exposed as a solver constant). To be verified in M2; the fallback knob
-  is K and the visibility-grid coarseness, not the model.
+  is K and the visibility-grid coarseness, not the model. *(→ §18.1: K = 5 holds,
+  measured; → §18.2: the coarseness is free, not a trade; → §18.8: the costs.)*
 - 3D later means implementing `FluxModel3D` (two-angle hemisphere integration) —
   algorithmically different, deliberately **not** abstracted over now (Q7): the
   seam is named, the work is honest.
@@ -274,7 +282,8 @@ Every chain step ends in one mandatory pass (the v2 successor of ADR-0001 D8):
 
 1. narrow-band reinitialisation (§4.2) with reported interface displacement,
 2. field-scoping resets on the swept cells (§3.3),
-3. invariants: sign sanity, band `|∇phi| ≈ 1`, disjoint interiors, headroom guard,
+3. invariants: sign sanity, band `|∇phi| ≈ 1` (→ §18.6), disjoint interiors,
+   headroom guard,
 4. **balance check**: added/removed area vs. `∫ rate · flux · dt` along the front,
    within tolerance — the guard against silent numerical drift (→ §17.6: it warns,
    it does not fail; a topology change breaks the estimate legitimately, and S3 is
@@ -465,7 +474,7 @@ acceptance tests pass, per AGENTS.md §7; then it becomes a `ui_backups/` snapsh
 | Risk | Mitigation |
 |---|---|
 | Reinit drift accumulates over long chains | narrow band + sub-cell fix, displacement reported per commit, balance test in CI |
-| Flux rebuild too slow at fine grids | rebuild-every-K knob, coarse visibility grid; measured fallback path, not a redesign |
+| Flux rebuild too slow at fine grids | rebuild-every-K knob, coarse visibility grid; measured fallback path, not a redesign (→ §18.8: measured, the flux is not what dominates) |
 | Corner rounding at ~½ cell disturbs ideal-case didactics | resolution parameter visible + documented; ideal constructors exact for planes; acceptance tolerances set accordingly |
 | Determinism broken by a careless plugin | context-RNG contract + registry lint + cache keyed on code version |
 | 3D flux solver underestimated | seam is named and 2D-only by decision (Q7); nothing else in the core is 2D |
@@ -618,3 +627,180 @@ dominating.
 exceeded by the extreme one. The remaining cost is the upwind stencil evaluated
 over the whole domain; a true narrow-band solver is the fix if M2 shows it
 matters, and is deliberately not built yet.
+
+## 18. Corrections from implementation (M2)
+
+Added 2026-08-25 after M2 was built and measured, in the same form as §17: the
+agreed text above stays as written, and each item here amends one statement with
+the measurement that showed it. Nothing in the *decisions* changed — reverse
+marching against the union front, angular distributions parameterising the
+techniques, one redeposition bounce, the 2D-only seam.
+
+The recurring theme this time: **most of the accuracy of a visibility solver is
+in how it asks "is this point inside", not in how finely it marches.** Four of
+the seven items below are that one question.
+
+### 18.1 `K` is a cost knob only because the hit test is honest
+
+§4.3 estimates the flux rebuild interval at `K ≈ 5..10` and §15 names it as the
+first fallback if the budget does not hold. Both stand — but only after the hit
+test stopped reading the field at the nearest cell.
+
+The arrival is extended off the front by "the value of the nearest front cell".
+At the concave corner where a mask meets the surface being etched through it,
+the nearest front cell *is* that corner, whose normal is diagonal and whose
+sputter yield is therefore near its peak. Every sub-step of staleness lets that
+velocity act on a wedge of material the mask fully shadows. Measured on a 40 nm
+mask window, 30 nm of ion-beam etch at 1 nm/cell — worst lateral excursion past
+the window edge:
+
+| `K` | 1 | 2 | 3 | 5 | 10 |
+|---|---|---|---|---|----|
+| nearest-cell hit test | 3 nm | 6 nm | 10 nm | 14 nm | 17 nm |
+| bilinear hit test (§18.4) | 0 nm | 0 nm | 0 nm | 1 nm | 2 nm |
+
+With the second row, `K = 5` costs a nanometre — inside the cell the grid owes
+anyway — and the M2 handoff's suggestion of sharing one refresh point with the
+material-ownership map (`motion._OWNER_REFRESH`) is right. With the first row,
+`K` would have had to be 1 and a directional step would have cost three times an
+isotropic one.
+
+### 18.2 A coarse visibility grid costs nothing
+
+§4.3 has the march running "on a coarsened occupancy (2–4 nm)", and §15 offers
+that coarseness as a fidelity-for-speed trade. Measured, it is not a trade at
+all: the coarse grid is used **only to bound how far a ray may jump**, while the
+hit test reads the fine union field. Shadow-wedge position for a mask edge at
+15/30/45/60 degrees is *identical* at a visibility spacing of 1, 2 and 4 cells;
+only the number of marching steps changes. There is a standing test for it,
+because it is the fallback §15 reaches for first and it is free.
+
+The bound itself is a Euclidean distance transform of the coarsened occupancy,
+which lets a ray sphere-trace: steps grow geometrically in open space, so
+crossing 500 nm of headroom costs ~15 iterations instead of 500. Near a surface
+the union field is the sharper bound and is trusted for three cells, which is
+where the reinitialisation guarantees it is a distance.
+
+### 18.3 Flux is per cell, not per sample
+
+§4.3 defines `FluxModel2D` as returning flux per front *sample*; the solver
+consumes a per-cell array. Resolved in favour of per-cell throughout. What the
+sample abstraction was wanted for — sub-cell placement, so the shadow boundary
+is not cell-quantised — is recovered by starting each ray at the **foot point**
+`x - n * phi(x)` instead of at the cell centre. The refinement §4.3 wanted near
+transitions was not needed: the measured wedge position is within 0.8 nm of
+`h * tan(theta)` at 1 nm/cell out to 60 degrees, where the shadow is 69 nm long,
+so the error does not grow with the lever arm.
+
+### 18.4 A ray cannot be blinded by displacement or by travel
+
+A ray leaves a front cell, and a front cell is solid by definition, so it reports
+itself blocked. Two repairs were tried and both are wrong in ways worth
+recording, because both look obviously right:
+
+- **Displace the ray's origin along the surface normal.** This moves the
+  geometry. A mask then casts the shadow of a mask one cell shorter, a bias of
+  `spacing * tan(theta)` that grows with the source angle.
+- **Blind the ray for one cell of travel.** This fails at glancing incidence,
+  where a cell of travel is a fraction of a cell of clearance. Measured at 60
+  degrees: every ray still shadowed itself and the entire front came out dark.
+  Latching on *clearance* instead ("a ray may hit only once it has been a cell
+  clear of every surface") fails differently and worse: at a concave corner a ray
+  leaves the substrate straight into the mask, is never clear of anything, and
+  emerges above the mask reported as lit.
+
+The fix is to read the union field **bilinearly** rather than at the nearest
+cell. It is then a smooth signed distance: half a cell along an outward ray
+already reads positive, and the only negative readings are inside real material.
+No blind window is needed at any angle, and §18.1's whole first row disappears.
+
+### 18.5 A velocity extension has to be a collar
+
+The arrival is extended off the front so the solver has a speed where the front
+is about to be. Extended over the whole window it is a bug rather than a
+convenience: a cell ten cells deep under a hard mask keeps being handed the etch
+rate of the trench floor that happens to be its nearest front, and `phi` there
+climbs by `rate * t` until it crosses zero. Measured: a 30 s ion-beam etch opened
+a row of disconnected voids under the mask, growing with depth.
+
+Beyond the collar cells are simply frozen — which is what a narrow-band solver
+does, and the direction §17.7 already pointed. For a uniformly signed motion the
+Godunov upwind side is the one *away* from the frozen boundary, so the step in
+`phi` there is never read and the front does not notice.
+
+### 18.6 The band invariant fails on every thin film, and on every mask corner
+
+§3.2's field invariants and §4.5's gate read `|grad(phi)| ≈ 1` in a band around
+the zero level, at a high quantile after §17.4. Two ordinary shapes break that as
+written, and neither is a solver problem:
+
+- A film's **medial axis** sits half its thickness in, so any film thinner than
+  twice the band has its axis *inside* the band — and there a correct distance
+  field has a genuine local extremum, so `|grad(phi)| = 0` however well it is
+  normalised. Measured: every deposition below 8 nm failed the gate with a band
+  gradient error of exactly 1.0, and **a 2 nm ALD film is the most ordinary
+  object in this domain**. Medial axes are now detected (opposite one-sided
+  differences, the steeper one a real slope) and removed from the band together
+  with their neighbours, since a central difference is contaminated a cell away
+  from any non-differentiable point.
+- A **right-angled concave crease** — a mask sidewall meeting the surface — reads
+  exactly `1 - 1/sqrt(2) = 0.293` by arithmetic, and cannot be told from real
+  distortion by the same test (the field is flat on one side rather than
+  reversed). The gate's tolerance therefore sits above it, at 0.35. Measured on
+  the reference grid, a 60 nm ion-beam etch through six mask windows: p90 0.053,
+  p99 0.289, max 0.536.
+
+The check keeps its teeth: a 2×-steepened circle still reads 1.0, a flattened one
+0.5, a reinitialised one 0.095 — §17.2's numbers unchanged.
+
+### 18.7 A shadowed deposition leaves phantom material
+
+§3.2's deposition formula `phi_k ← min(phi_k, max(d_D, -phi_solid_old))` is a
+correct set operation — §17.2 already says its *values* need the gate. It is
+worse than that wherever the front does not move, which is every shadowed stretch
+of a directional deposition: there `solid_now == solid_start`, the formula
+collapses to `|solid_start|`, and the result is exactly zero all along the old
+surface. Nothing is inside that zero level, but every sub-cell measure reads
+those cells as half full and every front integral counts them as front. Measured
+on a 4 nm sputter deposition through a mask: 1849 cells at exactly zero and
+~600 nm² of metal that was never deposited.
+
+Clamping them positive does not help: `|solid_start|` is a V, and a V has a zero
+central derivative at its vertex whatever its floor. What is wrong is the
+*proxy* — away from the deposit, "distance to where the surface used to be" is
+not "distance to the deposited material", and the second is what `phi_k` means.
+So where nothing grew, the field is now the distance transform of the region that
+did. Cells the deposit reached keep the sub-cell value the moved front gives them.
+
+### 18.8 Measured M2 costs, extending §17.7
+
+At the reference grid (540×1200 at 1 nm), against §4.3's estimate of 10–100 ms
+per rebuild:
+
+| One flux rebuild | |
+|---|---|
+| evaporation, δ source (1 angle) | 25–34 ms |
+| RIE / IBE, narrow lobe (9 angles) | 63–66 ms |
+| sputter, cos¹ (17 angles) | 104 ms |
+| sputter + 20 nm surface mobility | 124 ms |
+| IBE + redeposition bounce (12 rays) | 139–152 ms |
+
+| Complete step (motion + commit gate) | |
+|---|---|
+| isotropic 4 nm etch, no flux (the §17.7 baseline) | 0.53 s |
+| directional 4 nm etch, evaporation | 0.57 s |
+| directional 4 nm etch, IBE | 0.60 s |
+| directional 4 nm deposition, sputter cos¹ | 1.26 s |
+| heavy 60 nm directional etch, IBE (121 sub-steps, 25 rebuilds) | 5.73 s |
+| commit gate alone, 2–3 materials | 0.19 s |
+
+So §4.3's estimate holds for everything but the widest lobes, and the handoff's
+"2–20 % on top of a step rather than dominating it" holds as measured: +8 % for
+an evaporation, +13 % for an ion beam. The heavy step is *below* §17.7's 6.0 s
+despite the flux, because §18.6's windowing more than paid for itself in the
+gate — which is also the honest answer to §15's "flux rebuild too slow at fine
+grids": at the reference grid it is not the flux that dominates, it is still the
+upwind stencil over the whole domain, exactly as §17.7 said.
+
+Balance-check errors on those steps, against the 5 % default: plane etch 3.4 %,
+directional etch 1.2–1.5 %, directional deposition 1.2 %, heavy step 0.03 %.
