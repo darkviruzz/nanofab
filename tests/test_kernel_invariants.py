@@ -136,14 +136,25 @@ def test_without_carving_the_overlap_is_real(grid_2d: Grid) -> None:
     assert invariants.max_overlap_depth(structure) == pytest.approx(2.0)
 
 
-def test_material_index_agrees_with_the_material_fields(grid_2d: Grid) -> None:
-    """The derived index map picks a material that really owns the cell."""
+def test_material_index_partitions_the_solid(grid_2d: Grid) -> None:
+    """The derived index map gives every solid cell to exactly one material.
+
+    Ownership is a partition, interiors are strict: a cell sitting exactly on the
+    interface between two materials is interior to neither but is owned by one,
+    which is what keeps the solid free of one-cell cracks without letting two
+    materials claim the same interior.
+    """
     structure = _stack(grid_2d)
     index = structure.material_index
 
+    owned = np.zeros(grid_2d.shape, dtype=bool)
     for position, material in enumerate(structure.materials):
         selected = index == position
-        assert np.array_equal(selected, structure.inside(material))
+        assert not np.any(selected & owned), "two materials own the same cell"
+        assert np.all(structure.phi_of(material)[selected] <= 0.0)
+        assert np.all(selected[structure.inside(material)]), "an interior cell went unowned"
+        owned |= selected
+    assert np.array_equal(owned, structure.solid_mask)
     assert np.array_equal(index < 0, ~structure.solid_mask)
 
 

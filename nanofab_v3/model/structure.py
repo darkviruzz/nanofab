@@ -84,7 +84,12 @@ class Structure:
             raise KeyError(f"no material {material!r} in this Structure") from None
 
     def inside(self, material: MaterialId) -> np.ndarray:
-        """Boolean mask of the cells inside `material` (`phi < 0`)."""
+        """Boolean mask of the cells in the interior of `material` (`phi < 0`).
+
+        Strictly the interior, so interiors of different materials stay disjoint
+        even where they touch. For "which material owns this cell", including the
+        cells exactly on an interface, use `material_index`.
+        """
         return self.phi_of(material) < 0.0
 
     def with_material(self, material: MaterialId, phi: np.ndarray) -> "Structure":
@@ -153,21 +158,43 @@ class Structure:
 
     @cached_property
     def solid_mask(self) -> np.ndarray:
-        """Boolean mask of cells occupied by any material."""
-        return self.solid_phi < 0.0
+        """Boolean mask of cells occupied by any material.
+
+        A cell sitting exactly on a zero level counts as solid. Where two
+        materials touch, `solid_phi` is exactly zero along their shared
+        interface, and a strict `< 0` would open a one-cell gap through the
+        middle of continuous material — which would then read as a crack to
+        every connectivity query. `material_index` gives such a cell to one
+        material, so the partition stays exclusive.
+        """
+        return self.solid_phi <= 0.0
+
+    @cached_property
+    def nearest_material_index(self) -> np.ndarray:
+        """Index into `materials` of the material closest to each cell, `argmin_m phi[m]`.
+
+        Defined in empty space too, where it names the material whose surface is
+        nearest — which is what the motion kernel asks for when it needs the
+        material at the front (plan §4.2). `EMPTY` only when there is no material
+        at all.
+        """
+        if not self.phi:
+            return self.grid.full(EMPTY, dtype=np.int16)
+        stack = np.stack(list(self.phi.values()))
+        return np.argmin(stack, axis=0).astype(np.int16)
 
     @cached_property
     def material_index(self) -> np.ndarray:
         """Index into `materials` per cell, `EMPTY` where the cell is empty.
 
-        `argmin_m phi[m]` (plan §3.2) — the map rendering and per-cell queries
-        run on. Derived, cached per revision.
+        `argmin_m phi[m]` masked to the solid (plan §3.2) — the map rendering and
+        per-cell queries run on. Derived, cached per revision.
         """
         if not self.phi:
             return self.grid.full(EMPTY, dtype=np.int16)
-        stack = np.stack(list(self.phi.values()))
-        index = np.argmin(stack, axis=0).astype(np.int16)
-        return np.where(self.solid_mask, index, np.int16(EMPTY)).astype(np.int16)
+        return np.where(self.solid_mask, self.nearest_material_index, np.int16(EMPTY)).astype(
+            np.int16
+        )
 
     def material_at(self, index: int) -> MaterialId | None:
         """The material an entry of `material_index` refers to (`None` = empty)."""

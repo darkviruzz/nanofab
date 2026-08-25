@@ -65,19 +65,37 @@ def gradient_magnitude(grid: Grid, phi: np.ndarray) -> np.ndarray:
     return np.sqrt(sum(g**2 for g in gradients))
 
 
-def band_gradient_error(grid: Grid, phi: np.ndarray, band: float | None = None) -> float:
-    """Worst deviation of `|grad(phi)|` from 1 inside a narrow band around `phi = 0`.
+def band_gradient_error(
+    grid: Grid, phi: np.ndarray, band: float | None = None, quantile: float = 1.0
+) -> float:
+    """Deviation of `|grad(phi)|` from 1 inside a narrow band around `phi = 0`.
 
     The band defaults to two cells. A true signed-distance field scores ~0; the
-    number grows as set operations and (from M1) advection distort the distance
-    property, which is the trigger the reinitialisation policy (plan §4.2) runs on.
+    number grows as set operations and advection distort the distance property,
+    which is the trigger the reinitialisation policy (plan §4.2) runs on.
+
+    `quantile` defaults to 1.0, the worst cell. A **concave crease** — where two
+    surfaces meet, e.g. the union of two overlapping disks — is a point where a
+    correct distance field is genuinely not differentiable, so the worst cell
+    there never converges to 1 no matter how well the field is normalised.
+    Callers that judge a whole field (the distortion trigger, the commit gate)
+    therefore read a high quantile instead, which sees real distortion but not
+    the handful of crease cells.
     """
     width = 2.0 * grid.spacing if band is None else float(band)
     values = np.asarray(phi, dtype=np.float64)
     in_band = np.abs(values) <= width
     if not np.any(in_band):
         return 0.0
-    return float(np.max(np.abs(gradient_magnitude(grid, values)[in_band] - 1.0)))
+    deviation = np.abs(gradient_magnitude(grid, values)[in_band] - 1.0)
+    if quantile >= 1.0:
+        return float(np.max(deviation))
+    return float(np.quantile(deviation, quantile))
+
+
+def every_face(grid: Grid) -> tuple[tuple[str, str], ...]:
+    """Every domain face as `(axis_name, "min" | "max")`."""
+    return tuple((axis, side) for axis in grid.axes for side in ("min", "max"))
 
 
 def boundary_contact(structure: Structure) -> tuple[tuple[str, str], ...]:

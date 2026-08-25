@@ -47,7 +47,9 @@ def test_derived_views_follow_the_materials(grid_2d: Grid) -> None:
     expected_solid = np.minimum(structure.phi_of("silicon"), structure.phi_of("metal"))
     assert np.array_equal(structure.solid_phi, expected_solid)
     assert np.array_equal(structure.empty_phi, -structure.solid_phi)
-    assert np.array_equal(structure.solid_mask, structure.solid_phi < 0.0)
+    # A cell exactly on a zero level counts as solid, so two touching materials
+    # leave no gap through the middle of continuous material.
+    assert np.array_equal(structure.solid_mask, structure.solid_phi <= 0.0)
     assert structure.material_at(0) == "silicon"
     assert structure.material_at(EMPTY) is None
     assert structure.material_index[199, 0] == EMPTY
