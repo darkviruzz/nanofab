@@ -5,17 +5,36 @@ physics engine (ADR-0001), and rendering is a consumer of the kernel (§10), nev
 the other way round. Kernel code is N-D generic; the only deliberately 2D-only
 seam in M0 is `contours` (marching squares), which says so and checks it.
 
-M0 ships:
+Geometry and state (M0):
 
 - `csg` — set operations as pointwise min/max,
 - `constructors` — analytic primitives sampled onto the `Grid`, once,
 - `contours` — marching squares for rendering and debug,
-- `invariants` — the cheap field checks the commit gate (M1) will reuse.
+- `invariants` — the cheap field checks the commit gate reuses,
+- `measures` — enclosed measure and front integrals, sub-cell accurate.
 
-Motion (offset fast path, upwind advection, reinitialisation, the commit gate)
-arrives in M1, flux and visibility in M2.
+Motion and its bookkeeping (M1):
+
+- `stencil` — the finite-difference stencils motion and reinit share,
+- `motion` — the isotropic fast path and CFL-sub-stepped upwind advection,
+- `reinit` — narrow-band, interface-preserving renormalisation,
+- `occurrences` — connected components and lineage by overlap matching,
+- `gate` — the commit gate every chain step ends in.
+
+Flux and visibility (`FluxModel2D`, shadowing, redeposition) arrive in M2.
 """
 
 from __future__ import annotations
 
-__all__ = ["constructors", "contours", "csg", "invariants"]
+__all__ = [
+    "constructors",
+    "contours",
+    "csg",
+    "gate",
+    "invariants",
+    "measures",
+    "motion",
+    "occurrences",
+    "reinit",
+    "stencil",
+]
