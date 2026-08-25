@@ -113,9 +113,9 @@ _Avoid_: "backscatter" (that is the source side), "contamination".
 ### Structure model v2
 
 Decided in ADR-0002…0004 and `docs/plans/v2-structure-model.md`, and implemented
-in `nanofab_v3` from milestone M0 on (grid and geometry, motion, flux). The v1
-code does not use these terms; where a term below is still ahead of the code —
-`Capability` and `Materialization` are, until M3 and M4 — it says so.
+in `nanofab_v3` from milestone M0 on (grid and geometry, motion, flux,
+capabilities and predicates). The v1 code does not use these terms; where a term
+below is still ahead of the code — `Materialization` is, until M4 — it says so.
 
 **Grid**:
 The sole spatial authority of a v2 structure: origin, cell spacing, shape and axis names. Resolution is a visible model parameter, not an implementation detail.
@@ -143,12 +143,28 @@ _Avoid_: "flux" alone for the normalised quantity (that is the source's, before 
 surface has seen it), "coverage" (that is the deposited result).
 
 **Capability**:
-A named promise about sample state that a process requires or provides (e.g. `resist.dose`). Gating runs on capabilities; downgrade adapters may discard information explicitly, upgrades cannot exist.
+A named promise about sample state that a process requires or provides (e.g. `resist.dose`). Gating runs on capabilities; downgrade adapters may discard information explicitly, upgrades cannot exist. Two name forms are **structural** — `material:<id>` and `<material>.<field>` — and the commit gate re-derives them from the structure itself, so a capability retires when the material or field backing it is gone. The dot is reserved for that second form; a free-form promise must not contain one.
 _Avoid_: "prerequisite" (v1's step-id gating), "dependency".
 
-**Materialization**:
+**Materialization** (ahead of the code until M4):
 Evaluating a Run at one wafer position by deterministic replay with position-resolved parameters; the solver itself stays position-blind.
 _Avoid_: "sampling" (collides with grid sampling), "instantiation".
+
+**Predicate**:
+A named question asked of one revision's geometry, answered without changing it — reachability, support, enclosed voids, undercut ratio, step coverage. The analysis vocabulary and the didactic payload: the UI renders their results and the acceptance tests assert them. Reachability and support are predicates *and* kernel steps, which is why they are the same functions.
+_Avoid_: "check" (that is the commit gate's invariants, which fail a step), "metric" (a predicate may answer a shape, not only a number).
+
+**Reachability**:
+Whether a material can be touched from outside the sample, i.e. whether the empty space adjacent to it connects to the domain's open face. What makes a wet process (develop, dissolve, strip, clean) act on some material and not on other, chemically identical material — and what makes a sealed cavity stop being fed. A cross-section's lateral faces are not open: the section continues sideways, so treating them as a bath would make a cavity reachable because of where the window was cropped.
+_Avoid_: "accessible" (unqualified), "exposed" (that is the resist field, an unrelated thing).
+
+**Support**:
+Whether a piece of solid connects to the wafer. Lift-off is dissolution followed by removing what support no longer finds, so "which metal lifts off" is a connectivity question and never an identity one. Topological: one shared cell is enough, which is why a sidewall film touching a pattern at its foot stays.
+_Avoid_: "attached" (too vague), "anchored" (that is the optional seed material, a parameter of the query).
+
+**Fence**:
+Metal deposited on a resist sidewall that stays standing after the resist is gone, because it is attached to the film on the substrate. The signature of a broad-lobe deposition into a re-entrant profile; an evaporation on the same stack leaves none. Appears in the model as a raised rim on the surviving pattern's profile, not as a separate occurrence.
+_Avoid_: "ear", "wing" (cleanroom slang, and neither says why it is there), "burr".
 
 ### Attachments & annotations
 

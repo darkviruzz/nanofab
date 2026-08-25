@@ -32,7 +32,10 @@ Four canonical scenarios define "works":
   must **emerge** from the model (reachability), not be special-cased.
 - **S4 Sputter fences** — partial sidewall coverage (broad lobe + surface mobility);
   after dissolution the sidewall metal attached to the substrate film remains
-  standing as fences.
+  standing as fences. *(→ §19.7: not on S1's stack — a straight wall is coated
+  continuously and seals the resist; fences need the re-entrant profile a real
+  lift-off resist has, and the broad lobe rather than the mobility is what makes
+  them.)*
 
 Fidelity tiers: (a) didactic-qualitative is the implementation target; (b)
 semi-quantitative later means swapping rate models, not rewriting; (c) predictive is
@@ -157,7 +160,11 @@ physical exposure writes a `float32` field `dose`. Ideal development consumes
 - **MaterialType** — a library entry: name, display color, optical `n/k`, density,
   per-process-class rate/yield models, crystallographic anisotropy
   (`rate(θ_normal − θ_crystal)`), develop/dissolve models. Pure data + small model
-  objects; no geometry.
+  objects; no geometry. *(Crystallographic anisotropy is deliberately not built
+  in M3: no process in §6 consumes it, and a model nothing reads cannot be
+  validated. The library imports nothing from the kernel — `processes.rates` is
+  the seam; see §19.1's tier split for where the develop/dissolve models are
+  read.)*
 - A **material in a Structure** is just a MaterialType id owning a `phi` array and
   optionally scoped fields. Nothing else is stored (ADR-0003).
 
@@ -269,7 +276,10 @@ points; → §18.5: what the solver consumes is that array extended into a colla
 - **Reachability**: which empty-space component connects to the top boundary; a wet
   process (develop, dissolve, clean) only acts on material cells adjacent to
   reachable empty space. S3's ALD failure **is** this query returning "resist
-  unreachable".
+  unreachable". *(→ §19.1: the gate has two shapes, region and speed field, split
+  along the ideal/physical axis; → §19.3: "material cells adjacent to" needs a
+  third mask, neither `inside` nor `material_index`; → §19.5: as a speed field it
+  needs §18.5's collar.)*
 - **Support**: which solid components connect to the substrate. Lift-off = dissolve
   resist (reachability-gated), then remove solid components no longer
   substrate-supported. S4's fences survive because they are attached to the
@@ -288,7 +298,9 @@ Every chain step ends in one mandatory pass (the v2 successor of ADR-0001 D8):
    within tolerance — the guard against silent numerical drift (→ §17.6: it warns,
    it does not fail; a topology change breaks the estimate legitimately, and S3 is
    such a step),
-5. occurrence lineage (§3.5), capability updates (§5.3).
+5. occurrence lineage (§3.5), capability updates (§5.3). *(→ §19.2/§19.4: the
+   scoping resets and the removals they follow read a material's **closed
+   region**, which is not `phi_m <= 0`.)*
 
 The `ValidationReport` is stored on the revision and surfaced by the UI — a
 suspicious step is visible, never silent.
@@ -327,7 +339,9 @@ the context RNG (best-effort: no direct `np.random` imports in plugin lint).
 
 Generalises v1's step-id `prerequisites` into state contracts: `provides = {"resist.dose"}`
 (physical exposure) vs `{"resist.exposed"}` (ideal exposure); development variants
-`require` the matching one. The engine gates on capability presence in the current
+`require` the matching one. *(The dot in that example is load-bearing: it is
+reserved for `<material>.<field>`, so a free-form promise must not contain one.
+The gate re-derives the structural capabilities from the structure itself.)* The engine gates on capability presence in the current
 revision. **Downgrade adapters** are explicit steps (e.g. threshold `dose → exposed`)
 that warn about the information they discard; upgrades don't exist — missing
 information cannot be invented. Fidelity tiers therefore mix safely: everything a
@@ -350,9 +364,9 @@ once in the kernel (I7).
 | Spin-coat resist | planarising fill up to a level (one constructor op) |
 | Exposure (ideal) | write `exposed` from procedural pattern |
 | Exposure (dose) | write `dose` field: pattern ∗ blur, Beer–Lambert depth term |
-| Development (ideal) | remove `resist ∧ exposed`, reachability-gated |
+| Development (ideal) | remove `resist ∧ exposed`, reachability-gated (→ §19.1: by region, per occurrence) |
 | Development (rate) | advect front through resist with `F = develop_rate(dose)`, reachability-gated |
-| Wet/chemical etch | isotropic fast path per material rates, reachability-gated |
+| Wet/chemical etch | isotropic fast path per material rates, reachability-gated (→ §19.1: the general path, since selective rates break the fast path's precondition) |
 | RIE | directional lobe + isotropic chemical fraction, material yields |
 | IBE | narrow lobe, angle-dependent yield, redeposition bounce |
 | Evaporation | δ-flux deposit, shadowing |
@@ -368,7 +382,8 @@ once in the kernel (I7).
 ## 7. Predicates
 
 First-class, reusable model objects evaluated on a revision — the didactic payload
-(I6) and the analysis vocabulary: reachability of a material from the top;
+(I6) and the analysis vocabulary *(→ §19.6 for what they cost; → §19.3 for the
+mask they all read)*: reachability of a material from the top;
 pinch-off/void detection (enclosed empty components); undercut ratio; step coverage
 (min/nominal film thickness along the front); minimum feature size; aspect ratio;
 substrate support. The UI renders their results; the acceptance tests (§13) assert
@@ -444,6 +459,9 @@ pytest from M0 (the repo currently has no tests; AGENTS.md validation extends fr
 3. **Acceptance = S1–S4** asserted through predicates (S1 pattern width == design ±
    tol; S2 undercut ratio; S3 resist-unreachable and film continuous; S4 fence
    components present). These four tests are the definition of done for M3.
+   *(→ §19.8: S4's fences are not components — they are attached to the film,
+   which is why they survive; the assertion is their height above it. Each
+   scenario also runs its control.)*
 4. **Performance floors** — heavy directional step ≤ a few seconds at default grid
    (Q6); per-step cost flat across 60-step chains (the v1 superlinear blow-up,
    ADR-0001 F3, must be provably gone).
@@ -804,3 +822,197 @@ upwind stencil over the whole domain, exactly as §17.7 said.
 
 Balance-check errors on those steps, against the 5 % default: plane etch 3.4 %,
 directional etch 1.2–1.5 %, directional deposition 1.2 %, heavy step 0.03 %.
+
+## 19. Corrections from implementation (M3)
+
+Added 2026-08-25 after M3 was built and measured, in the same form as §17 and
+§18: the agreed text above stays as written, and each item here amends one
+statement with the measurement that showed it. Nothing in the *decisions*
+changed — capability contracts, predicates as first-class objects, reachability
+as the gate for wet processes, the ideal/physical split living in the process
+rather than in the structure model. What changed is a set of statements about
+what those objects give you.
+
+The recurring theme this time: **a material's own field is not a statement about
+that material alone.** Three of the eight items below are the same buried-seam
+problem §17.1 found in the union field, reappearing in places the plan describes
+as per-material — which is what a per-material representation costs, stated
+honestly, and it is still cheaper than the alternatives ADR-0002 rejected.
+
+### 19.1 Where reachability gates a process: both, split by fidelity
+
+The one design decision the M3 handoff (§3) asked to be made first. The plan
+says only that a wet process "acts on material cells adjacent to reachable empty
+space" (§4.4) and marks development, wet etch, strip and lift-off as gated (§6).
+
+Settled as the handoff recommended, along the fidelity axis §3.3 already draws:
+
+- **The ideal tier gates by region.** `predicates.reachable_occurrences` picks
+  the connected pieces a bath can touch and `regions.remove_region` takes them
+  out in one `csg` operation — no rate, no time, no sub-stepping. Per
+  *occurrence*, not per cell: a solvent that reaches one corner of a connected
+  piece of resist dissolves the piece, and a cell-by-cell removal would stall at
+  the first constriction and leave a plug no real bath leaves.
+- **The rate tier gates by speed field.** `predicates.ReachableFront` is a
+  `motion.FrontFlux` — `max_arrival` for the CFL bound, `on_front` for the
+  per-cell multiplier — so it goes through the seam the flux model already uses,
+  and `motion.gated` multiplies the two together. It has to be rebuilt as the
+  front moves, because dissolving resist opens paths that were closed.
+
+The two are two *processes* at different fidelity (`develop.ideal` /
+`develop.rate`, `strip.dissolve` / `strip.rate`), exactly as §5.4 wants, and not
+a fork in the kernel. Neither is a special case anywhere in `motion`.
+
+### 19.2 A carved field is zero on other materials' buried seams
+
+§17.1 records that `min_m phi[m]` is exactly zero along a buried interface
+between two touching materials. A **material's own** field has the same defect,
+and the plan gives no hint of it: `constructors.add_material` carves the new
+region against the union of the others (`max(phi_new, -phi_union)`), and
+`-phi_union` is exactly zero along every interface between two of *those* —
+interfaces the new material may be nowhere near.
+
+Measured on the S2 stack (silicon, 60 nm of thermal oxide on it, resist spun on
+top): `phi_resist` reads exactly 0.0 along the buried silicon/oxide interface,
+60 nm below the resist's own underside and in **every column of the domain**. A
+`phi_m <= 0` test therefore reported the resist as covering the full width, and
+the undercut predicate — which measures against the mask's footprint — returned
+zero for every etch, wet and directional alike.
+
+The repair is topological rather than numerical, and is the third disguise of
+§18.7's phantom: take the closure of the *interior*
+(`kernel.regions.closed_region`). A zero-valued cell counts only when it touches
+a cell that is strictly inside, which is exactly what tells a material's own
+boundary from a zero level with nothing behind it.
+
+Note that the defect only appears for an **unbounded** constructor — a
+planarising spin coat, which is negative all the way down. A slab bounded at the
+layer below it hides the problem, which is how it survived M0 to M2.
+
+### 19.3 "The cells of material m" is a third mask, not one of the two that existed
+
+§17.1 established two masks and their division of labour: `inside` is strict
+(`phi_m < 0`) so material interiors stay disjoint, and `material_index` is the
+exclusive partition. Every connectivity query in §4.4 needs a third, and neither
+of those is it.
+
+`inside` is one cell too small in the one place that decides the answer. A
+constructor samples exactly on the grid, so a material's own boundary cells read
+`phi_m == 0`; a solvent standing in a cavity touches that cell first, and
+`inside` leaves it out. Measured on the T-profile fixture: with `inside`, the
+bath is two cells from the nearest resist cell it is allowed to see, and
+`is_reachable(resist)` comes back `False` for a profile that is wide open.
+
+So `predicates.cells_of` is the **closed region** — the interior plus its own
+boundary, per §19.2. The closed regions of two touching materials share their
+interface cell, so it is not a partition; that is right for the question, because
+both materials really are present in that cell and both really are wet.
+
+### 19.4 A material-selective removal has to name what it attacks
+
+The consequence of §19.3 on the other side. A mask covering the resist's closed
+region also covers the substrate's top row, because `phi` is exactly zero there
+for both. Measured: dissolving the resist through a mask built that way took
+**half a nanometre of silicon** with it, along every cell the two shared, and the
+substrate's field stopped being bit-identical across a step that should not have
+touched it.
+
+`regions.remove_region` therefore takes a `materials` argument, and it is not a
+convenience. A removal that is about *chemistry* — a solvent, a developer — names
+what it attacks; a removal that is about *connectivity* — lift-off's unsupported
+components — does not have to, because there the removed region is a union of
+complete solid components and a component is separated from what stays by empty
+space, so no shared interface cell is in play.
+
+### 19.5 The reachability gate needs §18.5's collar, and §18.5's window
+
+Both findings from the flux solver apply unchanged to a gate that is not a flux.
+
+The collar first: extended over the whole domain, the gate hands a cell ten cells
+deep in a wall the value of whatever front happens to be nearest, and the upwind
+stencil starts moving it. `ReachableFront.collar_cells` is 12, the same number as
+`flux._EXTENSION_CELLS`, deliberately — the two collars answer the same question
+about the same front.
+
+The window second, and this one is a cost rather than a correctness matter: the
+front is a curve and the domain is an area, so the collar's distance transform
+has no business running over the headroom and the bulk of the wafer. Restricting
+it to a box around the front took one gate rebuild from **48 ms to 20 ms** at the
+reference grid.
+
+### 19.6 The gate is not a fidelity knob, and barely a cost one
+
+§4.4 is silent on what reachability costs. Measured at the reference grid
+(540×1200 at 1 nm), against §18.8's flux numbers:
+
+| | |
+|---|---|
+| `label_region` on the empty space | 2.7 ms |
+| `reachable_empty` / `supported` | 4.9 / 3.6 ms |
+| `enclosed_voids` | 11.5 ms |
+| `undercut` / `step_coverage` | 8.7 / 8.9 ms |
+| one `ReachableFront` rebuild (windowed) | 20 ms |
+
+Gating a directional process is therefore free within the noise, because
+`motion._FLUX_REFRESH` rebuilds every factor of a `ProductFlux` on the same
+sub-steps and the flux is the expensive one: a 4 nm RIE at the reference grid
+costs **1.28 s gated and 1.28 s ungated**, and a heavy 60 s ion-beam etch 9.9 s
+against 9.0 s — **+10 %** on the worst case in the book.
+
+The ideal tier is cheaper still, which is the point of it being a different kind
+of operation rather than a flag: the complete spin-coat + ideal exposure + ideal
+development sequence is **0.30 s** and an ideal lift-off **0.19 s**, against
+0.74 s for a single 4 nm directional deposition. What the *gated* tier costs is
+the fast path: a reachability-gated 4 nm ALD is 0.69 s where the ungated
+conformal offset is 0.38 s, because gating turns one array operation into an
+advection. That is the price of the topology, and S3 is what it buys.
+
+§17.7's conclusion stands unchanged: what dominates a heavy step is still the
+upwind stencil over the whole domain, not the flux and not the gate.
+
+### 19.7 S4 as written does not produce fences
+
+§1 describes S4 as "partial sidewall coverage (broad lobe + surface mobility);
+after dissolution the sidewall metal attached to the substrate film remains
+standing as fences", on the same stack as S1. Measured, that stack does not
+produce fences — it produces **S3's failure**.
+
+The reason is geometric and not a solver artifact. On a straight resist wall the
+arrival grows monotonically with height: a point on the wall sees the sky through
+the opening, and the higher it sits the wider that window is. So the film is
+**thinnest at the bottom**, which is precisely where a fence would have to be
+attached. Measured on a 120 nm wall over a 60 nm window with a cos¹ source, wall
+thickness bottom to top: 2, 2, 2, 3, 3, 4, 4, 5, 6, 7, 9, 8, 10 nm — continuous
+from floor to cap, in every combination of window width (50-80 nm), resist
+thickness (100-140 nm), film thickness (12-40 nm) and mobility length (0-25 nm)
+that was tried. A continuous film seals the resist, the solvent never reaches it,
+and nothing lifts.
+
+Fences need the **re-entrant profile a real lift-off resist has**, and the model
+gets there the way a cleanroom does: a bilayer, with a non-imaging underlayer
+that the developer clears further back than the imaging layer's own window. Then
+the overhang's underside faces down, receives an arrival of exactly zero, and
+separates the cap from everything inside the cavity — while the broad lobe still
+reaches the cavity's vertical walls and leaves metal there, attached to the film
+on the floor. Measured over cavity widths 110-130 nm, film 20-30 nm and mobility
+0-10 nm: fences 15-26 nm above the flat film, one connected occurrence, lift-off
+clean in every case. An evaporation on the identical stack leaves a flat pattern
+of the mouth's width and no fences at all.
+
+The other half of §1's sentence is also not what the measurement says. **Surface
+mobility is not what creates the fences** — the broad lobe alone does, and the
+mobility mostly thickens the cap's edge. On the straight-wall stack a mobility
+length of 15 nm or more closes the mouth outright and breaks the lift-off that
+worked without it. `didactic_library` gains an `underlayer` entry for this, and
+the scenario keeps a modest 10 nm mobility because it is harmless there and
+because §1 names it.
+
+### 19.8 The plan's own S4 acceptance wording, adjusted
+
+§13.3 asks for "S4 fence components present". They are not components: §1's own
+sentence is the accurate one — the sidewall metal is *attached to the substrate
+film*, which is exactly why it survives support filtering. The surviving metal is
+**one** occurrence whose profile carries raised rims at both pattern edges, and
+that is what the acceptance test asserts (rims ≥ 10 nm above the flat film, at
+both edges), together with the control that shows an evaporation on the same
+stack leaves none.
