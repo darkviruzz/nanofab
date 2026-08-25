@@ -1,0 +1,470 @@
+# Plan: Structure Model v2
+
+- Status: Agreed (design interview 2026-08-24/25), implementation not started
+- Inputs: ADR-0001 (v1 autopsy, measured), design interview rounds 1–3, ADR-0002…0004
+- Scope: a new package (working name `nanofab_v3`, successor of `nanofab_modular`) that
+  puts the sample's geometry and state on solid ground. No compatibility with v1
+  required. The `ProcessEngine` ideas worth keeping (append-only revisions, artifacts,
+  history, gating) are carried over as concepts, not as code.
+
+All numbers in this plan were measured in this repo's environment (numpy 2.4.6 /
+scipy 1.17.1, 540×1200 grid unless stated); the probe scripts are described in
+`memory.md` entries of 2026-08-24/25.
+
+## 1. Goal and fidelity contract
+
+v2 is a didactic digital twin: it must get **topology and causality** right, not
+nanometers. Any cleanroom process must be expressible against the same structure
+model, and complexity must live in the **process**, never in the structure model —
+the same model holds an idealised binary grating and a partially developed resist
+with a 2D dose profile, distinguished only by which materials and processes were
+assigned (interview Q1).
+
+Four canonical scenarios define "works":
+
+- **S1 Naive lift-off (ideal)** — substrate → resist → ideal exposure → ideal
+  development → evaporation (directional, sidewalls stay bare) → resist dissolution
+  (solvent reaches resist through the coverage gaps) → clean metal pattern.
+- **S2 Undercut** — isotropic (wet/chemical) etch undercuts a mask; RIE with the same
+  nominal depth does not. Undercut ratio is measurable.
+- **S3 Lift-off broken by ALD** — same stack as S1, but conformal ALD seals the
+  resist sidewalls; the solvent never reaches the resist; nothing lifts. The failure
+  must **emerge** from the model (reachability), not be special-cased.
+- **S4 Sputter fences** — partial sidewall coverage (broad lobe + surface mobility);
+  after dissolution the sidewall metal attached to the substrate film remains
+  standing as fences.
+
+Fidelity tiers: (a) didactic-qualitative is the implementation target; (b)
+semi-quantitative later means swapping rate models, not rewriting; (c) predictive is
+reachable only by delegating to external simulation packages through the process
+interface (§5, §11). The structure model must never block (b) or (c).
+
+## 2. Decisions inherited from the interview
+
+| # | Decision | Where detailed |
+|---|---|---|
+| I1 | Complexity lives in processes; structure model stays uniform across fidelity tiers | §1, §5 |
+| I2 | 2D core; data structures must not exclude 3D; wafer position with default "center" | §3.1, §8, ADR-0004 |
+| I3 | Material state = discrete material identity + named volumetric fields | §3.3 |
+| I4 | numpy + scipy allowed; heavier solvers loadable; plugin registry from day 1, ship as one exe | §11 |
+| I5 | No v1 compatibility; keep revisions/artifacts/history/gating as concepts; UI shell reusable | §6, §10 |
+| I6 | Geometry is the truth; diagnoses are predicates evaluated on it; UI decides didactics | §7 |
+| I7 | Every process is a standalone function `Structure → Structure (+ outputs)`; processes share kernel primitives; several processes may model the same technique at different fidelity | §5 |
+| Q1 | Representation: implicit signed-distance fields on a shared grid are the single truth; analytic primitives exist only as constructors | ADR-0002, §3.2 |
+| Q2 | Modular registry in source, monolith in delivery, subprocess reserve for big solvers | §11 |
+| Q3 | Capability contracts `requires`/`provides`; downgrade adapters allowed and explicit, upgrade impossible | §5.3 |
+| Q4 | Two stored tiers (MaterialType, material fields); Occurrence is a derived view; lineage by overlap matching | ADR-0003, §3.5 |
+| Q5 | Wafer position is a property of materialization; lazy replay with cache; determinism invariant | ADR-0004, §8 |
+| Q6 | User-visible steps are the chain steps themselves ("10 s etch" is one step; inspect is a step); CFL sub-stepping is solver-internal and invisible; grid resolution balances realism vs. speed, a few seconds per heavy step is acceptable | §4.2, §13 |
+| Q7 | Dense arrays; N-D-generic core; flux solver and rendering explicitly 2D behind named interfaces; a `Grid` object is the sole spatial authority | §3.1, §4.3 |
+
+## 3. The structure model
+
+### 3.1 Grid
+
+```python
+@dataclass(frozen=True)
+class Grid:
+    origin: tuple[float, ...]   # nm per axis
+    spacing: float              # nm, isotropic cells
+    shape: tuple[int, ...]      # e.g. (ny, nx); 3D adds an axis, nothing else changes
+    axes: tuple[str, ...]       # ("y", "x") — names, never positional assumptions
+```
+
+- The Grid is the **sole authority** on positions. No other object stores
+  coordinates, extents or spacings.
+- Kernel code must be N-D-generic: no hard-coded axis pairs, no Python loops over
+  cells. `scipy.ndimage` and `np.gradient` are already N-D; 2D-only code is confined
+  to the flux solver and rendering (§4.3, §10) behind named interfaces.
+- **Resolution is a visible model parameter** (default 1 nm/cell for ~1200 nm wide
+  scenes → 0.65 M cells, 2.6 MB per float32 field). It trades realism against speed
+  and is exposed as an advanced setting; a heavy directional step should stay in the
+  low seconds (measured budget in §13).
+- **Headroom**: the domain is created at substrate selection with configurable empty
+  space above the stack. A kernel guard fails a step whose front touches a lateral or
+  top boundary (bottom is "solid continues" by boundary condition). `np.pad` re-embeds
+  the arrays if the domain must grow later. This replaces v1's magic
+  `0.42 * extent` cut plane and boundary-edge filtering.
+- Units: grid and kernel work in plain float nm / s for speed. `Quantity` (docs
+  §4.2.1) appears at API boundaries (process parameters, measurements) and is
+  validated/converted there.
+
+### 3.2 Geometry: one signed-distance field per material
+
+```python
+class Structure:
+    grid: Grid
+    phi: dict[MaterialId, np.ndarray]   # float32, phi < 0 inside that material
+    fields: dict[FieldKey, np.ndarray]  # §3.3; FieldKey = (name, material_id | None)
+```
+
+- `phi[m] < 0` means "inside material m". **Derived, never stored as truth**:
+  solid union `phi_solid = min_m phi[m]`, empty space `-phi_solid`, the material
+  index map `argmin_m phi[m]` (cached per revision for rendering/queries), contours,
+  occurrences (§3.5).
+- Set operations are pointwise (`union = min`, `intersection = max`,
+  `difference(A,B) = max(phi_A, -phi_B)`): O(cells), local, no boolean cascade, no
+  polygonization — the entire v1 fragmentation/sliver failure class (ADR-0001
+  F3/F4) is structurally impossible.
+- **Only the exposed front ever moves** (§4.2). Etch clips materials against the new
+  union (`phi_m ← max(phi_m, phi_solid_new)`); deposition writes the new material
+  into `D ∩ empty` (`phi_k ← min(phi_k, max(d_D, -phi_solid_old))`). Buried
+  interfaces are never advected, so they keep their sub-cell shape until re-exposed —
+  this is why per-material fields were chosen over a single φ + index map
+  (ADR-0002): lift-off re-exposes buried interfaces, and a single-φ model would
+  return them cell-quantised (staircase).
+- Measured mechanism checks (this environment): a half-plane SDF is exact on the
+  grid (linear function, bilinear reconstruction exact); constructed materials are
+  overlap-free; conformal growth is one array op (`phi_solid - t`, 20 offsets in
+  4.2 ms); on a re-entrant T-profile, ALD t=25 nm over a 40 nm opening seals an
+  enclosed void (empty space splits into 2 components), while a straight 40 nm gap
+  fills completely with a center seam — both physically correct with zero
+  special-casing.
+- Field invariants (checked by the commit gate, §4.5): sign correct everywhere;
+  `|∇phi| ≈ 1` within a narrow band around each zero level; pairwise-disjoint
+  interiors (guaranteed by construction, verified cheaply).
+
+### 3.3 Fields
+
+Named per-cell quantities on the same grid: `dose` (mJ/cm²), `damage`,
+`temperature_history`, `crystal_orientation`, … Two scopes:
+
+- **Global fields** — meaningful everywhere (rare).
+- **Material-scoped fields** — keyed `(name, material_id)`, meaningful only where
+  that material exists. **Scoping rule (mechanical, enforced by the commit gate):**
+  in cells where the owning material was removed or newly created during a step, the
+  field is reset to its default. Without this rule, dose from a first lithography
+  leaks into resist deposited later.
+
+The ideal/physical split from the interview lives here: ideal exposure writes an
+`int8` field `exposed` sampled from a procedural pattern (a constructor — §4.1);
+physical exposure writes a `float32` field `dose`. Ideal development consumes
+`exposed`; physical development consumes `dose` through the resist's
+`develop_rate(dose)` model. Same structure model, different fields (I1, I3).
+
+### 3.4 Materials: type vs. assignment
+
+- **MaterialType** — a library entry: name, display color, optical `n/k`, density,
+  per-process-class rate/yield models, crystallographic anisotropy
+  (`rate(θ_normal − θ_crystal)`), develop/dissolve models. Pure data + small model
+  objects; no geometry.
+- A **material in a Structure** is just a MaterialType id owning a `phi` array and
+  optionally scoped fields. Nothing else is stored (ADR-0003).
+
+### 3.5 Occurrence: identity by reconstruction
+
+A Materialvorkommen (occurrence) is a connected component of one material,
+**derived per revision** (`ndimage.label`, 2.3 ms at 1 nm), never stored. Identity
+across revisions is reconstructed by overlap matching against the parent revision
+(label + overlap matrix, 5.2 ms measured): the result is a lineage report —
+"occurrence #7 split into #7a/#7b", "merged", "vanished". Splits and merges become
+findings instead of bookkeeping corner cases; "which metal lifts off" is a
+connectivity question (§4.4), not an identity question. See ADR-0003.
+
+### 3.6 Revision and provenance
+
+```python
+class Revision:
+    index: int
+    parent: int | None
+    structure: Structure
+    capabilities: set[str]            # §5.3
+    history: HistoryEntry             # step id, params snapshot, timing — as docs §4.2.6
+    artifacts: list[ArtifactRef]      # unchanged concept, docs §4.2.2
+    validation: ValidationReport      # §4.5
+    lineage: LineageReport            # §3.5
+```
+
+Append-only, exactly like `ProcessEngine.revisions` today. A revision chain belongs
+to one wafer position (§8). The v1 1D layer list is not stored; where the UI wants a
+stack summary, it is **derived** (occurrences ordered by height).
+
+## 4. The kernel
+
+A module of pure functions on `Structure`. No Qt anywhere in it — v1's central
+defect (QPainterPath as physics engine) must not reappear. Rendering consumes the
+kernel's outputs (§10), never the other way round.
+
+### 4.1 Constructors
+
+Analytic primitives (half-plane, box, rounded box, procedural gratings, imported
+polygons, seeded roughness/particle disks) exist **only** as functions that sample an
+SDF onto the grid once, at creation time. After that the sampled field is the truth
+and the primitive is forgotten (ADR-0002; v1's permanent analytic/`QPainterPath`
+dual truth was the root cause of its iteration stall, ADR-0001 F2). A half-plane is
+exactly representable; corners are exact to the corner-rounding of ~½ cell.
+
+### 4.2 Motion
+
+- **General path**: advect the union front `phi_solid` with a speed field
+  `F(x) = sign · rate(material_at_front(x)) · yield(θ_incidence) · flux(x)`,
+  first-order upwind, CFL `dt ≤ 0.5 · spacing / max|F|` (one step: 3.6 ms at 1 nm,
+  140 ms at 0.25 nm — measured). Then clip/assign materials per §3.2. The speed field
+  is rebuilt from the current front every sub-step, so etching through material A
+  into B switches rates to sub-cell/sub-step order automatically; selectivity 0
+  simply stalls the front there — **mask behaviour emerges from rates**, it is not a
+  special case.
+- **Isotropic fast path**: when the motion is purely isotropic and the rate is
+  uniform over the affected front, offsetting is exact and instant:
+  `phi ← phi ∓ rate·t` (ALD, simple wet etch). Dose splitting is exact here
+  (measured: 1×20 nm vs 4×5 nm, max |diff| = 0.0).
+- **Sub-stepping is internal** (Q6): the user's "etch 10 s" is one chain step; the
+  solver divides it by CFL invisibly. Consistency obligation: `N × (t/N) ≡ 1 × t`
+  within integration error — a standing regression test (§13), trivially true on the
+  fast path, and true up to O(ε) reinitialisation drift on the general path.
+- **Reinitialisation policy**: `phi` loses the distance property under advection and
+  is re-normalised **in a narrow band only** (full-field EDT costs 34 ms at 1 nm but
+  1016 ms at 0.25 nm — measured; the narrow band keeps this bounded), with an
+  interface-preserving sub-cell scheme (Russo–Smereka-type). It runs on a
+  sub-step-count/distortion trigger — **never tied to user step boundaries**, or
+  3×10 s and 1×30 s would diverge. The commit gate (§4.5) normalises once at the end
+  of every chain step so fast paths can rely on `|∇phi| ≈ 1`, and reports the area
+  the normalisation moved.
+
+### 4.3 Flux and visibility (the 2D-only module)
+
+Interface `FluxModel2D`: given front samples (points + normals from `∇phi`), a
+source (direction θ₀, angular distribution g(θ)), and an occupancy grid, return
+flux per sample.
+
+- **Reverse marching**: visibility is computed from each front sample **toward** the
+  source over the quadrature angles of g(θ) — exactly the "backwards-ray casting
+  from the structure" requested in the interview, and the grid-native successor of
+  v1's reverse-visibility solver (memory 2026-03-10). Shadow boundaries emerge at
+  visibility transitions; refinement concentrates samples near transitions.
+- Angular distributions parameterise the techniques: δ(θ) evaporation; narrow lobe
+  RIE/IBE (plus an isotropic chemical fraction for RIE); cosⁿ sputter (plus a surface
+  mobility kernel that smears deposited flux along the front); isotropic ALD/wet
+  (which bypasses flux entirely via the fast path).
+- **Redeposition**: after computing removal flux, emit one bounce of secondary,
+  isotropic sources from sputtered sites scaled by a redeposition yield; deposit that
+  flux on visible front samples (sidewall redeposit, trench bottoms).
+- Budget: front ≈ 2–5 k samples × 8–32 angles, marching on a coarsened occupancy
+  (2–4 nm) — estimated 10–100 ms per rebuild; rebuilt every K sub-steps
+  (K ≈ 5–10, exposed as a solver constant). To be verified in M2; the fallback knob
+  is K and the visibility-grid coarseness, not the model.
+- 3D later means implementing `FluxModel3D` (two-angle hemisphere integration) —
+  algorithmically different, deliberately **not** abstracted over now (Q7): the
+  seam is named, the work is honest.
+
+### 4.4 Connectivity and reachability
+
+`ndimage.label` on boolean masks (2.9 ms at 1 nm, 59 ms at 0.25 nm — measured):
+
+- **Reachability**: which empty-space component connects to the top boundary; a wet
+  process (develop, dissolve, clean) only acts on material cells adjacent to
+  reachable empty space. S3's ALD failure **is** this query returning "resist
+  unreachable".
+- **Support**: which solid components connect to the substrate. Lift-off = dissolve
+  resist (reachability-gated), then remove solid components no longer
+  substrate-supported. S4's fences survive because they are attached to the
+  supported film.
+- Both are predicates (§7) as well as kernel steps — same functions.
+
+### 4.5 The commit gate
+
+Every chain step ends in one mandatory pass (the v2 successor of ADR-0001 D8):
+
+1. narrow-band reinitialisation (§4.2) with reported interface displacement,
+2. field-scoping resets on the swept cells (§3.3),
+3. invariants: sign sanity, band `|∇phi| ≈ 1`, disjoint interiors, headroom guard,
+4. **balance check**: added/removed area vs. `∫ rate · flux · dt` along the front,
+   within tolerance — the guard against silent numerical drift,
+5. occurrence lineage (§3.5), capability updates (§5.3).
+
+The `ValidationReport` is stored on the revision and surfaced by the UI — a
+suspicious step is visible, never silent.
+
+## 5. The process contract
+
+### 5.1 Signature
+
+```python
+class ProcessStep(Protocol):
+    step_id: str; display_name: str; fidelity: str   # e.g. "ideal" | "didactic" | "physical"
+    def parameter_schema(self) -> list[ParamSpec]: ...      # typed, with units — as v1 step_api
+    def requires(self) -> set[str]: ...                      # capabilities, §5.3
+    def provides(self) -> set[str]: ...
+    def run(self, ctx: StepContext) -> StepResult: ...       # pure; no Qt; no global state
+```
+
+`StepContext` carries the input `Structure`, validated params, the **effective local
+parameters** already resolved for this wafer position (§8), and a seeded RNG.
+`StepResult` carries the output `Structure`, artifacts (docs §4.2.2 unchanged),
+measurements (`Quantity`), logs. Inspection steps (SEM, profilometry, ellipsometry)
+return the input structure unchanged plus artifacts/measurements — they are ordinary
+steps in the chain (Q6), which is what makes "etch, inspect, etch, inspect" four
+plain steps.
+
+### 5.2 Determinism (invariant, ADR-0004)
+
+A step's outcome is a pure function of (input structure, recipe params, wafer
+position, step index, code version). Anything stochastic (particles, roughness,
+defects) draws from the context RNG, which is seeded from (recipe id, position,
+step index). This is what makes replay materialization (§8) and caching sound.
+Registry registration rejects steps that declare stochastic behaviour without using
+the context RNG (best-effort: no direct `np.random` imports in plugin lint).
+
+### 5.3 Capabilities
+
+Generalises v1's step-id `prerequisites` into state contracts: `provides = {"resist.dose"}`
+(physical exposure) vs `{"resist.exposed"}` (ideal exposure); development variants
+`require` the matching one. The engine gates on capability presence in the current
+revision. **Downgrade adapters** are explicit steps (e.g. threshold `dose → exposed`)
+that warn about the information they discard; upgrades don't exist — missing
+information cannot be invented. Fidelity tiers therefore mix safely: everything a
+step needs is either present or the step is not runnable, exactly like today's
+gating UI, with better reasons.
+
+### 5.4 Registry and plugins
+
+Processes register through a registry fed by entry points (in-tree builtins use the
+same mechanism). Several registered processes may model the same physical technique
+at different fidelity ("Evaporation (ideal)", "Evaporation (with divergence)") and
+share kernel primitives — duplication lives in thin process wrappers, physics lives
+once in the kernel (I7).
+
+## 6. Built-in didactic process set (target of milestone M3)
+
+| Process | Kernel composition |
+|---|---|
+| Substrate select / stack constructors | constructors (§4.1), sets grid + headroom |
+| Spin-coat resist | planarising fill up to a level (one constructor op) |
+| Exposure (ideal) | write `exposed` from procedural pattern |
+| Exposure (dose) | write `dose` field: pattern ∗ blur, Beer–Lambert depth term |
+| Development (ideal) | remove `resist ∧ exposed`, reachability-gated |
+| Development (rate) | advect front through resist with `F = develop_rate(dose)`, reachability-gated |
+| Wet/chemical etch | isotropic fast path per material rates, reachability-gated |
+| RIE | directional lobe + isotropic chemical fraction, material yields |
+| IBE | narrow lobe, angle-dependent yield, redeposition bounce |
+| Evaporation | δ-flux deposit, shadowing |
+| Sputter deposit | cosⁿ lobe + mobility smear |
+| ALD | conformal offset per cycle count (fast path) |
+| Strip / dissolve | material-selective removal, reachability-gated |
+| Lift-off | dissolve resist + remove unsupported components (§4.4) |
+| Anneal / property change | update fields/material models; optional isotropic reflow later |
+| Particles | seeded disk constructors of a particle material |
+| Clean | remove particle material where reachable (micromasking = unreachable survivors) |
+| Inspect: SEM/profilometer/ellipsometer | artifact + measurement producers from structure/fields |
+
+## 7. Predicates
+
+First-class, reusable model objects evaluated on a revision — the didactic payload
+(I6) and the analysis vocabulary: reachability of a material from the top;
+pinch-off/void detection (enclosed empty components); undercut ratio; step coverage
+(min/nominal film thickness along the front); minimum feature size; aspect ratio;
+substrate support. The UI renders their results; the acceptance tests (§13) assert
+them; the commit gate reuses the cheap ones.
+
+## 8. Runs, positions, materialization (ADR-0004)
+
+- A **Run** = one recipe over an extensible set of wafer positions, default
+  `{center}`. Each position owns an independent revision chain.
+- Recipe parameters may be **parameterised over the wafer** (stored as functions/
+  interpolants — a sampled list A, B, C is just data for the interpolant).
+  `effective_params(recipe, position, step)` resolves them; the solver only ever
+  sees resolved local values and stays position-blind. Wafer bow/tilt appears as a
+  per-position incidence-angle offset; rate radial profiles as per-position rates.
+- **Materialization by replay**: adding position D later replays the chain from
+  substrate selection with D-resolved parameters — deterministic by §5.2, so D is
+  exactly what it would have been. Lazy, cached per (recipe hash, position, step,
+  code version); a 20-step replay is seconds to ~a minute at defaults (budget §13),
+  run as a background job (docs §9.2 already requires job management).
+- Determinism boundary stated honestly: bit-identity is guaranteed on one machine +
+  code version; cross-machine float drift is accepted and handled by the
+  code-version cache key.
+
+## 9. Persistence and exchange
+
+One format serves saving, the replay cache, and external-solver exchange (fidelity
+tier c): per revision an `.npz` (the `phi_*` and field arrays, compressed) plus a
+JSON manifest (`schema_id: "structure.v2"`, grid, material ids, capabilities,
+history, content hashes). Artifacts stay URI-referenced files exactly as in docs
+§4.2.2. Forward compatibility via `schema_id` + ignored unknown keys (docs §4.1
+invariant 5 carried over).
+
+## 10. Rendering and UI hooks
+
+Rendering is a consumer: filled regions from marching squares over each `phi_m`
+(sub-cell smooth; own ~60-line N/A-free implementation, no scikit-image dependency),
+QImage from the material index map as fast fallback/debug; inspect overlays (normals
+from `∇phi`, front samples, flux/shadow visualisation, predicate highlights) from
+kernel outputs. The `nanofab_manager` shell (step list, gating, params, run log)
+carries over; the cross-section canvas is rewritten against `SceneSnapshot v2`
+(contours + overlays instead of QPainterPaths).
+
+## 11. Packaging
+
+Registry + entry points from day 1; develop as a normal package (`pip install -e`,
+pytest); **ship one PyInstaller exe** with the builtin process set and numpy/scipy
+frozen (plugins usable in source installs; frozen app extension = rebuild). Heavy
+external solvers, when they come, run as subprocesses with their own environment and
+talk through §9's exchange format. Explicitly no multi-exe delivery.
+
+## 12. What v2 deliberately does not carry over
+
+QPainterPath/Qt in the physics; the regions↔paths dual truth; `steps_per_s` and all
+phantom sub-stepping UI; the `top_only` 0.42 cut plane; per-mode monolithic
+`build_scene`; stroker bands and the span/chain solver family; `Facet` as a
+geometry concept (per-cell fields + derived occurrences replace it — see updated
+`CONTEXT.md`); free-string `operation_log`. Carried over as concepts: `Quantity`,
+`ArtifactRef`, `HistoryEntry`, append-only revisions, gating (→ capabilities),
+process/material split, reverse-visibility principle.
+
+## 13. Testing and acceptance
+
+pytest from M0 (the repo currently has no tests; AGENTS.md validation extends from
+`compileall` to `compileall + pytest`). Layers:
+
+1. **Kernel invariants** — constructor exactness on planes; disjointness; offset
+   dose-splitting exact; advection dose-splitting `N×(t/N) ≈ 1×t` within tolerance;
+   balance check closes; reinit displacement bounded; symmetric scenes stay
+   symmetric.
+2. **Mechanism tests** — the measured probes become tests: T-profile ALD seals a
+   void at t ≥ half-opening, straight gap fills seamed; shadow wedge position vs.
+   analytic for a rectangular mask at angle θ; undercut depth vs. `rate·t`.
+3. **Acceptance = S1–S4** asserted through predicates (S1 pattern width == design ±
+   tol; S2 undercut ratio; S3 resist-unreachable and film continuous; S4 fence
+   components present). These four tests are the definition of done for M3.
+4. **Performance floors** — heavy directional step ≤ a few seconds at default grid
+   (Q6); per-step cost flat across 60-step chains (the v1 superlinear blow-up,
+   ADR-0001 F3, must be provably gone).
+
+## 14. Milestones
+
+- **M0 Skeleton** — package layout (`model/`, `kernel/`, `processes/`, `materials/`,
+  `runtime/`, `io/`), Grid/Structure/CSG/constructors, marching squares, pytest
+  wiring. DoD: kernel-invariant tests green.
+- **M1 Motion** — offset fast path, upwind advection + CFL, narrow-band reinit,
+  commit gate with balance check. DoD: dose-splitting and balance tests green;
+  60-step chain flat cost.
+- **M2 Flux** — `FluxModel2D` reverse marching, evaporation/IBE/RIE/sputter,
+  redeposition bounce. DoD: shadow-wedge and mechanism tests green; budget verified.
+- **M3 Litho + predicates** — materials/fields/capabilities, resist set, dissolution
+  with reachability, lift-off, predicates. DoD: **S1–S4 acceptance tests green.**
+- **M4 Runtime** — revisions, runs, persistence, replay + cache; UI integration
+  (render from φ, chain UI on capabilities). DoD: save/load/replay round-trip;
+  interactive session usable.
+- **M5 Delivery** — entry-point plugins, PyInstaller monolith, particles/clean,
+  anneal, wafer materialization UI (position fan). DoD: packaged exe runs S1–S4.
+
+v1 (`cross_section_general_prototype.py`) stays untouched next to v2 until M3's
+acceptance tests pass, per AGENTS.md §7; then it becomes a `ui_backups/` snapshot.
+
+## 15. Risks
+
+| Risk | Mitigation |
+|---|---|
+| Reinit drift accumulates over long chains | narrow band + sub-cell fix, displacement reported per commit, balance test in CI |
+| Flux rebuild too slow at fine grids | rebuild-every-K knob, coarse visibility grid; measured fallback path, not a redesign |
+| Corner rounding at ~½ cell disturbs ideal-case didactics | resolution parameter visible + documented; ideal constructors exact for planes; acceptance tolerances set accordingly |
+| Determinism broken by a careless plugin | context-RNG contract + registry lint + cache keyed on code version |
+| 3D flux solver underestimated | seam is named and 2D-only by decision (Q7); nothing else in the core is 2D |
+| Scope creep from fidelity tier (b)/(c) | tiers live in process wrappers and rate models only; M-plan contains none of them |
+
+## 16. Deliberately open
+
+The 3D `FluxModel3D`; semi-quantitative rate calibration; external-simulator
+adapters beyond the exchange format; reflow/anneal geometry motion (curvature-driven
+flow is a natural level-set extension when wanted); GDS/CAD pattern import into the
+exposure constructors.

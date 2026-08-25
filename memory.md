@@ -1058,3 +1058,29 @@ Validation run:
 Next steps / known risks:
 1. v2-only vocabulary (flux, angular distribution, redeposition, pinch-off, reachability) is deliberately **not** in the glossary yet — it gets added when the v2 decisions actually settle, per the file's "as currently implemented" rule.
 2. The design interview for the v2 structure model is still open (representation, multi-material, time integration, 3D upgrade path); no plan has been written yet.
+
+## Update 2026-08-25 (v2 Structure Model: Plan Written, ADR-0002..0004, Glossary v2 Terms)
+- Concluded the three-round design interview for the v2 structure model and wrote the plan: `docs/plans/v2-structure-model.md` (goal/fidelity contract with four acceptance scenarios S1-S4, structure model, kernel, process contract, didactic process set, predicates, wafer materialization, persistence, packaging, testing, milestones M0-M5, risks).
+- Recorded the hard-to-reverse decisions as short ADRs:
+  - `docs/adr/0002-per-material-signed-distance-fields.md` — geometry = one signed-distance field per material on one shared Grid as the single stored truth; analytic primitives are constructors only; only the exposed union front advects, buried materials are maintained by pointwise min/max clipping. Rejected: B-Rep (v1 path), VOF (poor normals; directional yield f(theta) and crystallographic anisotropy need grad-phi), single phi + material index (re-exposed buried interfaces would return staircase-quantised — the lift-off case).
+  - `docs/adr/0003-occurrence-identity-by-reconstruction.md` — Materialvorkommen is a derived view (connected components), lineage reconstructed by overlap matching, no stored occurrence IDs.
+  - `docs/adr/0004-wafer-materialization-by-deterministic-replay.md` — wafer position is a property of materialization; lazy replay with cache keyed (recipe hash, position, step, code version); determinism invariant with (recipe, position, step)-seeded RNG.
+- `CONTEXT.md`: retired the unsettled `Facet` entry (settled by ADR-0002: fields + derived occurrences, no geometric segmentation entity) and added a `### Structure model v2` section (Grid, Structure, Field, Occurrence, Capability, Materialization), explicitly marked implementation-pending.
+- Consistency check before writing found one real gap and three mechanical rules, all resolved in the plan:
+  1. the multi-material question had been announced for round 3 but never asked — resolved in ADR-0002 (per-material SDFs, single moving front, clipping) and validated numerically;
+  2. material-scoped fields must be reset where their material changes, or dose from a first litho leaks into later resist (commit-gate rule);
+  3. reinitialisation must be triggered by sub-step count/distortion, never by user step boundaries, or 3x10s and 1x30s diverge (commit normalises once per chain step, displacement reported);
+  4. domain headroom + boundary guard replaces v1's magic 0.42 cut plane and boundary-edge filtering.
+- Numerical mechanism probes (540x1200 grid, numpy 2.4.6/scipy 1.17.1): half-plane SDF exact on the grid; constructed materials overlap-free; conformal growth as one array op (20 offsets in 4.2 ms); offset dose-splitting exact (1x20 vs 4x5: max diff 0.0); deposit-region clip formula disjoint from old solid; ALD t=25 nm over a 40 nm re-entrant T-profile opening seals an enclosed void (empty space -> 2 components) while t=15 stays open, and a straight 40 nm gap fills completely with a seam instead of a void — physically correct emergent behavior, no special-casing.
+- Interview decisions captured in the plan's inheritance table: complexity lives in processes not the structure model; 2D core with 3D-open data structures; hybrid material identity + fields; numpy/scipy accepted; no v1 compatibility (successor package, working name nanofab_v3) but revisions/artifacts/history/gating kept as concepts; geometry is truth + predicates for diagnosis; each process a standalone Structure->Structure function sharing kernel primitives; capability contracts with downgrade-only adapters; registry+entry points with monolith exe delivery and subprocess reserve; user-visible steps are chain steps, CFL sub-stepping internal.
+
+Why it changed:
+- User confirmed the remaining interview answers (Q4 derived occurrence view, Q5' lazy replay with cache, Q6 chain-steps-as-user-steps, Q7 N-D core with 2D flux/render seams) and asked for a final consistency check and the plan.
+
+Validation run:
+- Probe scripts executed headless in the session scratchpad (probe4/probe5); documentation-only changes to the repo, no code paths touched; `python -m compileall` not applicable.
+
+Next steps / known risks:
+1. Implementation starts at M0 (package skeleton + kernel invariant tests) per the plan's milestone order; v1 prototype stays untouched until M3's S1-S4 acceptance tests pass, then becomes a ui_backups snapshot per AGENTS.md §7.
+2. Flux-solver budget (10-100 ms per rebuild, rebuild-every-K) is estimated, to be verified in M2 — fallback is the K knob and visibility-grid coarseness, not a redesign.
+3. `NanoFab_Process_Manager_Documentation/04_Data_Model_Specification_Target.md` now lags the agreed v2 model (per CONTEXT.md's rule the docs catch up later); Layer becomes a derived stack summary, facets become Fields.
