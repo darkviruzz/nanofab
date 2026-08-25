@@ -21,7 +21,8 @@ import pytest
 
 from nanofab_v3 import Grid, Structure
 from nanofab_v3.kernel import constructors as ctor
-from nanofab_v3.kernel import gate, motion
+from nanofab_v3.kernel import flux, gate, motion, predicates
+from nanofab_v3.processes import lithography
 
 CHAIN_LENGTH = 60
 
@@ -105,3 +106,102 @@ def test_a_split_dose_costs_what_the_work_costs(small_grid: Grid) -> None:
     ten_steps = time.perf_counter() - started
 
     assert ten_steps < 3.0 * one_shot, f"splitting cost {ten_steps / one_shot:.1f}x"
+
+
+# -- M3: what the predicates and the reachability gate add -------------------
+
+
+def test_connectivity_costs_a_fraction_of_a_motion_sub_step(small_grid: Grid) -> None:
+    """Plan §4.4's queries are cheap enough to run every few sub-steps.
+
+    The M3 handoff's budget rests on this: "connectivity is nearly free, so a
+    reachability gate rebuilt every few sub-steps costs less than the flux does".
+    Measured at the plan's reference grid (540x1200 at 1 nm): `label_region`
+    2.7 ms, `reachable_empty` 4.9 ms, `supported` 3.6 ms, `enclosed_voids`
+    11.5 ms — against ~50 ms for one complete advection sub-step (§17.7).
+
+    Asserted here as a ratio on a small grid, for the reason the file's own
+    docstring gives: a wall time would be a statement about this machine.
+    """
+    structure = ctor.add_material(
+        Structure(small_grid),
+        "silicon",
+        ctor.half_space(small_grid, normal=(1.0, 0.0), point=(100.0, 0.0)),
+    )
+    rates = motion.SurfaceRates({"silicon": 2.0})
+
+    started = time.perf_counter()
+    motion.advect_front(structure, rates, 0.2)
+    sub_step = time.perf_counter() - started
+
+    started = time.perf_counter()
+    for _ in range(4):
+        predicates.reachable_empty(small_grid, structure.solid_phi)
+        predicates.supported(structure)
+        predicates.enclosed_voids(structure)
+    queries = (time.perf_counter() - started) / 4.0
+
+    assert queries < sub_step, f"connectivity cost {queries / sub_step:.1f} sub-steps"
+
+
+def test_gating_a_directional_process_is_paid_for_by_the_flux(small_grid: Grid) -> None:
+    """The gate rides the flux's rebuild cadence, so it costs next to nothing.
+
+    `motion._FLUX_REFRESH` refreshes every factor of a `ProductFlux` on the same
+    sub-steps, and both answer the same question — "where are the walls". Measured
+    at the reference grid: a 4 nm RIE costs 1.28 s gated and 1.28 s ungated, i.e.
+    the difference is below the noise; a heavy 60 s ion-beam etch costs 9.9 s
+    gated against 9.0 s ungated, **+10 %**.
+
+    Windowing the collar is what bought that: the gate rebuild went from 48 ms to
+    20 ms at the reference grid when its distance transform stopped running over
+    the headroom and the bulk of the wafer (`predicates._front_window`).
+    """
+    structure = ctor.add_material(
+        Structure(small_grid),
+        "silicon",
+        ctor.half_space(small_grid, normal=(1.0, 0.0), point=(100.0, 0.0)),
+    )
+    rates = motion.SurfaceRates({"silicon": 2.0})
+    model = flux.reactive_ion_etch(chemical_fraction=0.2)
+
+    started = time.perf_counter()
+    motion.advect_front(structure, rates, 2.0, flux=model)
+    ungated = time.perf_counter() - started
+
+    started = time.perf_counter()
+    motion.advect_front(
+        structure, rates, 2.0, flux=motion.gated(model, predicates.ReachableFront())
+    )
+    gated = time.perf_counter() - started
+
+    assert gated < 2.0 * ungated, f"the gate cost {gated / ungated:.1f}x the flux"
+
+
+def test_the_ideal_tier_costs_less_than_one_advection(small_grid: Grid) -> None:
+    """A region operation is a set operation: no sub-stepping, no CFL, no time.
+
+    That is the whole reason plan §3.3's ideal tier exists as a separate *kind* of
+    process rather than as a flag. Measured at the reference grid: the complete
+    spin-coat + ideal exposure + ideal development sequence is 0.30 s and an ideal
+    lift-off 0.19 s, against 0.74 s for a single 4 nm directional deposition.
+    """
+    structure = ctor.add_material(
+        Structure(small_grid),
+        "silicon",
+        ctor.half_space(small_grid, normal=(1.0, 0.0), point=(60.0, 0.0)),
+    )
+    coated = lithography.spin_coat(structure, "resist", thickness=40.0)
+    exposed = lithography.expose_ideal(
+        coated, "resist", lithography.windows(small_grid, [(60.0, 140.0)])
+    )
+
+    started = time.perf_counter()
+    lithography.develop_ideal(exposed, "resist")
+    ideal = time.perf_counter() - started
+
+    started = time.perf_counter()
+    motion.advect_front(coated, motion.SurfaceRates({"resist": 2.0}), 2.0)
+    advection = time.perf_counter() - started
+
+    assert ideal < advection, f"the ideal tier cost {ideal / advection:.1f} advections"
