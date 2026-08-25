@@ -1,0 +1,410 @@
+"""Front motion: the isotropic fast path and the general advection (plan §4.2).
+
+Only the exposed union front ever moves. Buried interfaces are never advected —
+materials are maintained by clipping against the new union — so they keep their
+sub-cell shape until a later step re-exposes them, which is the whole reason for
+per-material fields (ADR-0002).
+
+Two paths, one contract:
+
+- **Isotropic fast path** (`offset_solid`) — when the motion is isotropic and the
+  rate uniform over the affected front, offsetting is exact and instant:
+  `phi <- phi -/+ rate * t`, one array operation. Splitting a dose is exact here.
+- **General path** (`advect_front`) — first-order upwind advection of the union
+  front with the speed field `F(x) = sign * rate(material_at_front(x)) * flux(x)`,
+  sub-stepped under the CFL condition `dt <= cfl * spacing / max|F|`.
+
+Sub-stepping is **internal** (plan Q6): the user's "etch 10 s" is one chain step,
+and the solver divides it invisibly. The speed field is rebuilt from the current
+front every sub-step, so etching through material A into B switches rates by
+itself — and a material with rate 0 simply stalls the front there. **Mask
+behaviour emerges from rates**; it is not a special case anywhere in this module.
+
+Material bookkeeping after each move (plan §3.2):
+
+    etch:    phi_m <- max(phi_m, phi_solid_new)                 for every material
+    deposit: phi_k <- min(phi_k, max(phi_solid_new, -phi_solid_old))
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from typing import Mapping
+
+import numpy as np
+from scipy import ndimage
+
+from nanofab_v3.kernel import invariants, measures, reinit, stencil
+from nanofab_v3.materials import MaterialId
+from nanofab_v3.model.grid import PHI_DTYPE, Grid
+from nanofab_v3.model.structure import Structure
+
+_GRADIENT_QUANTILE = 0.99
+"""Quantile the distortion trigger reads (see `nanofab_v3.kernel.invariants`)."""
+
+_OWNER_REFRESH = 5
+"""Sub-steps between two extensions of the front-material map into empty space.
+
+A solver constant, like the flux solver's rebuild interval in plan §4.3: the
+solid half of that map is exact every sub-step, and the half that says where the
+surrounding walls are changes far more slowly than the front moves.
+"""
+
+
+@dataclass(frozen=True)
+class SurfaceRates:
+    """`rate(material_at_front)` in nm/s — the material half of the speed field.
+
+    Attributes:
+        rates: Rate per material at the front, in nm/s.
+        default: Rate for a material that is not listed. The default default is
+            0.0: a material nobody gave a rate to does not move, which is how a
+            hard mask behaves without being modelled as one.
+    """
+
+    rates: Mapping[MaterialId, float] = field(default_factory=dict)
+    default: float = 0.0
+
+    def for_material(self, material: MaterialId) -> float:
+        """The rate of one material, falling back to `default`."""
+        return float(self.rates.get(material, self.default))
+
+    @property
+    def bound(self) -> float:
+        """The largest rate that can occur, in nm/s — the CFL condition's input.
+
+        Taken over every listed rate and the default rather than over the
+        materials currently at the front, so the sub-step size does not depend on
+        where the front happens to be. That is what keeps a split dose comparable
+        to an unsplit one.
+        """
+        return max([abs(self.default), *(abs(float(r)) for r in self.rates.values())])
+
+    def map_onto(self, grid: Grid, materials: list[MaterialId], nearest: np.ndarray) -> np.ndarray:
+        """The per-cell rate of the material nearest to each cell."""
+        table = np.array([self.for_material(m) for m in materials], dtype=PHI_DTYPE)
+        if table.size == 0:
+            return grid.zeros()
+        return table[nearest]
+
+
+@dataclass(frozen=True)
+class MotionOutcome:
+    """What one motion did, in the terms the commit gate checks it against.
+
+    Attributes:
+        structure: The moved `Structure` (a new revision, input untouched).
+        swept: Signed measure the front integral says was added (positive) or
+            removed (negative), in nm^ndim — `∫ rate * flux * dt` along the
+            front, the reference of the balance check (plan §4.5.4).
+        sub_steps: CFL sub-steps taken; 1 on the fast path.
+        dt: Sub-step length in s, `0.0` on the fast path (which is not
+            time-resolved — it is one exact offset).
+        max_speed: The CFL bound used, in nm/s.
+        reinit_passes: Mid-motion renormalisations the distortion trigger fired.
+    """
+
+    structure: Structure
+    swept: float
+    sub_steps: int
+    dt: float = 0.0
+    max_speed: float = 0.0
+    reinit_passes: int = 0
+
+
+def _clipped(
+    originals: dict[MaterialId, np.ndarray], solid: np.ndarray
+) -> dict[MaterialId, np.ndarray]:
+    """Etch bookkeeping: no material may stick out of the new union (plan §3.2).
+
+    `max(phi_m, phi_solid_new)` exactly as the plan states it, with one
+    refinement: always computed from the material's field at the **start of the
+    motion**, never from the previous sub-step, so a receding front leaves the
+    current distance behind rather than a sawtooth of stale ones. Where another
+    material's surface is nearer than m's own, the union's distance understates
+    `phi_m`; that is a value the commit gate's reinitialisation repairs, and the
+    sign — which is what makes this a correct set operation — is right either way.
+    """
+    return {material: np.maximum(values, solid) for material, values in originals.items()}
+
+
+def _assign_deposit(
+    phi: dict[MaterialId, np.ndarray],
+    material: MaterialId,
+    solid_start: np.ndarray,
+    solid_now: np.ndarray,
+    existing: np.ndarray | None,
+) -> None:
+    """Deposition bookkeeping: the material owns what the front grew into.
+
+    Always measured against the solid at the **start of the motion**, never
+    against the previous sub-step. Deposition only ever grows the solid, so
+    `solid_now \\ solid_start` is the deposited region however many sub-steps it
+    took — and taking it in one piece keeps `phi_k` a usable field instead of the
+    sawtooth that accumulating per-sub-step shells would leave behind (each shell
+    is only `rate * dt` thick, so every value in the deposit would sit within a
+    sub-step of zero).
+    """
+    shell = np.maximum(solid_now, -solid_start)
+    phi[material] = shell if existing is None else np.minimum(existing, shell)
+
+
+def union_front(
+    structure: Structure, policy: reinit.ReinitPolicy = reinit.ReinitPolicy()
+) -> np.ndarray:
+    """The field the front is advected on: `min_m phi[m]`, with seams repaired.
+
+    Where two materials touch, `min_m phi[m]` is exactly zero *along their shared
+    interface* — the price of a per-material representation, because each field
+    is correctly zero on its own boundary there. Left alone, that buried seam
+    would behave like a front: an offset would push it positive and punch a void
+    along a perfectly continuous interface, and the balance check's front
+    integral would count it.
+
+    The repair is the reinitialisation the plan already mandates: with a cell at
+    the zero level counting as inside (`stencil.has_opposite_sign_neighbour`),
+    only the real solid/empty interface is held fixed, and the seam relaxes to
+    the distance it should have had. It is run only when a seam is actually
+    there — a single material, or materials that do not touch, need nothing.
+    """
+    solid = structure.solid_phi.copy()
+    if len(structure.materials) < 2 or not _has_buried_seam(structure.grid, solid):
+        return solid
+    return reinit.reinitialise(structure.grid, solid, policy).phi
+
+
+def _has_buried_seam(grid: Grid, solid: np.ndarray) -> bool:
+    """Whether the union field has a zero level that no empty space touches."""
+    empty = solid > 0.0
+    reachable = ndimage.binary_dilation(empty, ndimage.generate_binary_structure(grid.ndim, 1))
+    return bool(np.any((np.abs(solid) < grid.spacing) & ~reachable))
+
+
+def _bookkeep(
+    originals: dict[MaterialId, np.ndarray],
+    solid_start: np.ndarray,
+    solid_now: np.ndarray,
+    deposit_material: MaterialId | None,
+) -> dict[MaterialId, np.ndarray]:
+    """Distribute a moved union front back onto the materials (plan §3.2).
+
+    Always derived from the fields at the start of the motion, so calling it once
+    per sub-step costs the same as calling it once at the end and gives the same
+    answer — which is what lets the sub-steps stay invisible.
+    """
+    if deposit_material is None:
+        return _clipped(originals, solid_now)
+    phi = dict(originals)
+    _assign_deposit(
+        phi, deposit_material, solid_start, solid_now, originals.get(deposit_material)
+    )
+    return phi
+
+
+class _FrontMaterial:
+    """Which material owns the nearest piece of solid, for every cell.
+
+    This is the `material_at_front(x)` of plan §4.2's speed field, and getting it
+    from `argmin_m phi[m]` alone is not enough. Inside the solid that argmin is
+    exactly right, and — since an etch only ever removes cells — it never changes
+    during a motion, so the front switching from material A to B as it eats
+    through is captured to sub-cell order for free.
+
+    Outside the solid it is wrong in the one case that matters. In an undercut
+    void the nearest solid is the **mask overhanging it**, not the material that
+    used to fill the void; reading a clipped field there would hand the mask's
+    own exposed face the etch rate of the material below it and the undercut
+    would run away. So the map is extended into empty space by "the owner of the
+    nearest solid cell", which is a distance transform, and therefore refreshed
+    every `_OWNER_REFRESH` sub-steps rather than every one. The solid half stays
+    exact every sub-step; the void half changes slowly, being a statement about
+    where the walls are.
+    """
+
+    def __init__(self, grid: Grid, owners: np.ndarray) -> None:
+        self._grid = grid
+        self._structure = ndimage.generate_binary_structure(grid.ndim, 1)
+        self._owners = owners
+        self._extended = owners
+        self._age = 0
+
+    def of(self, solid: np.ndarray, owners: np.ndarray | None = None) -> np.ndarray:
+        """The owning material index per cell, given the current union field."""
+        if owners is not None:
+            self._owners = owners
+        solid_mask = solid <= 0.0
+        if self._age % _OWNER_REFRESH == 0:
+            self._extended = self._extend(solid_mask)
+        self._age += 1
+        return np.where(solid_mask, self._owners, self._extended)
+
+    def _extend(self, solid_mask: np.ndarray) -> np.ndarray:
+        """Carry the owner of each solid cell out into the empty space."""
+        if not solid_mask.any() or solid_mask.all():
+            return self._owners
+        _, indices = ndimage.distance_transform_edt(~solid_mask, return_indices=True)
+        return self._owners[tuple(indices)]
+
+
+def offset_solid(
+    structure: Structure,
+    distance: float,
+    *,
+    deposit_material: MaterialId | None = None,
+    policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
+) -> MotionOutcome:
+    """Move the whole front by `distance` nm at once — the isotropic fast path.
+
+    `distance > 0` grows the solid and needs a `deposit_material` to own the new
+    shell (conformal deposition, ALD); `distance < 0` shrinks it and clips every
+    material (uniform wet etch). Exact for a signed-distance field, so splitting
+    the dose changes nothing: `1 x 20 nm` and `4 x 5 nm` agree to the last bit.
+    """
+    grid = structure.grid
+    distance = float(distance)
+    if not math.isfinite(distance):
+        raise ValueError(f"distance must be finite, got {distance}")
+    if distance > 0.0 and deposit_material is None:
+        raise ValueError("growing the front needs a deposit_material to own the new shell")
+    if distance < 0.0 and deposit_material is not None:
+        raise ValueError("a receding front removes material; it takes no deposit_material")
+
+    if not structure.materials and deposit_material is None:
+        raise ValueError("an empty Structure has no front to move")
+    if distance == 0.0:
+        return MotionOutcome(structure, swept=0.0, sub_steps=0)
+    solid_before = union_front(structure, policy)
+    solid_after = (solid_before - PHI_DTYPE(distance)).astype(PHI_DTYPE)
+
+    originals = dict(structure.phi)
+    phi = _bookkeep(originals, solid_before, solid_after, deposit_material)
+    moved = Structure(grid, phi, dict(structure.fields))
+    # Trapezoidal front integral: the front's length changes while it moves, and
+    # taking only its starting length would miss the curvature term entirely
+    # (a disk grown by 10 nm would come out 10 % short).
+    front_before = measures.front_integral(grid, solid_before)
+    front_after = measures.front_integral(grid, solid_after)
+    swept = math.copysign(0.5 * (front_before + front_after) * abs(distance), distance)
+    return MotionOutcome(moved, swept=swept, sub_steps=1)
+
+
+def advect_front(
+    structure: Structure,
+    rates: SurfaceRates,
+    duration: float,
+    *,
+    deposit_material: MaterialId | None = None,
+    flux: np.ndarray | None = None,
+    cfl: float = 0.5,
+    policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
+) -> MotionOutcome:
+    """Advect the union front for `duration` seconds under a material-dependent rate.
+
+    Etches unless a `deposit_material` is named, in which case the front grows and
+    that material owns what it grows into. `flux` is an optional per-cell
+    multiplier on the rate — 1 everywhere here, and from milestone M2 on the
+    output of `FluxModel2D`, which is where shadowing and angular yield enter.
+    """
+    grid = structure.grid
+    duration = float(duration)
+    if duration < 0.0 or not math.isfinite(duration):
+        raise ValueError(f"duration must be a non-negative finite time, got {duration}")
+    if not 0.0 < cfl <= 1.0:
+        raise ValueError(f"cfl must be in (0, 1], got {cfl}")
+    if flux is not None:
+        flux = grid.as_field(flux, dtype=PHI_DTYPE)
+
+    if not structure.materials and deposit_material is None:
+        raise ValueError("an empty Structure has no front to move")
+
+    sign = PHI_DTYPE(1.0 if deposit_material is not None else -1.0)
+    speed_bound = rates.bound * (float(np.max(np.abs(flux))) if flux is not None else 1.0)
+    if duration == 0.0 or speed_bound == 0.0:
+        return MotionOutcome(structure, swept=0.0, sub_steps=0, max_speed=speed_bound)
+
+    sub_steps = max(1, int(math.ceil(duration * speed_bound / (cfl * grid.spacing))))
+    dt = PHI_DTYPE(duration / sub_steps)
+
+    originals = dict(structure.phi)
+    materials = list(originals)
+    if deposit_material is not None and deposit_material not in originals:
+        materials.append(deposit_material)
+    rate_table = np.array([rates.for_material(m) for m in materials], dtype=PHI_DTYPE)
+
+    solid_start = union_front(structure, policy)
+    solid = solid_start.copy()
+    front = _FrontMaterial(grid, _owner_map(grid, originals, materials))
+    swept = 0.0
+    previous_rate_integral = 0.0
+    reinit_passes = 0
+
+    for step in range(sub_steps):
+        # The speed field is rebuilt from the current front every sub-step, which
+        # is what makes a front etching through A into B switch rates by itself.
+        # For an etch the solid half of the ownership map cannot change — cells
+        # only ever leave the solid — so it is computed once.
+        owners = (
+            None
+            if deposit_material is None
+            else _owner_map(grid, originals, materials, deposit_material, solid_start, solid)
+        )
+        rate_map = rate_table[front.of(solid, owners)]
+        if flux is not None:
+            rate_map = rate_map * flux
+        speed = sign * rate_map
+
+        if step == 0:
+            previous_rate_integral = measures.front_integral(grid, solid, np.abs(rate_map))
+        solid = solid - dt * speed * stencil.godunov_norm(solid, grid.spacing, speed > 0.0)
+
+        rate_integral = measures.front_integral(grid, solid, np.abs(rate_map))
+        swept += float(dt) * 0.5 * (previous_rate_integral + rate_integral)
+        previous_rate_integral = rate_integral
+
+        # Distortion trigger (plan §4.2): tied to sub-step count and to how far
+        # the field has drifted from a distance function — never to a user step
+        # boundary, or 3 x 10 s and 1 x 30 s would diverge.
+        is_last = step == sub_steps - 1
+        if not is_last and (step + 1) % policy.every_sub_steps == 0:
+            error = invariants.band_gradient_error(grid, solid, quantile=_GRADIENT_QUANTILE)
+            if error > policy.max_gradient_error:
+                solid = reinit.reinitialise(grid, solid, policy).phi
+                reinit_passes += 1
+
+    phi = _bookkeep(originals, solid_start, solid, deposit_material)
+    moved = Structure(grid, phi, dict(structure.fields))
+    return MotionOutcome(
+        structure=moved,
+        swept=math.copysign(swept, float(sign)),
+        sub_steps=sub_steps,
+        dt=float(dt),
+        max_speed=speed_bound,
+        reinit_passes=reinit_passes,
+    )
+
+
+def _owner_map(
+    grid: Grid,
+    originals: dict[MaterialId, np.ndarray],
+    materials: list[MaterialId],
+    deposit_material: MaterialId | None = None,
+    solid_start: np.ndarray | None = None,
+    solid_now: np.ndarray | None = None,
+) -> np.ndarray:
+    """Index into `materials` of the material owning each **solid** cell.
+
+    `argmin_m phi[m]` over the fields as they were at the start of the motion:
+    an etch only removes cells, so a cell that is still solid still belongs to
+    whoever owned it. Deposition is the one thing that adds solid, and what it
+    adds belongs to the deposited material.
+    """
+    if not originals:
+        owners = np.zeros(grid.shape, dtype=np.int16)
+    else:
+        owners = np.argmin(np.stack([originals[m] for m in materials if m in originals]), axis=0)
+        owners = owners.astype(np.int16)
+    if deposit_material is not None and solid_start is not None and solid_now is not None:
+        grew = (solid_now <= 0.0) & (solid_start > 0.0)
+        owners = np.where(grew, np.int16(materials.index(deposit_material)), owners)
+    return owners
