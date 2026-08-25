@@ -23,6 +23,10 @@ This file defines how the **Coding Assistant** should operate in this repository
   - `nanofab_modular/engine.py`
   - `nanofab_modular/registry.py`
   - `nanofab_modular/steps/*.py`
+- Structure model v2 (successor of `nanofab_modular`, built alongside v1):
+  - `docs/plans/v2-structure-model.md` (the specification), `docs/adr/*.md`
+  - `nanofab_v3/model/`, `nanofab_v3/kernel/`
+  - `tests/`
 - Product docs:
   - `NanoFab_Process_Manager_Documentation/*.md`
 - Baselines/backups:
@@ -41,8 +45,12 @@ This file defines how the **Coding Assistant** should operate in this repository
   - `./ripgrep/rg.exe -n "text" path`
 - Use local virtualenv Python for all runs/checks:
   - `./.venv/Scripts/python.exe ...`
-- Preferred fast validation:
-  - `./.venv/Scripts/python.exe -m compileall nanofab_manager.py nanofab_modular`
+- Preferred fast validation (both steps, in this order):
+  1. `./.venv/Scripts/python.exe -m compileall nanofab_manager.py nanofab_modular nanofab_v3 tests`
+  2. `./.venv/Scripts/python.exe -m pytest`
+- The test suite covers `nanofab_v3` (structure model v2); its layers and the acceptance
+  criteria are defined in `docs/plans/v2-structure-model.md` §13. A change to `nanofab_v3`
+  is not validated by `compileall` alone.
 - Avoid unnecessary GUI process loops; prefer compile/import/smoke checks unless UI behavior must be tested directly.
 
 ## 5) memory.md Policy (Keep Updated)
@@ -74,8 +82,9 @@ The **Coding Assistant** may propose improvements to `AGENTS.md`, but must **alw
 
 ## 8) Build/Finish Flow
 1. Confirm active version from source constants (`APP_VERSION`) in active entry file.
-2. Run compile check:
-   - `./.venv/Scripts/python.exe -m compileall <active_app_file> nanofab_modular`
+2. Run validations:
+   - `./.venv/Scripts/python.exe -m compileall <active_app_file> nanofab_modular nanofab_v3 tests`
+   - `./.venv/Scripts/python.exe -m pytest`
 3. Run minimal smoke test for key flows when feasible.
 4. Update `memory.md` with outcome and any release notes.
 5. Prepare Git tag only after user approval.
