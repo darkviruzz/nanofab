@@ -50,6 +50,58 @@ _Avoid_: "locking", "dependency" alone.
 The append-only log of `HistoryEntry` records on a `SampleState` — which step, when, with what parameters, produced each revision. Carries the full trail, not just the latest step.
 _Avoid_: "log" alone (too generic).
 
+### Process character
+
+These describe *how* a process acts on the sample, not which machine runs it. They are
+the axis the step registry is organised on (`etch_isotropic` / `etch_anisotropic`,
+`deposit_conformal` / `deposit_directional`), so getting them backwards inverts the
+model.
+
+**Isotropic**:
+Direction-independent: the process acts at the same rate on a surface regardless of
+that surface's orientation. Isotropic removal undercuts a mask; isotropic arrival
+coats vertical sidewalls as thickly as horizontal faces. Wet chemical etching and ALD
+are the reference cases.
+_Avoid_: "uniform" (that's about *place*, not direction), "non-directional".
+
+**Anisotropic**:
+Direction-dependent: the rate varies with direction. Two distinct causes, and the
+model must keep them apart because they respond to different inputs:
+- **Flux anisotropy** — the flux arrives from, or removes along, a limited solid
+  angle, so what a surface receives depends on its orientation and on what stands in
+  the way. Evaporation, RIE and ion beam etching. This is the one that produces
+  shadowing.
+- **Crystallographic anisotropy** — the *material* responds differently along
+  different lattice directions, independent of where the flux comes from. KOH on
+  silicon. Governed by the material's properties, not by the process geometry.
+
+_Avoid_: "directional" as a synonym (see below — that's the flux case only),
+"selective" (that's material contrast, an unrelated axis).
+
+**Conformal**:
+A property of the *result*, not of the process: equal layer thickness on every
+reachable surface, sidewalls and undercuts included. It is what isotropic arrival
+produces, so a conformal process is an isotropic one — never an anisotropic one.
+_Avoid_: "even", "uniform coverage".
+
+**Directional**:
+Shorthand for a flux-anisotropic process whose incoming or outgoing solid angle is
+narrow enough that surface orientation and occlusion dominate the outcome.
+_Avoid_: "anisotropic" alone (crystallographic anisotropy is anisotropic but not
+directional).
+
+**Shadowing**:
+The reduction or absence of flux on a surface because another part of the sample
+occludes the line to the source. Only meaningful for a directional process — an
+isotropic one has no line to block.
+_Avoid_: "masking" (that's a deliberate patterning layer), "occlusion" alone.
+
+**Undercut**:
+Material removed laterally beneath a masking layer, so the mask overhangs the feature
+it defined. The signature of an isotropic removal component; a purely directional etch
+produces none.
+_Avoid_: "underetch", "lateral etch" (describes the mechanism, not the resulting shape).
+
 ### Attachments & annotations
 
 **Attachment**:

@@ -1040,3 +1040,21 @@ Next steps / known risks:
 1. Recommended implementation order is in the ADR's Consequences section; D5 (exposure from current state) is the single change that unblocks iteration, D3 (canonicalisation) is what bounds the artifacts.
 2. ADR decision D2 accepts polyline-only geometry for now; analytic arcs stay lost through booleans until the hybrid provenance model (D2c) is built.
 3. Take a `ui_backups/` snapshot per AGENTS.md §7 before starting the persistent-revision refactor (D1) — it changes public signatures inside the prototype.
+
+## Update 2026-08-25 (Glossary: Process Character Terms — Isotropic/Anisotropic Corrected)
+- Added a `### Process character` section to `CONTEXT.md` defining `Isotropic`, `Anisotropic`, `Conformal`, `Directional`, `Shadowing` and `Undercut`.
+- The definitions correct an inversion: conformal deposition on all exposed surfaces (ALD) is **isotropic**, not anisotropic; a process that only reaches surfaces "open" towards a source and therefore casts shadows (evaporation, sputtering, RIE, IBE) is **anisotropic/directional**. `Conformal` is recorded as a property of the result, and as a consequence of isotropic arrival — so a conformal process is never an anisotropic one.
+- `Anisotropic` is split into two causes that the model must keep apart because they respond to different inputs:
+  - **flux anisotropy** — limited solid angle of arrival/removal, orientation- and occlusion-dependent, produces shadowing;
+  - **crystallographic anisotropy** — the material responds differently along lattice directions independent of flux geometry (KOH on Si), governed by material properties rather than process geometry.
+- Terms were grounded in the v1 code that already exists (`etch_isotropic` / `etch_anisotropic`, `deposit_conformal` / `deposit_directional`, `build_shadow_mask`, `MODE_ISOTROPIC = "Isotropic Undercut"`), so the glossary still describes the system as implemented, per `CONTEXT.md`'s own rule.
+
+Why it changed:
+- During the v2 data-model design interview the terms were used inverted for ALD and sputtering. Since the whole process model is organised on this axis, the glossary had to be settled before the representation decision.
+
+Validation run:
+- Documentation only; no code paths touched.
+
+Next steps / known risks:
+1. v2-only vocabulary (flux, angular distribution, redeposition, pinch-off, reachability) is deliberately **not** in the glossary yet — it gets added when the v2 decisions actually settle, per the file's "as currently implemented" rule.
+2. The design interview for the v2 structure model is still open (representation, multi-material, time integration, 3D upgrade path); no plan has been written yet.
