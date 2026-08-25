@@ -1,0 +1,564 @@
+"""The resist set: spin-coat, exposure, development (plan §6, rows 2-6).
+
+This is where plan §3.3's ideal/physical split stops being a sentence about
+fields and becomes two pairs of processes:
+
+| tier | exposure writes | development reads | how it moves the front |
+|---|---|---|---|
+| ideal | `exposed` (int8) | `resist & exposed` | one set operation |
+| physical | `dose` (float32) | `develop_rate(dose)` | advection, gated |
+
+Both pairs act on the same `Structure` and the same resist. What differs is the
+`Field` and the *kind* of operation — which is exactly interview decision I1
+(complexity lives in the process, the structure model stays uniform) and exactly
+what makes the capability contract of §5.3 do real work: `develop.ideal` requires
+`resist.exposed` and `develop.rate` requires `resist.dose`, so a chain that mixes
+tiers is either complete or not runnable, and never silently wrong.
+
+The **exposure patterns** are constructors (plan §4.1): sampled onto the grid
+once, at exposure time, and then forgotten. `windows` and `grating` below return
+signed-distance fields, so an ideal exposure boundary is exact to the constructor
+rather than to the cell — and a `dose` exposure gets a smooth field to blur.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Sequence
+
+import numpy as np
+from scipy import ndimage
+
+from nanofab_v3.kernel import constructors as ctor
+from nanofab_v3.kernel import csg, motion, predicates, regions
+from nanofab_v3.kernel.occurrences import label_region
+from nanofab_v3.materials import RESIST, MaterialId
+from nanofab_v3.model import capability
+from nanofab_v3.model.field import FieldKey, FieldSpec
+from nanofab_v3.model.grid import PHI_DTYPE, Grid
+from nanofab_v3.model.quantity import Quantity
+from nanofab_v3.model.structure import Structure
+from nanofab_v3.processes.contract import (
+    DIDACTIC,
+    IDEAL,
+    FunctionStep,
+    ParamSpec,
+    StepContext,
+    StepResult,
+)
+from nanofab_v3.processes.rates import develop_rates
+
+EXPOSED = FieldSpec(
+    name="exposed", dtype=np.int8, default=0, material_scoped=True, unit=""
+)
+"""The ideal tier's exposure field: 1 where the pattern struck the resist."""
+
+DOSE = FieldSpec(
+    name="dose", dtype=np.float32, default=0.0, material_scoped=True, unit="mJ/cm^2"
+)
+"""The physical tier's exposure field, in mJ/cm^2 (plan §3.3)."""
+
+
+# -- exposure patterns, as constructors (plan §4.1) --------------------------
+
+
+def windows(
+    grid: Grid, spans: Sequence[tuple[float, float]], *, axis: str | int = -1
+) -> np.ndarray:
+    """Signed-distance field of a set of open stripes along one lateral axis.
+
+    The simplest mask there is, and the one S1-S4 pattern with: a list of
+    `(start, end)` in nm, negative inside. Built from `constructors.box`, so the
+    edges are exact where the grid can represent them and the field is a usable
+    distance everywhere else — which is what lets a `dose` exposure blur it into
+    a realistic aerial image instead of a staircase.
+    """
+    if not spans:
+        raise ValueError("windows needs at least one span")
+    index = grid.axis_index(axis)
+    boxes = []
+    for start, end in spans:
+        if float(end) <= float(start):
+            raise ValueError(f"window span {(start, end)} is empty or inverted")
+        lower: list[float | None] = [None] * grid.ndim
+        upper: list[float | None] = [None] * grid.ndim
+        lower[index] = float(start)
+        upper[index] = float(end)
+        boxes.append(ctor.box(grid, lower=lower, upper=upper))
+    return csg.union(*boxes)
+
+
+def grating(
+    grid: Grid,
+    *,
+    period: float,
+    duty: float = 0.5,
+    phase: float = 0.0,
+    axis: str | int = -1,
+) -> np.ndarray:
+    """Signed-distance field of a periodic line/space pattern (plan §4.1, §6).
+
+    The procedural pattern of plan §3.3, sampled once. `duty` is the open
+    fraction of a period; `phase` shifts the pattern in nm. Every open stripe that
+    intersects the domain becomes a `box`, so the result is an exact SDF rather
+    than a sampled square wave — the distinction that matters as soon as anything
+    blurs it.
+    """
+    period = float(period)
+    duty = float(duty)
+    if period <= 0.0:
+        raise ValueError(f"period must be positive, got {period}")
+    if not 0.0 < duty < 1.0:
+        raise ValueError(f"duty must be in (0, 1), got {duty}")
+    index = grid.axis_index(axis)
+    first, last = grid.extent(index)
+    start = first - period + math.fmod(float(phase), period)
+    spans = []
+    while start < last + period:
+        spans.append((start, start + duty * period))
+        start += period
+    return windows(grid, spans, axis=index)
+
+
+# -- spin coating -------------------------------------------------------------
+
+
+def spin_coat(
+    structure: Structure,
+    material: MaterialId,
+    *,
+    thickness: float,
+    level: float | None = None,
+) -> Structure:
+    """Fill everything below a level with `material` — a planarising coat (plan §6).
+
+    One constructor operation: a slab up to `level`, carved against everything
+    already there by `add_material`. Planarising because that is what a spin coat
+    does — the film is thick in a trench and thin over a bump, and its **top is
+    flat**, which is the property lithography depends on and the reason the model
+    does not simply offset the surface.
+
+    `level` defaults to `thickness` above the highest solid cell, so "80 nm of
+    resist" over a flat wafer means what it says, and over a 40 nm step means 80
+    nm above the step — which is how a resist thickness is quoted.
+    """
+    grid = structure.grid
+    thickness = float(thickness)
+    if thickness <= 0.0:
+        raise ValueError(f"thickness must be positive, got {thickness}")
+    if level is None:
+        solid = structure.solid_mask
+        if not solid.any():
+            raise ValueError("spin_coat needs something to coat")
+        highest = int(np.max(np.argwhere(solid)[:, 0]))
+        level = grid.origin[0] + grid.spacing * highest + thickness
+    top, _ = grid.extent(0)
+    upper: list[float | None] = [None] * grid.ndim
+    upper[0] = float(level)
+    return ctor.add_material(structure, material, ctor.box(grid, [None] * grid.ndim, upper))
+
+
+# -- exposure -----------------------------------------------------------------
+
+
+def expose_ideal(
+    structure: Structure, material: MaterialId, pattern: np.ndarray
+) -> Structure:
+    """Write the `exposed` field from a pattern — the ideal tier (plan §3.3).
+
+    A binary field: the pattern either struck this cell or it did not. No optics,
+    no depth term, no diffusion — which is the point of the tier, and the honest
+    statement of what an "ideal" lithography is. It is stored over the whole grid
+    rather than masked to the resist, because the field is *material-scoped* and
+    the commit gate's scoping rule is what keeps it meaningful: resist spun after
+    this step arrives unexposed, whatever the pattern said about those cells.
+    """
+    grid = structure.grid
+    if material not in structure.phi:
+        raise KeyError(f"no material {material!r} to expose")
+    struck = grid.as_field(pattern, dtype=PHI_DTYPE) <= 0.0
+    return structure.with_field(EXPOSED.key(material), struck.astype(np.int8))
+
+
+def expose_dose(
+    structure: Structure,
+    material: MaterialId,
+    pattern: np.ndarray,
+    *,
+    dose: float,
+    blur: float = 0.0,
+    absorption: float | None = None,
+    library=None,
+) -> Structure:
+    """Write the `dose` field: pattern * blur, with a Beer-Lambert depth term (plan §6).
+
+    Three effects, each one line, each the reason the physical tier exists:
+
+    - the **aerial image** is the pattern smoothed by `blur` nm, so an edge is a
+      gradient rather than a step and the developed sidewall gets a slope;
+    - **Beer-Lambert** attenuates the dose with depth into the resist,
+      `exp(-alpha * d)`, which is why a thick resist develops a foot;
+    - the dose is a `float32` field, so `develop_rate(dose)` has something
+      continuous to read.
+
+    Depth is measured from the resist's own top surface — the distance transform
+    of the cells above it — rather than from a nominal plane, so a resist coating
+    a step gets the depth its geometry actually has.
+    """
+    grid = structure.grid
+    if material not in structure.phi:
+        raise KeyError(f"no material {material!r} to expose")
+    aerial = (grid.as_field(pattern, dtype=PHI_DTYPE) <= 0.0).astype(np.float64)
+    if blur > 0.0:
+        aerial = ndimage.gaussian_filter(aerial, float(blur) / grid.spacing, mode="nearest")
+
+    alpha = absorption
+    if alpha is None:
+        entry = None if library is None else library.get(material)
+        alpha = 0.0 if entry is None else float(entry.absorption)
+    values = float(dose) * aerial
+    if alpha > 0.0:
+        inside = predicates.cells_of(structure, material)
+        depth = ndimage.distance_transform_edt(inside, sampling=grid.spacing)
+        values = values * np.exp(-float(alpha) * depth)
+    return structure.with_field(DOSE.key(material), values.astype(np.float32))
+
+
+def threshold_dose(
+    structure: Structure, material: MaterialId, *, threshold: float
+) -> Structure:
+    """The **downgrade adapter** of plan §5.3: `dose` -> `exposed`, information lost.
+
+    Plan §5.3 allows downgrades and forbids upgrades, and this is what a downgrade
+    looks like: a continuous dose profile becomes a binary field, and everything
+    the profile said about the sidewall slope and the foot is gone. The step
+    warns about exactly that — an adapter that discarded information silently
+    would be worse than not having one, because the chain would keep running and
+    the picture would quietly become the ideal tier's.
+
+    There is deliberately no adapter the other way. `exposed -> dose` would have
+    to invent the profile, and missing information cannot be invented.
+    """
+    key = DOSE.key(material)
+    if not structure.has_field(key):
+        raise KeyError(f"no dose field on {material!r} to downgrade")
+    dose = np.asarray(structure.field(key))
+    return structure.with_field(
+        EXPOSED.key(material), (dose >= float(threshold)).astype(np.int8)
+    )
+
+
+# -- development --------------------------------------------------------------
+
+
+def develop_ideal(
+    structure: Structure,
+    material: MaterialId,
+    *,
+    tone: str = "positive",
+    faces: tuple[tuple[str, str], ...] | None = None,
+) -> Structure:
+    """Remove `resist & exposed` where the developer reaches it (plan §6).
+
+    The **ideal tier's shape**, and the reason plan §4.4's reachability gate has
+    two implementations: this is one `csg` operation with no rate and no time in
+    it, so gating it is a question about *regions* — which connected pieces of
+    the soluble region can the developer get to — and not about a speed field.
+
+    Per connected piece, not per cell: a developer that reaches the top of an
+    exposed column develops the column. A soluble pocket with no path to the
+    surface stays, which is the ideal tier's version of the same physics S3 shows
+    at scenario scale.
+    """
+    grid = structure.grid
+    key = EXPOSED.key(material)
+    if not structure.has_field(key):
+        raise KeyError(f"no exposed field on {material!r}; run an exposure first")
+    exposed = np.asarray(structure.field(key)) != 0
+    if tone not in ("positive", "negative"):
+        raise ValueError(f"tone must be 'positive' or 'negative', got {tone!r}")
+    soluble = predicates.cells_of(structure, material) & (exposed if tone == "positive" else ~exposed)
+    if not soluble.any():
+        return structure
+
+    labels, count = label_region(grid, soluble)
+    wet = predicates.reachable_surface(grid, structure.solid_phi, faces=faces)
+    reachable = np.unique(labels[wet & soluble])
+    reachable = reachable[reachable > 0]
+    if reachable.size == 0:
+        return structure
+    removed = np.isin(labels, reachable)
+    return regions.remove_region(structure, removed, materials=(material,))
+
+
+def develop_at_rate(
+    structure: Structure,
+    material: MaterialId,
+    *,
+    duration: float,
+    library,
+    faces: tuple[tuple[str, str], ...] | None = None,
+    policy=None,
+) -> motion.MotionOutcome:
+    """Advect the front through the resist at `develop_rate(dose)` (plan §6).
+
+    The **physical tier's shape**: a rate field, CFL sub-stepping, and the
+    reachability gate as a *multiplier* rather than as a region — because the
+    front moves, and every nanometre it moves opens paths that were closed. The
+    two factors go through `advect_front(flux=...)` as one product
+    (`motion.gated`), which is the seam that already existed for the flux model.
+
+    Regrouping the speed field is what lets the motion kernel stay ignorant of
+    dose: `rate(x) = bound * (develop_rate(dose(x)) / bound)` with
+    `SurfaceRates({resist: bound})` is the same product `F = rate * flux` the
+    solver already computes.
+    """
+    key = DOSE.key(material)
+    if not structure.has_field(key):
+        raise KeyError(f"no dose field on {material!r}; run a dose exposure first")
+    rate_map, bound = develop_rates(library, structure, material, np.asarray(structure.field(key)))
+    if bound <= 0.0:
+        return motion.MotionOutcome(structure, swept=0.0, sub_steps=0)
+    rates = motion.SurfaceRates({material: bound}, default=0.0)
+    normalised = np.clip(rate_map / bound, 0.0, 1.0)
+    gate = motion.gated(_ArrayFlux(normalised), predicates.ReachableFront(faces=faces))
+    kwargs = {} if policy is None else {"policy": policy}
+    return motion.advect_front(structure, rates, float(duration), flux=gate, **kwargs)
+
+
+class _ArrayFlux:
+    """A fixed per-cell multiplier in `FrontFlux` clothing.
+
+    The dose does not change while the resist develops — it is a property of the
+    exposure, not of the front — so this factor is a constant array. It still has
+    to be a model rather than a bare array, because it is being *multiplied* by
+    the reachability gate, which is not constant.
+    """
+
+    __slots__ = ("_values", "_bound")
+
+    def __init__(self, values: np.ndarray) -> None:
+        self._values = np.asarray(values, dtype=np.float64)
+        self._bound = float(np.max(np.abs(self._values))) if self._values.size else 0.0
+
+    @property
+    def max_arrival(self) -> float:
+        return self._bound
+
+    def on_front(self, grid: Grid, solid: np.ndarray) -> np.ndarray:
+        return self._values
+
+
+# -- registered steps ---------------------------------------------------------
+
+
+def _pattern_from_params(grid: Grid, ctx: StepContext) -> np.ndarray:
+    """Build the exposure pattern named by the step parameters."""
+    if ctx["pattern"] == "grating":
+        return grating(grid, period=ctx["period"], duty=ctx["duty"], phase=ctx["phase"])
+    half = 0.5 * float(ctx["width"])
+    centre = float(ctx["center"])
+    return windows(grid, [(centre - half, centre + half)])
+
+
+_PATTERN_PARAMS = (
+    ParamSpec(
+        "pattern",
+        str,
+        default="window",
+        choices=("window", "grating"),
+        description="Procedural pattern the mask projects",
+    ),
+    ParamSpec("center", float, unit="nm", default=0.0, description="Window centre"),
+    ParamSpec("width", float, unit="nm", default=100.0, minimum=0.0, description="Window width"),
+    ParamSpec("period", float, unit="nm", default=200.0, minimum=0.0, description="Grating period"),
+    ParamSpec("duty", float, default=0.5, minimum=0.0, maximum=1.0, description="Open fraction"),
+    ParamSpec("phase", float, unit="nm", default=0.0, description="Grating phase"),
+)
+
+
+def _run_spin_coat(ctx: StepContext) -> StepResult:
+    material = MaterialId(str(ctx["material"]))
+    structure = spin_coat(ctx.structure, material, thickness=ctx["thickness"])
+    return StepResult(
+        structure=structure,
+        provides=frozenset({capability.of_material(material)}),
+        measurements={"thickness": Quantity(ctx["thickness"], "nm")},
+        logs=(f"spin-coated {ctx['thickness']:.1f} nm of {material}",),
+    )
+
+
+def _run_expose_ideal(ctx: StepContext) -> StepResult:
+    material = MaterialId(str(ctx["material"]))
+    pattern = _pattern_from_params(ctx.structure.grid, ctx)
+    structure = expose_ideal(ctx.structure, material, pattern)
+    return StepResult(
+        structure=structure,
+        provides=frozenset({capability.of_field(material, EXPOSED.name)}),
+        field_specs={EXPOSED.name: EXPOSED},
+        logs=(f"exposed {material} through a {ctx['pattern']} pattern (ideal)",),
+    )
+
+
+def _run_expose_dose(ctx: StepContext) -> StepResult:
+    material = MaterialId(str(ctx["material"]))
+    pattern = _pattern_from_params(ctx.structure.grid, ctx)
+    structure = expose_dose(
+        ctx.structure,
+        material,
+        pattern,
+        dose=ctx["dose"],
+        blur=ctx["blur"],
+        library=ctx.library,
+    )
+    return StepResult(
+        structure=structure,
+        provides=frozenset({capability.of_field(material, DOSE.name)}),
+        field_specs={DOSE.name: DOSE},
+        measurements={"dose": Quantity(ctx["dose"], "mJ/cm^2")},
+        logs=(f"exposed {material} at {ctx['dose']:.0f} mJ/cm^2, blur {ctx['blur']:.1f} nm",),
+    )
+
+
+def _run_threshold(ctx: StepContext) -> StepResult:
+    material = MaterialId(str(ctx["material"]))
+    structure = threshold_dose(ctx.structure, material, threshold=ctx["threshold"])
+    return StepResult(
+        structure=structure,
+        provides=frozenset({capability.of_field(material, EXPOSED.name)}),
+        field_specs={EXPOSED.name: EXPOSED, DOSE.name: DOSE},
+        logs=(
+            f"downgraded dose to exposed at {ctx['threshold']:.0f} mJ/cm^2 — "
+            "the dose profile's sidewall slope and foot are discarded",
+        ),
+    )
+
+
+def _run_develop_ideal(ctx: StepContext) -> StepResult:
+    material = MaterialId(str(ctx["material"]))
+    structure = develop_ideal(ctx.structure, material, tone=ctx["tone"])
+    return StepResult(
+        structure=structure,
+        field_specs={EXPOSED.name: EXPOSED},
+        logs=(f"developed {material} ({ctx['tone']} tone, ideal, reachability-gated)",),
+    )
+
+
+def _run_develop_rate(ctx: StepContext) -> StepResult:
+    material = MaterialId(str(ctx["material"]))
+    outcome = develop_at_rate(
+        ctx.structure, material, duration=ctx["duration"], library=ctx.library
+    )
+    return StepResult(
+        structure=outcome.structure,
+        swept=outcome.swept,
+        field_specs={DOSE.name: DOSE},
+        measurements={"duration": Quantity(ctx["duration"], "s")},
+        logs=(f"developed {material} for {ctx['duration']:.1f} s at develop_rate(dose)",),
+    )
+
+
+_MATERIAL = ParamSpec("material", str, default=str(RESIST), description="Resist material")
+
+SPIN_COAT = FunctionStep(
+    step_id="resist.spin_coat",
+    display_name="Spin-coat resist",
+    fidelity=IDEAL,
+    schema=(
+        _MATERIAL,
+        ParamSpec(
+            "thickness",
+            float,
+            unit="nm",
+            default=None,
+            minimum=0.0,
+            description="Film thickness above the highest topography",
+        ),
+    ),
+    required=frozenset(),
+    provided=frozenset(),
+    run_function=_run_spin_coat,
+)
+
+EXPOSE_IDEAL = FunctionStep(
+    step_id="litho.expose_ideal",
+    display_name="Exposure (ideal)",
+    fidelity=IDEAL,
+    schema=(_MATERIAL, *_PATTERN_PARAMS),
+    required=frozenset(),
+    provided=frozenset(),
+    run_function=_run_expose_ideal,
+)
+
+EXPOSE_DOSE = FunctionStep(
+    step_id="litho.expose_dose",
+    display_name="Exposure (dose)",
+    fidelity=DIDACTIC,
+    schema=(
+        _MATERIAL,
+        *_PATTERN_PARAMS,
+        ParamSpec(
+            "dose", float, unit="mJ/cm^2", default=150.0, minimum=0.0, description="Peak dose"
+        ),
+        ParamSpec(
+            "blur", float, unit="nm", default=8.0, minimum=0.0, description="Aerial image blur"
+        ),
+    ),
+    required=frozenset(),
+    provided=frozenset(),
+    run_function=_run_expose_dose,
+)
+
+THRESHOLD_DOSE = FunctionStep(
+    step_id="litho.threshold_dose",
+    display_name="Threshold dose to exposed (downgrade)",
+    fidelity=IDEAL,
+    schema=(
+        _MATERIAL,
+        ParamSpec(
+            "threshold",
+            float,
+            unit="mJ/cm^2",
+            default=100.0,
+            minimum=0.0,
+            description="Dose above which a cell counts as exposed",
+        ),
+    ),
+    required=frozenset(),
+    provided=frozenset(),
+    run_function=_run_threshold,
+)
+
+DEVELOP_IDEAL = FunctionStep(
+    step_id="develop.ideal",
+    display_name="Development (ideal)",
+    fidelity=IDEAL,
+    schema=(
+        _MATERIAL,
+        ParamSpec(
+            "tone",
+            str,
+            default="positive",
+            choices=("positive", "negative"),
+            description="Which of exposed/unexposed dissolves",
+        ),
+    ),
+    required=frozenset({capability.of_field(RESIST, EXPOSED.name)}),
+    provided=frozenset(),
+    run_function=_run_develop_ideal,
+)
+
+DEVELOP_RATE = FunctionStep(
+    step_id="develop.rate",
+    display_name="Development (rate)",
+    fidelity=DIDACTIC,
+    schema=(
+        _MATERIAL,
+        ParamSpec(
+            "duration", float, unit="s", default=None, minimum=0.0, description="Develop time"
+        ),
+    ),
+    required=frozenset({capability.of_field(RESIST, DOSE.name)}),
+    provided=frozenset(),
+    run_function=_run_develop_rate,
+)
