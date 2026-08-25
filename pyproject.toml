@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanofab-v3"
+version = "0.3.0.dev0"
+description = "NanoFab structure model v2: per-material signed-distance fields on one grid"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE.md" }
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# Only the v2 package is installable; the v1 entry files and the prototype stay
+# plain scripts next to it until M3 retires them (plan §14, AGENTS.md §7).
+[tool.setuptools.packages.find]
+include = ["nanofab_v3*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
