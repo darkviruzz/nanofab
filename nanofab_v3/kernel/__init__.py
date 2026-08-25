@@ -21,7 +21,11 @@ Motion and its bookkeeping (M1):
 - `occurrences` — connected components and lineage by overlap matching,
 - `gate` — the commit gate every chain step ends in.
 
-Flux and visibility (`FluxModel2D`, shadowing, redeposition) arrive in M2.
+Flux and visibility (M2):
+
+- `flux` — `FluxModel2D`: reverse-marching visibility, angular distributions,
+  angle-dependent yield, surface mobility and the redeposition bounce. The
+  **second** 2D-only seam next to `contours`, by decision (plan Q7).
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ __all__ = [
     "constructors",
     "contours",
     "csg",
+    "flux",
     "gate",
     "invariants",
     "measures",

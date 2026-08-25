@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Mapping, Protocol, runtime_checkable
 
 import numpy as np
 from scipy import ndimage
@@ -50,6 +50,47 @@ A solver constant, like the flux solver's rebuild interval in plan §4.3: the
 solid half of that map is exact every sub-step, and the half that says where the
 surrounding walls are changes far more slowly than the front moves.
 """
+
+_FLUX_REFRESH = _OWNER_REFRESH
+"""Sub-steps between two flux rebuilds — plan §4.3's `K`, deliberately shared.
+
+Both maps answer the same question, "where are the walls": one turns it into
+which material owns a piece of empty space, the other into what a piece of front
+can see. Neither changes as fast as the front moves, so they are refreshed at
+the same sub-steps rather than on two independent cadences.
+
+`K` is a cost knob and not an accuracy one, but only because the visibility is
+honest cell by cell. While the flux solver's hit test read the field at the
+nearest cell, `K` was the dominant *accuracy* knob instead — a stale arrival at
+a mask's concave foot was spread over the wedge of material the mask shadows,
+and a 30 nm ion-beam etch through a 40 nm window ran 14 nm sideways under the
+mask at `K = 5` against 3 nm at `K = 1`. With the bilinear hit test
+(`_SELF_HIT_NOTE` in `kernel.flux`) the same measurement reads 0 nm at `K = 1..3`
+and 1 nm at `K = 5`, i.e. inside the cell the grid owes anyway. Plan §4.3's
+`K = 5..10` therefore stands; §18.1 records the measurement.
+"""
+
+
+@runtime_checkable
+class FrontFlux(Protocol):
+    """What `advect_front` needs from a flux model — `kernel.flux.FluxModel2D` is one.
+
+    Structural, not an import: the motion solver is N-D generic and the flux
+    solver is a named 2D-only seam (plan §4.3, Q7). Depending on it by name would
+    drag that restriction into the one module that must not have it.
+
+    `max_arrival` has to be available *before* the first sub-step, because it is
+    what bounds the speed field for the CFL condition — measuring it off the
+    front instead would make a split dose take different sub-steps than an
+    unsplit one.
+    """
+
+    @property
+    def max_arrival(self) -> float:
+        """Largest arrival per unit front any surface orientation could receive."""
+
+    def on_front(self, grid: Grid, solid: np.ndarray) -> np.ndarray:
+        """Arrival per cell for the current union field, non-negative."""
 
 
 @dataclass(frozen=True)
@@ -103,6 +144,8 @@ class MotionOutcome:
             time-resolved — it is one exact offset).
         max_speed: The CFL bound used, in nm/s.
         reinit_passes: Mid-motion renormalisations the distortion trigger fired.
+        flux_rebuilds: Visibility rebuilds a `FrontFlux` model was asked for; 0
+            for a static flux array or none at all.
     """
 
     structure: Structure
@@ -111,6 +154,7 @@ class MotionOutcome:
     dt: float = 0.0
     max_speed: float = 0.0
     reinit_passes: int = 0
+    flux_rebuilds: int = 0
 
 
 def _clipped(
@@ -295,16 +339,28 @@ def advect_front(
     duration: float,
     *,
     deposit_material: MaterialId | None = None,
-    flux: np.ndarray | None = None,
+    flux: np.ndarray | FrontFlux | None = None,
     cfl: float = 0.5,
     policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
 ) -> MotionOutcome:
     """Advect the union front for `duration` seconds under a material-dependent rate.
 
     Etches unless a `deposit_material` is named, in which case the front grows and
-    that material owns what it grows into. `flux` is an optional per-cell
-    multiplier on the rate — 1 everywhere here, and from milestone M2 on the
-    output of `FluxModel2D`, which is where shadowing and angular yield enter.
+    that material owns what it grows into.
+
+    `flux` is the per-cell multiplier on the rate that turns an isotropic motion
+    into a directional one. Two forms:
+
+    - a **plain array**, held fixed for the whole motion — right for a source
+      whose visibility cannot change while the front moves;
+    - a **`FrontFlux` model** (`kernel.flux.FluxModel2D`), re-evaluated against the
+      current front every `_FLUX_REFRESH` sub-steps. A deep directional etch needs
+      this: the trench it is digging shadows its own sidewalls more with every
+      nanometre, and a flux computed once at the surface would keep etching the
+      walls as if the trench were not there.
+
+    Either way the flux enters the CFL bound and the front integral the balance
+    check reads, so nothing downstream has to know which form was used.
     """
     grid = structure.grid
     duration = float(duration)
@@ -312,14 +368,24 @@ def advect_front(
         raise ValueError(f"duration must be a non-negative finite time, got {duration}")
     if not 0.0 < cfl <= 1.0:
         raise ValueError(f"cfl must be in (0, 1], got {cfl}")
-    if flux is not None:
+    model: FrontFlux | None = None
+    if flux is not None and not isinstance(flux, np.ndarray):
+        model = flux
+        flux = None
+    elif flux is not None:
         flux = grid.as_field(flux, dtype=PHI_DTYPE)
 
     if not structure.materials and deposit_material is None:
         raise ValueError("an empty Structure has no front to move")
 
     sign = PHI_DTYPE(1.0 if deposit_material is not None else -1.0)
-    speed_bound = rates.bound * (float(np.max(np.abs(flux))) if flux is not None else 1.0)
+    if model is not None:
+        flux_bound = float(model.max_arrival)
+    elif flux is not None:
+        flux_bound = float(np.max(np.abs(flux)))
+    else:
+        flux_bound = 1.0
+    speed_bound = rates.bound * flux_bound
     if duration == 0.0 or speed_bound == 0.0:
         return MotionOutcome(structure, swept=0.0, sub_steps=0, max_speed=speed_bound)
 
@@ -338,6 +404,7 @@ def advect_front(
     swept = 0.0
     previous_rate_integral = 0.0
     reinit_passes = 0
+    flux_rebuilds = 0
 
     for step in range(sub_steps):
         # The speed field is rebuilt from the current front every sub-step, which
@@ -349,6 +416,9 @@ def advect_front(
             if deposit_material is None
             else _owner_map(grid, originals, materials, deposit_material, solid_start, solid)
         )
+        if model is not None and step % _FLUX_REFRESH == 0:
+            flux = grid.as_field(model.on_front(grid, solid), dtype=PHI_DTYPE)
+            flux_rebuilds += 1
         rate_map = rate_table[front.of(solid, owners)]
         if flux is not None:
             rate_map = rate_map * flux
@@ -356,7 +426,13 @@ def advect_front(
 
         if step == 0:
             previous_rate_integral = measures.front_integral(grid, solid, np.abs(rate_map))
-        solid = solid - dt * speed * stencil.godunov_norm(solid, grid.spacing, speed > 0.0)
+        # A cell the front does not move at all is classified with the majority:
+        # its update is multiplied by zero either way, and keeping the sign
+        # uniform is what lets `godunov_norm` compute one upwind side instead of
+        # two. Without this a directional deposition would lose the fast path in
+        # exactly the cells its own shadow created.
+        moving_out = speed >= PHI_DTYPE(0.0) if sign > 0 else speed > PHI_DTYPE(0.0)
+        solid = solid - dt * speed * stencil.godunov_norm(solid, grid.spacing, moving_out)
 
         rate_integral = measures.front_integral(grid, solid, np.abs(rate_map))
         swept += float(dt) * 0.5 * (previous_rate_integral + rate_integral)
@@ -381,6 +457,7 @@ def advect_front(
         dt=float(dt),
         max_speed=speed_bound,
         reinit_passes=reinit_passes,
+        flux_rebuilds=flux_rebuilds,
     )
 
 
