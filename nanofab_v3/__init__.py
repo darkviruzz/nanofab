@@ -15,8 +15,11 @@ Package layout (plan §14):
 - `runtime/` — revisions, runs, materialization (M4)
 - `io/` — persistence and exchange format (M4)
 
-v1 (`cross_section_general_prototype.py`) stays untouched next to this package
-until the S1-S4 acceptance tests pass (plan §14, AGENTS.md §7).
+The S1-S4 acceptance tests passed on 2026-08-25, so v1 became a `ui_backups/`
+snapshot as plan §14 and AGENTS.md §7 require: the cross-section prototype is in
+`ui_backups/2026-08-25_v1.0.0_cross-section-prototype/` and the v0.2.0
+application in `ui_backups/2026-08-25_v0.2.0_nanofab-manager/`. This package is
+the only actively built code base at the repository root.
 """
 
 from __future__ import annotations

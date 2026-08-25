@@ -487,6 +487,17 @@ pytest from M0 (the repo currently has no tests; AGENTS.md validation extends fr
 v1 (`cross_section_general_prototype.py`) stays untouched next to v2 until M3's
 acceptance tests pass, per AGENTS.md §7; then it becomes a `ui_backups/` snapshot.
 
+**Done, 2026-08-25**, on the milestone this paragraph names: S1–S4 went green and
+v1 was snapshotted deliberately, as a step of its own rather than as a side
+effect. The prototype is now
+`ui_backups/2026-08-25_v1.0.0_cross-section-prototype/`, and the v0.2.0
+application it sat next to — the PySide6 shell plus the `nanofab_modular` engine,
+which §12 already listed as carried over in *concept* only — is
+`ui_backups/2026-08-25_v0.2.0_nanofab-manager/`. Each snapshot carries a `README`
+saying how to run it and what replaced it. `nanofab_v3/` is now the only actively
+built code base at the repository root, which is the state §10's UI rewrite and
+M4's runtime start from.
+
 ## 15. Risks
 
 | Risk | Mitigation |

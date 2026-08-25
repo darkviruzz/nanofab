@@ -1279,3 +1279,35 @@ Next steps / known risks:
 4. `DissolveModel.swells` is recorded and deliberately not modelled. It is the physical reason a real lift-off works through cracks far too small for a reachability query, and it is why S4 needed a geometric mechanism rather than a mechanical one. Plan §16 keeps it open.
 5. New solver constants chosen by measurement: `predicates._COLLAR_CELLS = 12` (shared with `flux._EXTENSION_CELLS` by intent). The gate's rebuild interval is `motion._FLUX_REFRESH`, which is why the sealed void loses a few cells between sealing and freezing — inside the cell the grid owes anyway, per §18.1's argument.
 6. Ideal development and ideal exposure are cell-quantised by construction (plan §3.3 stores `exposed` as `int8`), so S1's pattern width carries one cell of error at 1 nm/cell. The dose tier does not have that limit; it is what tier (b) would use.
+
+## Update 2026-08-25 (v1 and v0.2.0 Snapshotted to ui_backups/, Root Cleared to nanofab_v3)
+- Took the step `docs/plans/v2-structure-model.md` §14 and `AGENTS.md` §7 both call for once M3's acceptance tests pass: v1 became a `ui_backups/` snapshot. Done deliberately and on the user's explicit go-ahead, not as a side effect of S1-S4 going green.
+- `ui_backups/2026-08-25_v1.0.0_cross-section-prototype/` — `cross_section_general_prototype.py`, the prototype ADR-0001 was written against. One file; its only dependency is PySide6.
+- `ui_backups/2026-08-25_v0.2.0_nanofab-manager/` — `nanofab_manager_v0_2_0.py` (renamed `nanofab_manager.py` per the v0.1.0 baseline pattern), `nanofab_modular/`, and the spec (renamed `nanofab_manager.spec`).
+- Root deletions, both already preserved and md5-verified identical to the copies in `ui_backups/2026-03-05_v0.1.0_baseline/`: `nanofab_manager.py` (`APP_VERSION = "0.1.0"`, `328d49e7...` on both sides) and `nanofab_manager.spec` (byte-identical to that baseline's `app_pyside_modular.spec`).
+- The root now holds `nanofab_v3/`, `tests/`, `docs/`, the markdown files and `ui_backups/` — one actively built code base.
+- Docs pulled straight: plan §14 marked done with the snapshot paths; `README.md` rewritten around `nanofab_v3` with a "Where the application went" section; `nanofab_v3/__init__.py`'s docstring no longer claims v1 sits next to it.
+
+Why it changed:
+- Plan §14 and AGENTS.md §7 make the snapshot conditional on M3's acceptance tests, which passed the same day (249 tests, S1-S4 green). The user confirmed the step and specified the layout.
+
+Which file was actually 0.2.0 — verified before moving anything:
+1. `nanofab_manager.py` at root carried `APP_VERSION = "0.1.0"`, not 0.2.0, and was **byte-identical** to `ui_backups/2026-03-05_v0.1.0_baseline/nanofab_manager.py` (same md5). It was a duplicate of an already-archived baseline, so deleting it loses nothing and there is no remaining reason for it at the root.
+2. `nanofab_manager_v0_2_0.py` carried `APP_VERSION = "0.2.0"` and is the version that went into the new snapshot.
+3. Root `nanofab_modular/` was likewise byte-identical to the baseline's copy — the engine did not change between 0.1.0 and 0.2.0, all of 0.2.0's changes are in the UI file. It is duplicated into the v0.2.0 snapshot anyway so that snapshot stands on its own.
+
+Decisions taken while doing it:
+4. **The snapshot's `.spec` was repointed, not copied verbatim.** `nanofab_manager_v0_2_0.spec` names `Analysis(['nanofab_manager_v0_2_0.py'])`, which after the rename would be a build recipe naming a file that is not in the folder — AGENTS.md §7 asks for backups that are runnable and self-contained, and the v0.1.0 baseline solved the same problem the same way (its `app_pyside_modular.spec` already points at `nanofab_manager.py`). The `Analysis` entry now reads `nanofab_manager.py`; the exe name it produces is left as v0.2.0 built it (`nanofab_manager_v0_2_0`), because that is a real output identity and not an artifact of the rename.
+5. **Each new snapshot got a short `README.md`** — what it is, how to run it, what replaced it, and which renames were made and why. Cheap, and it is what makes a folder self-describing years later.
+6. **No `memory.md` snapshot inside the new folders**, deviating from AGENTS.md §7's list. The user asked for the v1 prototype "ohne weiteres Beiwerk", `memory.md` is now 110 KB and would be duplicated twice, and git history already carries its state at this commit. Recorded here as a decision rather than an omission.
+7. **ADRs and the M2/M3 handoffs were left alone** although they say v1 "stays untouched": they are historical records of what was true when written, and the repo's own convention (plan §17/§18/§19) is that agreed text stays and corrections are added elsewhere. The forward-looking statements were updated instead — plan §14, README, package docstring.
+
+Validation run:
+- `python -m compileall nanofab_v3 tests` -> clean; `python -m pytest tests/` -> **249 passed**, unchanged by the move (nothing in `nanofab_v3` or `tests` referenced the moved files).
+- `python -m compileall ui_backups/2026-08-25_v1.0.0_cross-section-prototype ui_backups/2026-08-25_v0.2.0_nanofab-manager` -> clean.
+- **Snapshot self-containment checked, not assumed**: from inside `ui_backups/2026-08-25_v0.2.0_nanofab-manager/`, `from nanofab_modular import ProcessEngine, build_default_modules` imports and builds **8 step modules**; the entry file's only local import is `nanofab_modular`, which resolves there; its `APP_VERSION` parses as `0.2.0`. The prototype's imports are PySide6 plus stdlib only (`math`, `sys`, `dataclasses`, `typing`). PySide6 is not installed in this container, so the two UI files were checked by compile and import-graph rather than by launching a window.
+
+Next steps / known risks:
+1. **`AGENTS.md` is not yet updated** — §6 forbids editing it without asking. §1 (the version probe reads `nanofab_manager*.py`), §2 (the repository map lists the root app and `nanofab_modular`), §4 and §8 (the `compileall` invocation names both) and §7 (the snapshot content list) all still describe the old root. A proposed diff has been shown to the user and is **awaiting approval**; until then those five sections point at files that no longer exist at the root.
+2. `NanoFab_Process_Manager_Documentation/` still describes the v1 application, and plan §12/§16 already record that the docs catch up later. Unchanged by this move.
+3. Plan §10 still expects the `nanofab_manager` shell to carry over in M4. That is now a statement about reading it out of `ui_backups/2026-08-25_v0.2.0_nanofab-manager/` rather than off the root; the snapshot's README says so.

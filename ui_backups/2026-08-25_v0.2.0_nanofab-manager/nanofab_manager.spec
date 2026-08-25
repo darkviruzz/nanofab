@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['nanofab_manager_v0_2_0.py'],
+    ['nanofab_manager.py'],
     pathex=[],
     binaries=[],
     datas=[],
