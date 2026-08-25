@@ -17,7 +17,7 @@ import pytest
 
 from nanofab_v3 import Grid, Structure
 from nanofab_v3.kernel import constructors as ctor
-from nanofab_v3.kernel import csg, flux, motion
+from nanofab_v3.kernel import csg, flux, measures, motion
 
 
 @pytest.fixture
@@ -387,3 +387,36 @@ def test_the_flux_solver_refuses_a_three_dimensional_grid(grid_3d: Grid) -> None
     )
     with pytest.raises(ValueError, match="2D-only"):
         flux.evaporation().on_structure(structure)
+
+
+# -- what a shadowed deposition leaves behind --------------------------------
+
+
+def test_a_shadowed_deposition_leaves_no_phantom_material(stepped: Structure) -> None:
+    """Where nothing was deposited, the deposit's field must say so.
+
+    `max(solid_now, -solid_start)` is the right set and, on its own, the wrong
+    field: where the front did not move it collapses to `|solid_start|`, which is
+    exactly zero all along the old surface. Nothing is *inside* that zero level,
+    but every measure taken off the field reads those cells as half full — the
+    phantom the sub-cell measures of plan §4.5 exist to avoid, arriving through
+    the back door. Measured before the fix on the reference grid: 1849 cells at
+    exactly zero and ~600 nm^2 of metal that was never deposited.
+    """
+    grid = stepped.grid
+    grown = motion.advect_front(
+        stepped,
+        motion.SurfaceRates(default=1.0),
+        6.0,
+        deposit_material="metal",
+        flux=flux.evaporation(),
+    ).structure
+    metal = grown.phi_of("metal")
+
+    # At normal incidence the metal is 6 nm on every horizontal surface and
+    # nothing on the two sidewalls, so it covers the full width exactly once.
+    assert measures.enclosed_measure(grid, metal) == pytest.approx(6.0 * grid.shape[1], rel=0.01)
+    # Beside the bare mask sidewall the field is a distance to the metal that
+    # *was* deposited — not a zero level standing where the surface used to be.
+    beside_the_wall = metal[70:99, 119]
+    assert float(beside_the_wall.min()) > 0.0

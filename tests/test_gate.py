@@ -14,7 +14,7 @@ import pytest
 
 from nanofab_v3 import FieldKey, FieldSpec, Grid, Structure
 from nanofab_v3.kernel import constructors as ctor
-from nanofab_v3.kernel import csg, gate, motion
+from nanofab_v3.kernel import csg, gate, invariants, motion
 
 
 @pytest.fixture
@@ -250,3 +250,54 @@ def test_the_gate_leaves_its_input_untouched(masked: Structure) -> None:
 
     assert np.array_equal(masked.phi_of("silicon"), before)
     assert committed.structure is not masked
+
+
+# -- what a correct distance field is allowed to look like -------------------
+
+
+@pytest.mark.parametrize("thickness", [2.0, 3.0, 4.0, 8.0, 20.0])
+def test_a_thin_deposited_film_passes_the_gate(substrate: Structure, thickness: float) -> None:
+    """A 2 nm ALD film is the most ordinary object in this domain, and it must commit.
+
+    Found while measuring M2 and fixed there, but the bug is M1's and has nothing
+    to do with flux: a film's **medial axis** sits half its thickness in, so for
+    anything thinner than twice the invariant band the axis lies inside the band —
+    and on a medial axis a *correct* distance field has a local extremum, so
+    `|grad(phi)|` is 0 however well it is normalised. Before
+    `invariants.turning_points` excluded those cells, every deposition below 8 nm
+    failed the gate with a band gradient error of exactly 1.0.
+    """
+    grown = motion.offset_solid(substrate, thickness, deposit_material="ald")
+    outcome = gate.commit(grown.structure, parent=substrate, swept=grown.swept)
+
+    assert outcome.report.failures == ()
+    assert outcome.report.band_gradient_error < 0.05
+
+
+def test_the_band_invariant_still_catches_a_field_that_is_not_a_distance(
+    grid_2d: Grid,
+) -> None:
+    """Excluding medial axes must not blunt the check it exists to make."""
+    disk = ctor.ball(grid_2d, center=(100.0, 150.0), radius=40.0)
+
+    assert invariants.band_gradient_error(grid_2d, disk, quantile=0.99) < 1e-3
+    assert invariants.band_gradient_error(grid_2d, 2.0 * disk, quantile=0.99) == pytest.approx(
+        1.0, abs=1e-3
+    )
+    assert invariants.band_gradient_error(grid_2d, 0.5 * disk, quantile=0.99) == pytest.approx(
+        0.5, abs=1e-3
+    )
+
+
+def test_a_mask_corner_does_not_fail_the_gate(masked: Structure) -> None:
+    """A right-angled concave crease reads exactly `1 - 1/sqrt(2)`, and is correct.
+
+    Unlike a medial axis this one cannot be told from real distortion by the same
+    test — the field is flat on one side rather than reversed — so it is left in
+    the band and the gate's tolerance is set above the 0.293 a right angle
+    produces. Any tolerance below that would fail every masked scene there is.
+    """
+    outcome = gate.commit(masked, parent=masked, swept=0.0)
+
+    assert outcome.report.failures == ()
+    assert gate.GateTolerances().band_gradient_error > 1.0 - 2.0**-0.5

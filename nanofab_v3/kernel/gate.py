@@ -48,6 +48,17 @@ class GateTolerances:
         balance: Relative deviation the balance check tolerates before warning.
         band_gradient_error: Worst tolerated `| |grad(phi)| - 1 |` in the band,
             read at a high quantile so a concave crease does not fail a step.
+            The floor under this number is arithmetic, not empirical: at a
+            **right-angled** concave crease a correct distance field is exactly
+            `min(a, b)` in the two coordinates that meet there, so a central
+            difference measures `1/2` per axis and `1/sqrt(2) = 0.707` in
+            magnitude — an error of **0.293** that no amount of renormalisation
+            can remove, because the field is right and the derivative does not
+            exist. A mask corner is a right-angled crease, so a scene with a
+            dozen mask windows has enough crease cells to carry the 99th
+            percentile there, and any tolerance below 0.293 fails ordinary
+            geometry. Measured on the reference grid, a 60 nm ion-beam etch
+            through six mask windows: p90 0.053, p99 0.289, max 0.536.
         overlap_depth: Interior overlap between two materials tolerated, in nm.
             Zero: disjointness is a construction guarantee, not a target.
         allowed_boundary_faces: Domain faces the solid may touch. `None` means
@@ -62,7 +73,7 @@ class GateTolerances:
     """
 
     balance: float = 0.05
-    band_gradient_error: float = 0.25
+    band_gradient_error: float = 0.35
     overlap_depth: float = 0.0
     allowed_boundary_faces: tuple[tuple[str, str], ...] | None = None
 

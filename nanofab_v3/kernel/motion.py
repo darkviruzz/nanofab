@@ -179,6 +179,7 @@ def _assign_deposit(
     solid_start: np.ndarray,
     solid_now: np.ndarray,
     existing: np.ndarray | None,
+    spacing: float,
 ) -> None:
     """Deposition bookkeeping: the material owns what the front grew into.
 
@@ -189,8 +190,35 @@ def _assign_deposit(
     sawtooth that accumulating per-sub-step shells would leave behind (each shell
     is only `rate * dt` thick, so every value in the deposit would sit within a
     sub-step of zero).
+
+    `max(solid_now, -solid_start)` is the right *set*, and on its own the wrong
+    *field* wherever the front did not move — which is every shadowed stretch of
+    a directional deposition, i.e. the whole point of milestone M2. There
+    `solid_now == solid_start`, the formula collapses to `|solid_start|`, and the
+    result is exactly zero all along the old surface: a zero level with no
+    interior behind it. Nothing is inside it (`inside` is strict), but every
+    measure taken off the field reads those cells as half full and every front
+    integral counts them as front — measured on a 4 nm sputter deposition through
+    a mask, 1849 phantom cells and ~600 nm^2 of metal that was never deposited.
+
+    Clamping those cells positive is not enough, and the reason is worth stating:
+    `|solid_start|` is a V whose vertex sits on the old surface, and a V has a
+    zero central derivative at its vertex whatever its floor is. The band
+    invariant reads it as `|grad(phi)| = 0` either way. What is wrong is the
+    *proxy*: away from the deposit, "distance to where the surface used to be"
+    is not "distance to the deposited material", and the second is what `phi_k`
+    is supposed to mean. So where nothing grew, the field is the distance
+    transform of the region that did — monotone, correct, and cell-quantised,
+    which is exactly the accuracy an empty region deserves. Cells the deposit
+    actually reached keep the sub-cell value the moved front gives them.
     """
     shell = np.maximum(solid_now, -solid_start)
+    grew = solid_now < solid_start
+    if not grew.all():
+        # One transform per motion, not per sub-step, and only when the front
+        # left part of itself behind — a blanket deposition never gets here.
+        reach = ndimage.distance_transform_edt(~grew, sampling=spacing).astype(PHI_DTYPE)
+        shell = np.where(grew, shell, np.maximum(shell, reach))
     phi[material] = shell if existing is None else np.minimum(existing, shell)
 
 
@@ -230,6 +258,7 @@ def _bookkeep(
     solid_start: np.ndarray,
     solid_now: np.ndarray,
     deposit_material: MaterialId | None,
+    spacing: float,
 ) -> dict[MaterialId, np.ndarray]:
     """Distribute a moved union front back onto the materials (plan §3.2).
 
@@ -241,7 +270,7 @@ def _bookkeep(
         return _clipped(originals, solid_now)
     phi = dict(originals)
     _assign_deposit(
-        phi, deposit_material, solid_start, solid_now, originals.get(deposit_material)
+        phi, deposit_material, solid_start, solid_now, originals.get(deposit_material), spacing
     )
     return phi
 
@@ -322,7 +351,7 @@ def offset_solid(
     solid_after = (solid_before - PHI_DTYPE(distance)).astype(PHI_DTYPE)
 
     originals = dict(structure.phi)
-    phi = _bookkeep(originals, solid_before, solid_after, deposit_material)
+    phi = _bookkeep(originals, solid_before, solid_after, deposit_material, grid.spacing)
     moved = Structure(grid, phi, dict(structure.fields))
     # Trapezoidal front integral: the front's length changes while it moves, and
     # taking only its starting length would miss the curvature term entirely
@@ -448,7 +477,7 @@ def advect_front(
                 solid = reinit.reinitialise(grid, solid, policy).phi
                 reinit_passes += 1
 
-    phi = _bookkeep(originals, solid_start, solid, deposit_material)
+    phi = _bookkeep(originals, solid_start, solid, deposit_material, grid.spacing)
     moved = Structure(grid, phi, dict(structure.fields))
     return MotionOutcome(
         structure=moved,
