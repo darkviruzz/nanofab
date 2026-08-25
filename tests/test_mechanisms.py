@@ -10,7 +10,9 @@ Two mechanisms live here so far:
 - **T-profile ALD** (this file's first half) — conformal growth over a re-entrant
   profile seals an enclosed void at `t >= half the opening`. It needs no flux at
   all, which is what makes it the honest smoke test for the M1 building blocks
-  the flux solver is about to be stacked on.
+  the flux solver is about to be stacked on. From M3 on it carries the second
+  half of the mechanism too: once the growth is reachability-gated, the sealed
+  void has to **stop shrinking**, which is scenario S3 at its smallest scale.
 - **Shadow wedge** (second half) — a directional source behind a mask edge, with
   the shadow boundary asserted against `h * tan(theta)`.
 
@@ -28,6 +30,7 @@ import pytest
 from nanofab_v3 import Grid, Structure
 from nanofab_v3.kernel import constructors as ctor
 from nanofab_v3.kernel import csg, flux, motion, occurrences
+from nanofab_v3.processes import deposition
 
 # -- T-profile ALD: conformal growth seals a re-entrant cavity ----------------
 
@@ -91,25 +94,63 @@ def test_conformal_growth_seals_the_cavity_at_half_the_opening(t_profile: Struct
     assert enclosed == 741  # the cavity, minus the 10 nm shell grown into it
 
 
-def test_the_sealed_void_keeps_shrinking_and_finally_disappears(t_profile: Structure) -> None:
-    """Geometric deposition keeps growing *inside* a sealed cavity — by design, for now.
+def test_a_sealed_void_stops_shrinking_once_the_precursor_cannot_reach_it(
+    t_profile: Structure,
+) -> None:
+    """The smallest possible S3: the reachability gate, proving itself.
 
-    This is correct for the M1/M2 kernel and wrong as physics: once the mouth is
-    closed, no precursor reaches the cavity and the void must stop shrinking. The
-    missing piece is plan §4.4's reachability gate, which arrives with the process
-    contract in M3 — S3 (lift-off broken by ALD) is exactly this mechanism at
-    scenario scale. It is asserted here so the behaviour is documented rather than
-    rediscovered as a bug.
+    Two processes, one technique, one difference (plan §5.4). Both grow the front
+    conformally by `t`:
+
+    - `conformal_offset` is the exact **geometric** answer — one array operation,
+      dose splitting bit-exact — and it keeps growing inside a cavity it has
+      already sealed, because nothing in an offset knows where the precursor came
+      from. Measured here: 741 -> 525 -> 261 -> 0 cells. That was M2's behaviour,
+      correct for the question it asks and wrong as physics.
+    - `atomic_layer_deposition` runs the same growth behind
+      `predicates.ReachableFront`. Once the mouth closes, the cavity's own front
+      is handed a speed of zero and the void **stops**: 586 cells at t = 13 nm and
+      the same 586 at t = 40 nm, three times the dose that closed it geometrically.
+
+    The residual between sealing and freezing is the gate's rebuild interval
+    (`motion._FLUX_REFRESH = 5` sub-steps at half a cell each), which is why the
+    void loses a few cells between t = 12 and t = 13 and none afterwards. Plan
+    §18.1's argument applies unchanged: `K` is a cost knob, and what it costs is
+    inside the cell the grid owes anyway.
     """
-    sizes = [
+    geometric = [
         _empty_components(motion.offset_solid(t_profile, t, deposit_material="ald").structure)[1]
-        for t in (10.0, 12.0, 15.0)
+        for t in (10.0, 12.0, 15.0, 20.0)
+    ]
+    gated = [
+        _empty_components(
+            deposition.atomic_layer_deposition(t_profile, "ald", thickness=t).structure
+        )[1]
+        for t in (13.0, 15.0, 20.0, 40.0)
     ]
 
-    assert sizes == sorted(sizes, reverse=True)  # the sealed void keeps shrinking
-    assert _empty_components(
-        motion.offset_solid(t_profile, 20.0, deposit_material="ald").structure
-    ) == (1, 0)
+    assert geometric == sorted(geometric, reverse=True)
+    assert geometric[-1] == 0  # the void is grown shut
+    assert min(gated) > 0  # the gated one never is
+    assert len(set(gated)) == 1  # and it does not move at all
+
+
+def test_the_gated_deposition_still_grows_everywhere_it_can_reach(
+    t_profile: Structure,
+) -> None:
+    """The gate must stop the void without stopping the process.
+
+    The other half of the assertion above, and the one that would catch a gate
+    that simply returned zero: on the open surface above the profile the two
+    tiers agree cell for cell, because there the reachability multiplier is 1 and
+    the motion is the same conformal growth.
+    """
+    offset = motion.offset_solid(t_profile, 15.0, deposit_material="ald").structure
+    gated = deposition.atomic_layer_deposition(t_profile, "ald", thickness=15.0).structure
+
+    for structure in (offset, gated):
+        top = int(np.flatnonzero(structure.inside("ald")[:, 10]).max())
+        assert top == pytest.approx(104, abs=1)  # resist top at 90 nm, plus 15 nm
 
 
 def test_a_straight_gap_fills_without_enclosing_anything(t_profile: Structure) -> None:
