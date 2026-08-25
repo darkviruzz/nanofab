@@ -20,12 +20,14 @@ next to the motion it is a property of.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
 from nanofab_v3 import Grid, Structure
 from nanofab_v3.kernel import constructors as ctor
-from nanofab_v3.kernel import csg, motion, occurrences
+from nanofab_v3.kernel import csg, flux, motion, occurrences
 
 # -- T-profile ALD: conformal growth seals a re-entrant cavity ----------------
 
@@ -132,3 +134,121 @@ def test_a_straight_gap_fills_without_enclosing_anything(t_profile: Structure) -
     for t in (5.0, 10.0, 15.0, 20.0):
         grown = motion.offset_solid(straight, t, deposit_material="ald").structure
         assert _empty_components(grown) == (1, 0)
+
+
+# -- shadow wedge: a mask edge against `h * tan(theta)` ----------------------
+
+MASK_EDGE = 120.0
+MASK_HEIGHT = 40.0
+SURFACE = 60.0
+
+
+@pytest.fixture
+def masked_substrate() -> Structure:
+    """A blanket substrate with a 40 nm mask stripe whose left edge is at x = 120.
+
+    The whole shadow-wedge geometry: a source tilted by `theta` towards `+x` is
+    occluded by the mask for every surface point within `h * tan(theta)` to the
+    left of its edge. Nothing else in the scene can cast a shadow, so the
+    analytic answer is exact and the test measures the solver, not the setup.
+    """
+    grid = Grid(origin=(0.0, 0.0), spacing=1.0, shape=(180, 260), axes=("y", "x"))
+    structure = ctor.add_material(
+        Structure(grid), "silicon", ctor.half_space(grid, normal=(1.0, 0.0), point=(SURFACE, 0.0))
+    )
+    return ctor.add_material(
+        structure,
+        "mask",
+        ctor.box(
+            grid,
+            lower=(SURFACE, MASK_EDGE),
+            upper=(SURFACE + MASK_HEIGHT, MASK_EDGE + 60.0),
+        ),
+    )
+
+
+def _shadow_edge(arrival: np.ndarray) -> float:
+    """Where the arrival on the substrate falls to half, left of the mask, in nm.
+
+    The crossing sits between the last lit cell and the first dark one, so the
+    boundary is reported half a cell before the first dark column.
+    """
+    profile = arrival[int(SURFACE), : int(MASK_EDGE)]
+    dark = np.flatnonzero(profile < 0.5 * float(np.median(profile[:40])))
+    return float(dark.min()) - 0.5
+
+
+@pytest.mark.parametrize("degrees", [15.0, 30.0, 45.0, 60.0])
+def test_the_shadow_wedge_lands_where_the_geometry_says(
+    masked_substrate: Structure, degrees: float
+) -> None:
+    """The shadow boundary sits at `edge - h * tan(theta)` — plan §13.2.
+
+    The tolerance comes from the geometry, not from hope (plan §17.3): the
+    arrival is a per-cell quantity and the march samples a ray at finite steps,
+    so a ray that clips the mask corner by less than half a cell of path can miss
+    it. Both effects are one cell, and one cell is the accuracy the grid owes.
+    Measured here: 0.2 to 0.8 nm at 1 nm/cell, all four angles, with the 60
+    degree case casting a 69 nm shadow — so the error is not growing with the
+    lever arm, which is the property that actually matters.
+    """
+    theta = math.radians(degrees)
+    outcome = flux.evaporation(angle=theta).on_structure(masked_substrate)
+
+    analytic = MASK_EDGE - MASK_HEIGHT * math.tan(theta)
+    assert _shadow_edge(outcome.arrival) == pytest.approx(analytic, abs=1.5)
+    assert outcome.unresolved == 0
+
+
+def test_the_visibility_grid_is_a_speed_knob_and_not_an_accuracy_one(
+    masked_substrate: Structure,
+) -> None:
+    """Coarsening the occupancy must not move the shadow boundary.
+
+    The march steps on a coarsened distance transform but decides hits on the
+    fine field, so the coarse grid only sets how many steps a ray takes. Plan
+    §4.3 expected this knob to trade accuracy for speed; it does not, and that is
+    worth a standing test because it is the fallback plan §15 names first.
+    """
+    model = flux.evaporation(angle=math.radians(30.0))
+    edges = {
+        spacing: _shadow_edge(
+            flux.FluxModel2D(
+                distribution=model.distribution, visibility_spacing=spacing
+            ).on_structure(masked_substrate).arrival
+        )
+        for spacing in (1.0, 2.0, 4.0)
+    }
+
+    assert len(set(edges.values())) == 1, edges
+
+
+def test_an_unobstructed_flat_surface_receives_exactly_one(masked_substrate: Structure) -> None:
+    """The normalisation that makes the arrival a multiplier on a blanket rate."""
+    arrival = flux.evaporation(angle=math.radians(30.0)).on_structure(masked_substrate).arrival
+
+    assert arrival[int(SURFACE), 40] == pytest.approx(1.0, abs=1e-6)
+    assert float(arrival.min()) >= 0.0
+
+
+def test_a_wider_source_blurs_the_shadow_into_a_penumbra(masked_substrate: Structure) -> None:
+    """A lobe has no sharp edge — which is why the shadow is called a *wedge*.
+
+    A point source gives a shadow one cell wide; a source of finite angular width
+    gives a transition as wide as the mask height times the spread in angle.
+    """
+    sharp = flux.evaporation(angle=math.radians(30.0)).on_structure(masked_substrate).arrival
+    soft = (
+        flux.evaporation(angle=math.radians(30.0), divergence=math.radians(8.0))
+        .on_structure(masked_substrate)
+        .arrival
+    )
+
+    def transition(arrival: np.ndarray) -> int:
+        profile = arrival[int(SURFACE), : int(MASK_EDGE)]
+        open_field = float(np.median(profile[:40]))
+        partial = np.flatnonzero((profile < 0.95 * open_field) & (profile > 0.05 * open_field))
+        return int(partial.max() - partial.min() + 1) if partial.size else 0
+
+    assert transition(sharp) <= 2
+    assert transition(soft) >= 8
