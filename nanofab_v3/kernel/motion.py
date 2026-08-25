@@ -94,6 +94,63 @@ class FrontFlux(Protocol):
 
 
 @dataclass(frozen=True)
+class ProductFlux:
+    """Several `FrontFlux` models multiplied cell by cell.
+
+    What it is for: a process whose speed field has more than one per-cell factor.
+    An RIE is a directional lobe *and* a reachability gate — the lobe decides what
+    a surface can see of the source, the gate decides whether the bath reaches it
+    at all — and §18's note on the chemical floor says why the two are not the
+    same question: the floor is deliberately orientation-blind, so it keeps
+    feeding a cavity that has sealed itself unless something else says otherwise.
+
+    The bound multiplies too, which is what keeps the CFL sub-step count
+    independent of the front: each factor bounds itself before the first sub-step
+    (`FluxModel2D.max_arrival`, `ReachableFront.max_arrival`), so their product
+    bounds the speed field the same way.
+
+    Deliberately not a special case inside `advect_front`: the solver already
+    takes any object with the two members, so composition belongs to whoever is
+    composing.
+    """
+
+    models: tuple[FrontFlux, ...]
+
+    def __post_init__(self) -> None:
+        if not self.models:
+            raise ValueError("ProductFlux needs at least one model")
+
+    @property
+    def max_arrival(self) -> float:
+        """The product of the factors' bounds."""
+        bound = 1.0
+        for model in self.models:
+            bound *= float(model.max_arrival)
+        return bound
+
+    def on_front(self, grid: Grid, solid: np.ndarray) -> np.ndarray:
+        """The factors' arrivals, multiplied cell by cell."""
+        product = np.asarray(self.models[0].on_front(grid, solid), dtype=np.float64)
+        for model in self.models[1:]:
+            product = product * np.asarray(model.on_front(grid, solid), dtype=np.float64)
+        return product
+
+
+def gated(*models: FrontFlux | None) -> FrontFlux | None:
+    """Combine flux factors, dropping the `None`s — `None` if nothing is left.
+
+    The shape every process wrapper wants: "the technique's flux, and the
+    reachability gate if this process is gated", where either may be absent.
+    """
+    present = tuple(model for model in models if model is not None)
+    if not present:
+        return None
+    if len(present) == 1:
+        return present[0]
+    return ProductFlux(present)
+
+
+@dataclass(frozen=True)
 class SurfaceRates:
     """`rate(material_at_front)` in nm/s — the material half of the speed field.
 

@@ -26,6 +26,14 @@ Flux and visibility (M2):
 - `flux` — `FluxModel2D`: reverse-marching visibility, angular distributions,
   angle-dependent yield, surface mobility and the redeposition bounce. The
   **second** 2D-only seam next to `contours`, by decision (plan Q7).
+
+Connectivity, predicates and the ideal tier (M3):
+
+- `predicates` — reachability, support, enclosed voids, undercut, step coverage.
+  Predicates *and* kernel steps, which is why they live here (plan §4.4, §7);
+  N-D generic, not a third 2D seam.
+- `regions` — removing a named region in one exact set operation, the ideal
+  tier's counterpart to `motion`.
 """
 
 from __future__ import annotations
@@ -40,6 +48,8 @@ __all__ = [
     "measures",
     "motion",
     "occurrences",
+    "predicates",
+    "regions",
     "reinit",
     "stencil",
 ]
