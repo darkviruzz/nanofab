@@ -82,7 +82,9 @@ class Grid:
   low seconds (measured budget in §13).
 - **Headroom**: the domain is created at substrate selection with configurable empty
   space above the stack. A kernel guard fails a step whose front touches a lateral or
-  top boundary (bottom is "solid continues" by boundary condition). `np.pad` re-embeds
+  top boundary (bottom is "solid continues" by boundary condition; → §17.5: lateral
+  faces warn rather than fail — a blanket layer reaches them by construction).
+  `np.pad` re-embeds
   the arrays if the domain must grow later. This replaces v1's magic
   `0.42 * extent` cut plane and boundary-edge filtering.
 - Units: grid and kernel work in plain float nm / s for speed. `Quantity` (docs
@@ -101,14 +103,16 @@ class Structure:
 - `phi[m] < 0` means "inside material m". **Derived, never stored as truth**:
   solid union `phi_solid = min_m phi[m]`, empty space `-phi_solid`, the material
   index map `argmin_m phi[m]` (cached per revision for rendering/queries), contours,
-  occurrences (§3.5).
+  occurrences (§3.5). *(→ §17.1: `min` is sign-correct but is **not** the union's
+  distance function where two materials touch.)*
 - Set operations are pointwise (`union = min`, `intersection = max`,
   `difference(A,B) = max(phi_A, -phi_B)`): O(cells), local, no boolean cascade, no
   polygonization — the entire v1 fragmentation/sliver failure class (ADR-0001
   F3/F4) is structurally impossible.
 - **Only the exposed front ever moves** (§4.2). Etch clips materials against the new
   union (`phi_m ← max(phi_m, phi_solid_new)`); deposition writes the new material
-  into `D ∩ empty` (`phi_k ← min(phi_k, max(d_D, -phi_solid_old))`). Buried
+  into `D ∩ empty` (`phi_k ← min(phi_k, max(d_D, -phi_solid_old))`). *(→ §17.2:
+  both are correct **set** operations whose values need the gate's repair.)* Buried
   interfaces are never advected, so they keep their sub-cell shape until re-exposed —
   this is why per-material fields were chosen over a single φ + index map
   (ADR-0002): lift-off re-exposes buried interfaces, and a single-φ model would
@@ -122,7 +126,9 @@ class Structure:
   special-casing.
 - Field invariants (checked by the commit gate, §4.5): sign correct everywhere;
   `|∇phi| ≈ 1` within a narrow band around each zero level; pairwise-disjoint
-  interiors (guaranteed by construction, verified cheaply).
+  interiors (guaranteed by construction, verified cheaply). *(→ §17.4: the band
+  invariant holds at a high quantile, not at the worst cell — a concave crease is
+  a point where a correct distance field is not differentiable.)*
 
 ### 3.3 Fields
 
@@ -203,7 +209,8 @@ exactly representable; corners are exact to the corner-rounding of ~½ cell.
   is rebuilt from the current front every sub-step, so etching through material A
   into B switches rates to sub-cell/sub-step order automatically; selectivity 0
   simply stalls the front there — **mask behaviour emerges from rates**, it is not a
-  special case.
+  special case. *(→ §17.3: `material_at_front` is the owner of the nearest solid
+  cell, which is not what the material fields say in an undercut void.)*
 - **Isotropic fast path**: when the motion is purely isotropic and the rate is
   uniform over the affected front, offsetting is exact and instant:
   `phi ← phi ∓ rate·t` (ALD, simple wet etch). Dose splitting is exact here
@@ -269,7 +276,9 @@ Every chain step ends in one mandatory pass (the v2 successor of ADR-0001 D8):
 2. field-scoping resets on the swept cells (§3.3),
 3. invariants: sign sanity, band `|∇phi| ≈ 1`, disjoint interiors, headroom guard,
 4. **balance check**: added/removed area vs. `∫ rate · flux · dt` along the front,
-   within tolerance — the guard against silent numerical drift,
+   within tolerance — the guard against silent numerical drift (→ §17.6: it warns,
+   it does not fail; a topology change breaks the estimate legitimately, and S3 is
+   such a step),
 5. occurrence lineage (§3.5), capability updates (§5.3).
 
 The `ValidationReport` is stored on the revision and surfaced by the UI — a
@@ -468,3 +477,144 @@ The 3D `FluxModel3D`; semi-quantitative rate calibration; external-simulator
 adapters beyond the exchange format; reflow/anneal geometry motion (curvature-driven
 flow is a natural level-set extension when wanted); GDS/CAD pattern import into the
 exposure constructors.
+
+## 17. Corrections from implementation (M0/M1)
+
+Added 2026-08-25 after M0 and M1 were built and measured. The sections above are
+the agreed design and are left as written; each item here amends one statement
+that turned out to be wrong or incomplete, with the measurement that showed it.
+Nothing in the *decisions* changed — per-material SDFs, one moving front,
+pointwise set operations and derived occurrences all held. What changed is a set
+of statements about what those objects give you.
+
+The recurring theme: **a formula can be a correct set operation and a useless
+field at the same time.** Signs decide which region is which; values decide every
+distance, measure and front integral read off them afterwards. Four of the six
+items below are that distinction.
+
+### 17.1 `min_m phi[m]` is not the union's distance function
+
+Where two materials touch — the normal case, since constructors sample exactly on
+the grid — `min_m phi[m]` is exactly **zero along their shared interface**,
+because each field is correctly zero on its own boundary there. That buried seam
+is indistinguishable from a front by value alone. Measured on a substrate + mask
+scene: the front integral reported 429 nm of front against a true 330 nm, and an
+offset pushed the seam positive, punching a void along perfectly continuous
+material.
+
+Three consequences the model has to carry:
+
+- `solid_mask` is `phi_solid <= 0`, not `< 0`. A strict test opens a one-cell
+  crack through continuous material, which every connectivity query of §4.4 —
+  reachability, support, lift-off — would read as a gap. Material *interiors*
+  stay strict (`< 0`) so they remain pairwise disjoint; `material_index` (argmin)
+  gives an interface cell to exactly one material, so the partition is exclusive.
+- "How much material is there" is summed **per material**, not evaluated once on
+  `phi_solid`: at a shared interface each side contributes half a cell, which is
+  the whole cell.
+- The field a motion advects is `min_m phi[m]` **with its seams renormalised
+  away** (`kernel.motion.union_front`), run only when a seam is present. It works
+  because a cell exactly at the zero level counts as *inside* for sign-change
+  detection, so only the real solid/empty interface is held fixed and the seam
+  relaxes to the distance it should have had.
+
+### 17.2 The clip and deposit formulas are set operations, not field operations
+
+`phi_m ← max(phi_m, phi_solid_new)` keeps the sign right everywhere, but where
+another material's surface is nearer than m's own it **understates** `phi_m` — it
+answers "how far to the nearest solid", not "how far to material m". The gate's
+reinitialisation is what repairs those values, so the two must be read as a pair:
+the clip decides the region, the gate decides the numbers.
+
+Two additions the plan did not state:
+
+- Both bookkeeping formulas take the fields **at the start of the motion**, never
+  the previous sub-step. Accumulated per sub-step, a deposit is a sawtooth whose
+  every value lies within one sub-step's thickness of zero (`rate · dt`, a
+  fraction of a cell), and a receding front leaves stale values behind it.
+- The reinitialisation band cannot be defined by `|phi| <= band`. A field that
+  needs renormalising is one whose values cannot be trusted to say how far the
+  zero level is, so a value band excludes exactly the cells that are furthest
+  off. The band is geometric — cells within *n* cells of the interface — **plus**
+  every cell whose value merely claims to be near zero, which is what reaches a
+  buried seam and a clip artifact. With a value-only band a 2×-steepened circle
+  got *worse* (band gradient error 1.0 → 1.85); with both criteria it converges
+  to 0.098.
+
+### 17.3 `material_at_front(x)` is the owner of the nearest solid cell
+
+§4.2 reads as though the material at the front is a lookup in the material
+fields. It is not, in the one case that matters: **in an undercut void the
+nearest solid is the mask overhanging it**, not the material that used to fill
+the void. Reading the clipped fields there ties `phi_mask` against a `phi_si`
+that equals the union distance, and the mask's own exposed face is handed the
+etch rate of the material below it. Measured: the undercut ran to 27 nm instead
+of 20, and the front ate into the mask.
+
+The map is therefore `argmin_m phi[m]` **inside the solid** — constant during an
+etch, since cells only ever leave the solid, so the A→B rate switch stays exact
+per sub-step — extended into empty space by "the owner of the nearest solid
+cell", i.e. a distance transform. That extension is a second solver constant
+alongside §4.3's flux rebuild interval: it is refreshed every 5 sub-steps,
+because where the surrounding walls are changes far more slowly than the front
+moves.
+
+Residual, accepted and resolution-dependent: the A→B switch is a cell wide, so
+with a rate ratio of 5 the depth reached in B carries a few nm of error. Halving
+the spacing halves it.
+
+### 17.4 The band gradient invariant is a quantile, not a maximum
+
+At a concave crease — the union of two overlapping disks, or any re-entrant
+corner — a *correct* distance function is not differentiable, so the worst cell
+never converges to `|∇phi| = 1` however well the field is normalised. Measured on
+that scene: max 0.43, 99th percentile 0.052. The gate and the distortion trigger
+read the 99th percentile; constructor-exactness tests, which run on smooth
+fields, keep reading the maximum.
+
+### 17.5 The headroom guard is about the top face
+
+"Fails a step whose front touches a lateral or top boundary" fails every
+realistic cross-section: a blanket substrate reaches `x-min` and `x-max` by
+construction, and a cross-section continuing sideways is the same "solid
+continues" statement as the bottom face. The guard fails on the **max face of the
+first axis** (the stacking direction) and is configurable per commit; any face a
+step *newly* touches is warned about regardless, which is the honest signal that
+the domain is running out.
+
+### 17.6 The balance check warns, it does not fail
+
+A step that changes topology genuinely breaks the front-integral estimate — the
+front length is not a smooth function across a pinch-off — and **S3 is such a
+step**, so a hard check would fail one of the plan's own acceptance scenarios.
+The balance check therefore records `expected`, `measured`, `error` and
+`tolerance` on the revision and warns; the lineage report in the same pass is
+what explains the discrepancy. Broken invariants, which no legitimate process
+produces, still fail.
+
+Measured errors after the gate's reinitialisation, against a 5 % default
+tolerance: plane etch 0.0 %, disk shrink 0.5 %, disk grow 0.9 %, masked etch with
+undercut 2.3 %, heavy step at the reference grid 0.95 %.
+
+### 17.7 Measured costs, replacing the estimates in §4.2 and §13.4
+
+The 3.6 ms in §4.2 is the upwind stencil alone. A **complete sub-step** —
+ownership, upwind, bookkeeping, front integral — measures ~50 ms at the reference
+grid (540×1200 at 1 nm), of which the stencil is about half. What follows for M2
+is that the flux rebuild is being added to a 50 ms sub-step, not a 3.6 ms one, so
+§4.3's estimate of 10–100 ms every 5–10 sub-steps costs 2–20 % on top rather than
+dominating.
+
+| Measured (540×1200 at 1 nm) | |
+|---|---|
+| complete advection sub-step | ~50 ms |
+| deliberately heavy step (60 nm etch = 120 sub-steps, 4 reinits) | 6.0 s motion + gate |
+| typical step (4 nm = 8 sub-steps) | 0.74 s |
+| conformal offset (fast path) | 0.11 s |
+| commit gate alone, 2 materials | 0.31 s |
+| 20-step chain, per-step cost first 5 vs last 5 | ratio 1.00 |
+
+§13.4's "≤ a few seconds at default grid" holds for a typical step and is
+exceeded by the extreme one. The remaining cost is the upwind stencil evaluated
+over the whole domain; a true narrow-band solver is the fix if M2 shows it
+matters, and is deliberately not built yet.
