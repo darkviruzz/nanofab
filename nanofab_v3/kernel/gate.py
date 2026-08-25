@@ -10,7 +10,9 @@ The v2 successor of ADR-0001's D8. In order:
 4. the **balance check** — the measure that actually changed against
    `∫ rate * flux * dt` along the front, the guard against silent numerical
    drift,
-5. occurrence lineage (plan §3.5).
+5. occurrence lineage (plan §3.5),
+6. **capability updates** (plan §5.3) — the revision's set of named promises,
+   re-derived from the structure the step produced.
 
 The `ValidationReport` goes on the revision and is surfaced by the UI: a
 suspicious step is visible, never silent. That is also why the balance check is
@@ -19,18 +21,24 @@ off, a film splitting) genuinely breaks the front-integral estimate, and the
 lineage report in the same pass says so. Broken invariants, which no legitimate
 process produces, fail.
 
-Capability updates, the sixth item of plan §4.5, need the process contract of
-§5.3 and arrive with it in milestone M3.
+Why the sixth step belongs to the gate rather than to the runtime: a capability
+is a statement about *state*, and this is the one place that sees the state a
+step actually produced rather than the state it intended to produce. A step that
+dissolves the resist does not have to remember to retract `material:resist` —
+the resist is gone, so the capability is. A step that *promises* a structural
+capability and does not deliver it fails here, which is a class of process bug
+that would otherwise surface three steps later as an unrunnable chain.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Mapping
+from dataclasses import dataclass, field
+from typing import Iterable, Mapping
 
 import numpy as np
 
 from nanofab_v3.kernel import invariants, measures, occurrences, reinit
+from nanofab_v3.model import capability
 from nanofab_v3.model.field import FieldSpec
 from nanofab_v3.model.occurrence import LineageReport
 from nanofab_v3.model.reports import BalanceCheck, ValidationReport
@@ -80,11 +88,20 @@ class GateTolerances:
 
 @dataclass(frozen=True)
 class CommitOutcome:
-    """The committed revision and everything the gate learned about it."""
+    """The committed revision and everything the gate learned about it.
+
+    Attributes:
+        structure: The renormalised, field-scoped `Structure` of the revision.
+        report: What every check found (plan §4.5's `ValidationReport`).
+        lineage: What happened to each occurrence (plan §3.5).
+        capabilities: The revision's capabilities after step 6 — what the next
+            step's `requires` is gated against (plan §5.3).
+    """
 
     structure: Structure
     report: ValidationReport
     lineage: LineageReport
+    capabilities: frozenset[str] = field(default_factory=frozenset)
 
 
 def commit(
@@ -93,6 +110,9 @@ def commit(
     parent: Structure | None = None,
     swept: float | None = None,
     field_specs: Mapping[str, FieldSpec] | None = None,
+    capabilities: Iterable[str] = (),
+    provides: Iterable[str] = (),
+    retires: Iterable[str] = (),
     policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
     tolerances: GateTolerances = GateTolerances(),
 ) -> CommitOutcome:
@@ -110,6 +130,15 @@ def commit(
             values. Like `MaterialType`, a spec is library data and does not
             travel inside the `Structure`; a field with no spec is reset to 0.0
             and the report says so.
+        capabilities: The **parent** revision's capabilities. Structural ones are
+            re-derived from the committed structure either way; these are the
+            free-form promises that only the chain remembers.
+        provides: Capabilities the step declares it produced (plan §5.3). A
+            structural one the structure does not back is a failure — the step
+            promised a field or a material and did not deliver it.
+        retires: Capabilities the step explicitly gives up. Needed only for the
+            free-form ones: a structural capability retires itself the moment its
+            material or field is gone.
         policy: Reinitialisation policy — the same object the motion used.
         tolerances: What counts as a failure.
     """
@@ -186,6 +215,13 @@ def commit(
             if entry.kind in ("split", "merged", "vanished"):
                 warnings.append(entry.describe())
 
+    # 6. Capability updates (plan §5.3).
+    granted, lost, broken = _update_capabilities(committed, capabilities, provides, retires)
+    for name in lost:
+        warnings.append(f"capability {name!r} is no longer backed by the structure")
+    for name in broken:
+        failures.append(f"the step declared {name!r} and the structure does not carry it")
+
     report = ValidationReport(
         failures=tuple(failures),
         warnings=tuple(warnings),
@@ -196,8 +232,53 @@ def commit(
         boundary_faces=faces,
         balance=balance,
         field_resets=resets,
+        capabilities=granted,
     )
-    return CommitOutcome(structure=committed, report=report, lineage=lineage)
+    return CommitOutcome(
+        structure=committed, report=report, lineage=lineage, capabilities=granted
+    )
+
+
+def _update_capabilities(
+    structure: Structure,
+    inherited: Iterable[str],
+    provides: Iterable[str],
+    retires: Iterable[str],
+) -> tuple[frozenset[str], tuple[str, ...], tuple[str, ...]]:
+    """Plan §4.5's sixth step: what this revision promises, and what it stopped promising.
+
+    Three sources, in order of authority:
+
+    1. **The structure itself.** Every material and every material-scoped field
+       present is a capability, re-derived here rather than declared — which is
+       what makes the update mechanical rather than a bookkeeping obligation on
+       every process author.
+    2. **What the step declared.** Free-form promises the geometry cannot see
+       (`"chamber.pumped"`), plus structural ones the step wants checked.
+    3. **What the parent carried**, minus what the step retired.
+
+    Then everything structural is filtered against the structure: a capability
+    whose material or field is gone is dropped and reported. That is how
+    dissolving the resist retracts `resist.exposed` without any step saying so.
+
+    Returns `(capabilities, lost, broken)` — the surviving set, the inherited
+    names the structure stopped backing, and the declared ones it never backed.
+    """
+    declared = set(provides)
+    inherited_set = set(inherited) - set(retires) - declared
+    broken = tuple(
+        sorted(
+            name
+            for name in declared
+            if capability.is_structural(name) and not capability.backed_by(structure, name)
+        )
+    )
+    lost = tuple(
+        sorted(name for name in inherited_set if not capability.backed_by(structure, name))
+    )
+    surviving = {name for name in inherited_set if name not in lost}
+    surviving |= {name for name in declared if name not in broken}
+    return frozenset(surviving | capability.derived(structure)), lost, broken
 
 
 def _reset_scoped_fields(

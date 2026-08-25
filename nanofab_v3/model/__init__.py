@@ -6,6 +6,7 @@ truth. Nothing in here knows about processes, rendering or Qt.
 
 from __future__ import annotations
 
+from nanofab_v3.model import capability
 from nanofab_v3.model.field import FieldKey, FieldSpec
 from nanofab_v3.model.grid import PHI_DTYPE, Grid
 from nanofab_v3.model.occurrence import (
@@ -14,6 +15,7 @@ from nanofab_v3.model.occurrence import (
     Occurrence,
     OccurrenceMap,
 )
+from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.reports import BalanceCheck, ValidationReport
 from nanofab_v3.model.structure import EMPTY, Structure
 
@@ -28,6 +30,8 @@ __all__ = [
     "LineageReport",
     "Occurrence",
     "OccurrenceMap",
+    "Quantity",
     "Structure",
     "ValidationReport",
+    "capability",
 ]
