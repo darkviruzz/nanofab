@@ -102,10 +102,20 @@ it defined. The signature of an isotropic removal component; a purely directiona
 produces none.
 _Avoid_: "underetch", "lateral etch" (describes the mechanism, not the resulting shape).
 
+**Redeposition**:
+Material sputtered off one surface that lands on another instead of leaving the
+sample — the reason an ion-milled trench lines its own sidewalls with what came
+off its floor. Modelled as a single isotropic bounce scaled by a redeposition
+yield; only meaningful for a removal process energetic enough to eject material,
+so a wet etch has none.
+_Avoid_: "backscatter" (that is the source side), "contamination".
+
 ### Structure model v2
 
-Decided in ADR-0002…0004 and `docs/plans/v2-structure-model.md`; implementation
-pending, so v1 code does not use these terms yet.
+Decided in ADR-0002…0004 and `docs/plans/v2-structure-model.md`, and implemented
+in `nanofab_v3` from milestone M0 on (grid and geometry, motion, flux). The v1
+code does not use these terms; where a term below is still ahead of the code —
+`Capability` and `Materialization` are, until M3 and M4 — it says so.
 
 **Grid**:
 The sole spatial authority of a v2 structure: origin, cell spacing, shape and axis names. Resolution is a visible model parameter, not an implementation detail.
@@ -122,6 +132,15 @@ _Avoid_: "facet", "map" alone, "property" (that's on `MaterialType`).
 **Occurrence** (Materialvorkommen):
 A connected region of one material, derived per revision by connected-component labelling; identity across revisions is reconstructed by overlap matching, never stored.
 _Avoid_: "layer" for this, "segment", "island".
+
+**Arrival** (per unit front):
+How much of a directional source a piece of front can see, per unit of front, as
+a dimensionless multiplier on that material's blanket rate: visibility times the
+projected area times the angle-dependent yield, integrated over the source's
+angular distribution. Normalised so an unobstructed flat surface receives exactly
+1, which is what lets a rate keep meaning "nm/s on an open surface".
+_Avoid_: "flux" alone for the normalised quantity (that is the source's, before a
+surface has seen it), "coverage" (that is the deposited result).
 
 **Capability**:
 A named promise about sample state that a process requires or provides (e.g. `resist.dose`). Gating runs on capabilities; downgrade adapters may discard information explicitly, upgrades cannot exist.
