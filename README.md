@@ -16,12 +16,24 @@ Multiple versioned entry files exist (`nanofab_manager.py`, `nanofab_manager_v0_
 - `nanofab_manager*.py` — UI entry points
 - `nanofab_modular/` — modular process engine (domain, engine, registry, steps)
 - `cross_section_general_prototype.py` — cross-section visualization prototype
+- `nanofab_v3/` — structure model v2: signed-distance geometry on a grid (see
+  [`docs/plans/v2-structure-model.md`](docs/plans/v2-structure-model.md)); successor of
+  `nanofab_modular`, built alongside v1 until its acceptance tests pass
+- `tests/` — pytest suite for `nanofab_v3`
 - `NanoFab_Process_Manager_Documentation/` — product documentation chapters
 - `ui_backups/` — versioned snapshots taken before breaking changes
+
+## Development (structure model v2)
+
+```bash
+pip install -e ".[dev]"   # numpy + scipy, pytest as dev extra
+pytest
+```
 
 ## Working with this repo
 
 - [`AGENTS.md`](AGENTS.md) — workflow guide for coding assistants (startup checklist, versioning, git workflow)
 - [`CONTEXT.md`](CONTEXT.md) — domain glossary
+- [`docs/adr/`](docs/adr) — architecture decision records
 - [`memory.md`](memory.md) — append-only project decision log
 - `.claude/skills/` — [mattpocock/skills](https://github.com/mattpocock/skills) engineering/productivity skills for Claude Code

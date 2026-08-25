@@ -1084,3 +1084,46 @@ Next steps / known risks:
 1. Implementation starts at M0 (package skeleton + kernel invariant tests) per the plan's milestone order; v1 prototype stays untouched until M3's S1-S4 acceptance tests pass, then becomes a ui_backups snapshot per AGENTS.md §7.
 2. Flux-solver budget (10-100 ms per rebuild, rebuild-every-K) is estimated, to be verified in M2 — fallback is the K knob and visibility-grid coarseness, not a redesign.
 3. `NanoFab_Process_Manager_Documentation/04_Data_Model_Specification_Target.md` now lags the agreed v2 model (per CONTEXT.md's rule the docs catch up later); Layer becomes a derived stack summary, facets become Fields.
+
+## Update 2026-08-25 (v2 Structure Model M0: `nanofab_v3` Skeleton, Kernel, pytest)
+- Implemented milestone M0 of `docs/plans/v2-structure-model.md` §14: the new package `nanofab_v3` (working title, successor of `nanofab_modular`, no v1 compatibility) with the layout the plan asks for — `model/`, `kernel/`, `materials/`, `processes/`, `runtime/`, `io/`. `processes/`, `runtime/` and `io/` are docstring-only placeholders naming their milestone (M3/M4/M4); nothing speculative was built into them.
+- `model/`:
+  - `grid.py` — `Grid(origin, spacing, shape, axes)`, frozen, validated; the sole spatial authority. Cell `(i0,i1,...)` sits at `origin[a] + i_a*spacing`; axes are addressed by name (`axis_index`), never positionally. Helpers: `ndim/size/cell_measure`, `coordinates`, `mesh` (open mesh, what every constructor samples on), `position`, `extent`, `zeros/full/as_field`, `check_same_grid`.
+  - `structure.py` — `Structure(grid, phi, fields)`: one float32 SDF per material plus named `Field`s, the single stored geometry truth. Frozen value object, mappings wrapped in `MappingProxyType`, every mutator (`with_material`, `without_material`, `with_field`, ...) returns a new revision. Derived views are `cached_property` and explicitly *not* truth: `solid_phi = min_m phi[m]`, `empty_phi = -solid_phi`, `solid_mask`, `material_index = argmin_m phi[m]` (`EMPTY = -1`).
+  - `field.py` — `FieldKey(name, material|None)` (None = global field) and `FieldSpec(name, dtype, default, material_scoped, unit)`.
+- `kernel/` (pure functions, no Qt anywhere):
+  - `csg.py` — `union=min`, `intersection=max`, `difference(A,B)=max(phi_A,-phi_B)`, `complement`, `offset(phi,d)=phi-d`; N-D generic, float32, shape-checked.
+  - `constructors.py` — `half_space`, `box`, `rounded_box`, `ball`, plus `add_material(structure, material, phi, carve=True)`. Analytic primitives are sampled onto the grid once and then forgotten (ADR-0002); nothing in the kernel consults them afterwards.
+  - `contours.py` — own marching squares (~90 lines, no scikit-image) for rendering/debug per plan §10.
+  - `invariants.py` — `pairwise_overlap`, `max_overlap_depth`, `gradient_magnitude`, `band_gradient_error`, `boundary_contact`.
+- `tests/` — 59 pytest tests: the plan §13 layer-1 invariants (constructor exactness on planes, pairwise disjointness of constructed materials, symmetric scenes stay symmetric) plus unit coverage for `Grid`, `Structure`/fields, set operations, constructors and marching squares.
+
+Why it changed:
+- User asked to start implementing the agreed v2 plan at milestone M0. v1 (`cross_section_general_prototype.py`) was left completely untouched next to v2, per plan §14 / AGENTS.md §7.
+
+Decisions taken where the plan left the detail open (recorded here rather than blocking):
+1. **`pyproject.toml`, not `requirements.txt`.** Plan §11 wants development as a normal package (`pip install -e`, pytest), so one file carries both the dependency declaration (`numpy>=2.0`, `scipy>=1.13`; `dev` extra `pytest>=8`) and the pytest config. `pythonpath = ["."]` + `testpaths = ["tests"]` means `pytest` runs from a clean checkout without installing anything. `[tool.setuptools.packages.find] include = ["nanofab_v3*"]` keeps the v1 entry scripts out of the distribution. Package version `0.3.0.dev0` (successor of the v0.2.0 app line); the v1 `APP_VERSION` constants were not touched.
+2. **`half_space` instead of the plan's 2D word "half-plane"** — the function is N-D generic (half-plane in 2D, half-space in 3D) and the plan's own rule is that no kernel code assumes a fixed dimensionality. `box` accepts `None` per side for unbounded, which is how slabs and stack constructors are expressed without a second primitive. `ball` (disk in 2D) was added beyond the task list: it is the particle/roughness primitive of plan §4.1 and it is what makes the symmetry and corner-rounding checks honest.
+3. **Disjointness is produced by `add_material`**, which carves the new region against the union of the *other* materials (`max(phi_new, -union(others))`) — the construction-time analogue of the deposition clip in plan §3.2. Re-adding an existing material unions the primitives, which is how one material is built from several. `carve=False` exists for callers that established disjointness themselves, and a test asserts the overlap is real without it, so the invariant is demonstrated, not assumed.
+4. **`FieldSpec` carries `default` and `material_scoped`** although M0 resets nothing: the mechanical scoping rule of plan §3.3 (reset where the owning material changed) is a commit-gate job in M1 and needs exactly these two facts. `Structure` already refuses a field scoped to a material it does not have, and `without_material` drops that material's scoped fields.
+5. **Marching squares without a 16-case table**: the case analysis is generated from the four corner signs (segments run from an inside->outside to an outside->inside crossing along the counter-clockwise cell boundary), ambiguous saddles are resolved by the cell centre. That orientation puts `field < level` on the left, so an enclosed void runs opposite to the outer surface and a renderer can fill a ring correctly. Points are `(axis0, axis1)` in nm — the renderer decides what is drawn where — closed loops repeat their first point, contours leaving the domain stay open. The module is declared 2D-only (plan §4.3/Q7) and raises on a 3D grid instead of pretending to be generic.
+6. **`invariants.py` lives in the kernel, not in the tests**, so M1's commit gate (plan §4.5) reuses the same functions the M0 tests assert on. They measure and report rather than assert: `boundary_contact` returns which domain faces the solid touches and states no policy, because "bottom is solid-continues, top/lateral is a failed step" is M1's decision.
+7. Branch mechanics: this session's branch was fast-forwarded onto `8cb90db` (plan + ADR-0002..0004) before starting, since the specification lived on `claude/datenmodell-iteratives-aetzen-14976q`.
+
+Validation run:
+- `python -m pytest tests/` -> **59 passed** (0.3 s).
+- `python -m compileall nanofab_v3 tests` -> clean.
+- Manual check on the plan's reference grid (540x1200 at 1 nm = 0.65 M cells, numpy 2.4.6 / scipy 1.17.1), half-plane substrate at y = 120 nm:
+  - max |phi| on the surface row = **0** and 0 nonzero cells on that row;
+  - max |phi - analytic| over the whole field = **0** (not "small") — reproduces the ADR-0002 exactness claim;
+  - band `| |grad phi| - 1 |` = **0.0**;
+  - 2.59 MB per float32 field, matching the plan's 2.6 MB estimate;
+  - marching squares over the solid union: 2 polylines / 2517 points in 21.5 ms.
+- Corner rounding measured, since plan §15 lists it as an accepted cost: the contour of a 40x100 nm box is 277.657 nm against 280.0 nm analytic, a deficit of 2.343 nm = exactly `4*(2-sqrt(2))*spacing`, i.e. ~0.29 cell per corner at 1 nm/cell.
+- The session container had no numpy/scipy/pytest; they were pip-installed there. No `.venv` was added to the repo.
+
+Next steps / known risks:
+1. M1 (motion) is next per plan §14: isotropic offset fast path, upwind advection with CFL sub-stepping, narrow-band reinitialisation, commit gate with the balance check. `kernel/invariants.py` is the seed of that gate; `csg.offset` is already the fast path and its dose-splitting exactness (`1x20` vs `4x5`, max diff 0.0) is a standing test.
+2. AGENTS.md §4/§8 still name `compileall` as the validation command, while plan §13 asks for `compileall + pytest` now that tests exist. AGENTS.md §6 forbids editing that file without asking, so this is a **proposal awaiting the user's approval**, not a change.
+3. `nanofab_v3/io/` shadows the stdlib `io` in name only — Python 3 absolute imports keep `import io` inside the package resolving to the stdlib. Deliberate (the plan names the directory), noted so it does not get "fixed" later.
+4. Nothing in M0 moves a front yet, so the reinit-drift and balance-check risks of plan §15 are untested by construction; they arrive with M1.
