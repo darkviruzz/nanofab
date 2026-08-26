@@ -30,6 +30,26 @@ rate of zero. Putting it in each wrapper would have meant thirty places to
 forget it and no coverage for a plugin's step at all; putting it after the commit
 rather than before catches a material the step itself *introduced*, which is the
 case that actually bit — a scattered particle nobody's recipe ever named.
+
+**And a sixth, added in M7 (roadmap E5): the domain is fitted around the step.**
+`kernel.domain` decides whether the sample still has room; this decides when to
+ask. The order is what makes it work:
+
+1. **before** the step, `domain.fit` grows the domain if the sample is about to
+    touch a face and gives room back if there is far too much. The *fitted* input
+    is what the step runs on **and** what the commit gate takes as its parent, so
+    the two always share a grid — which is what lineage matching and array
+    sharing need, and the reason the fit is here rather than after the commit;
+2. **after** the step, if the sample used the domain up anyway — one step can
+    move the front further than any margin — the input is grown and the step is
+    run **again**, up to `DomainPolicy.retries` times. That is roadmap E5's
+    "grows automatically instead of failing", and it costs an extra solve only on
+    the step that needed it.
+
+It stays deterministic, which ADR-0004 requires of everything here: the resize is
+a pure function of the input structure and the policy, the retry is a pure
+function of the outcome, and the RNG is re-seeded identically from (recipe,
+position, index) on every attempt.
 """
 
 from __future__ import annotations
@@ -40,6 +60,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
+from nanofab_v3.kernel import domain as domain_kernel
 from nanofab_v3.kernel import gate as commit_gate
 from nanofab_v3.kernel import reinit
 from nanofab_v3.materials import MaterialLibrary, didactic_library
@@ -89,6 +110,11 @@ class StepOutcome:
             cannot answer for (E15). Empty is the normal case. Carried as a
             value, not only as a warning, so a UI can offer to describe them and
             a headless caller can decide what an unknown material means to it.
+        domain: What the domain did around this step (roadmap E5). `capped` on it
+            is the one thing a shell has to surface, because that is where the
+            model stops being able to show what it is computing.
+        attempts: How many times the step ran. More than one means it used the
+            domain up and was given more.
     """
 
     step_id: str
@@ -100,6 +126,8 @@ class StepOutcome:
     artifacts: tuple[ArtifactRef, ...] = ()
     logs: tuple[str, ...] = ()
     unknown: UnknownMaterials = field(default_factory=UnknownMaterials)
+    domain: domain_kernel.DomainChange = field(default_factory=domain_kernel.DomainChange)
+    attempts: int = 1
 
     @property
     def ok(self) -> bool:
@@ -120,6 +148,7 @@ def run_step(
     artifacts: ArtifactSink | None = None,
     policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
     tolerances: commit_gate.GateTolerances = commit_gate.GateTolerances(),
+    domain: domain_kernel.DomainPolicy | None = None,
 ) -> StepOutcome:
     """Validate, gate, run and commit one process step.
 
@@ -137,27 +166,49 @@ def run_step(
         )
 
     resolved = validate_params(step.parameter_schema(), params)
-    context = StepContext(
-        structure=structure,
-        params=resolved,
-        library=library,
-        capabilities=available,
-        rng=np.random.default_rng(step_seed(recipe_id, position, index)),
-        position=position,
-        artifacts=artifacts,
-    )
-    result = step.run(context)
-    outcome = commit_gate.commit(
-        result.structure,
-        parent=structure if structure.materials else None,
-        swept=result.swept,
-        field_specs=result.field_specs,
-        capabilities=available,
-        provides=result.provides,
-        retires=result.retires,
-        policy=policy,
-        tolerances=tolerances,
-    )
+    domain_policy = domain_kernel.DomainPolicy() if domain is None else domain
+    current, change = domain_kernel.fit(structure, domain_policy)
+
+    attempt = 0
+    while True:
+        context = StepContext(
+            structure=current,
+            params=resolved,
+            library=library,
+            capabilities=available,
+            rng=np.random.default_rng(step_seed(recipe_id, position, index)),
+            position=position,
+            artifacts=artifacts,
+        )
+        result = step.run(context)
+        outcome = commit_gate.commit(
+            result.structure,
+            parent=current if current.materials else None,
+            swept=result.swept,
+            field_specs=result.field_specs,
+            capabilities=available,
+            provides=result.provides,
+            retires=result.retires,
+            policy=policy,
+            tolerances=tolerances,
+        )
+        short_below, short_above = domain_kernel.out_of_room(outcome.structure)
+        if not (short_below or short_above) or attempt >= domain_policy.retries:
+            break
+        relief = domain_kernel.extra_room(
+            current.grid,
+            below=short_below,
+            above=short_above,
+            policy=domain_policy,
+            attempt=attempt,
+        )
+        if not relief.moved:
+            change = _merged_change(change, relief)
+            break
+        current = domain_kernel.resize(current, below=relief.below, above=relief.above)
+        change = _merged_change(change, relief)
+        attempt += 1
+
     unknown = unknown_materials(
         library, outcome.structure.materials, seen_in=step.step_id
     )
@@ -170,8 +221,27 @@ def run_step(
         capabilities=outcome.capabilities,
         measurements=result.measurements,
         artifacts=tuple(result.artifacts),
-        logs=tuple(result.logs) + outcome.report.describe() + unknown.describe(),
+        logs=(
+            tuple(result.logs)
+            + outcome.report.describe()
+            + unknown.describe()
+            + change.describe(outcome.structure.grid)
+        ),
         unknown=unknown,
+        domain=change,
+        attempts=attempt + 1,
+    )
+
+
+def _merged_change(
+    first: domain_kernel.DomainChange, second: domain_kernel.DomainChange
+) -> domain_kernel.DomainChange:
+    """One `DomainChange` describing both, so the log line counts the whole step."""
+    return domain_kernel.DomainChange(
+        below=first.below + second.below,
+        above=first.above + second.above,
+        capped=first.capped or second.capped,
+        wanted=first.wanted + second.wanted,
     )
 
 

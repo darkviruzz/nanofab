@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from nanofab_v3.kernel.domain import DomainPolicy
 from nanofab_v3.materials import MaterialLibrary, didactic_library
 from nanofab_v3.model.artifact import ArtifactSink
 from nanofab_v3.model.structure import Structure
@@ -143,6 +144,7 @@ def run_recipe(
     resident: int = 3,
     strict: bool = True,
     progress: Progress | None = None,
+    domain: DomainPolicy | None = None,
 ) -> RevisionChain:
     """Run a whole recipe at one wafer position, building its revision chain.
 
@@ -162,6 +164,7 @@ def run_recipe(
         resident=resident,
         strict=strict,
         progress=progress,
+        domain=domain,
     )
 
 
@@ -177,6 +180,7 @@ def materialize(
     resident: int = 3,
     strict: bool = True,
     progress: Progress | None = None,
+    domain: DomainPolicy | None = None,
 ) -> RevisionChain:
     """Plan §8's materialization: this position's chain, replayed and cached.
 
@@ -196,6 +200,7 @@ def materialize(
         resident=resident,
         strict=strict,
         progress=progress,
+        domain=domain,
     )
 
 
@@ -211,6 +216,7 @@ def _materialize(
     resident: int,
     strict: bool,
     progress: Progress | None,
+    domain: DomainPolicy | None = None,
 ) -> RevisionChain:
     chain = RevisionChain(
         recipe_id=recipe.recipe_id, position=position, store=store, resident=resident
@@ -243,6 +249,7 @@ def _materialize(
             recipe_id=recipe.recipe_id,
             position=position,
             sink=sink,
+            domain=domain,
         )
         if strict and not revision.ok:
             raise StepFailed(
@@ -274,6 +281,11 @@ class Run:
         cache: The persistent replay cache, or `None` to recompute every time.
         sink: Where a step may put a heavy output, or `None` for nowhere.
         resident: How many revisions each chain keeps in RAM.
+        domain: How the domain may grow and shrink around a step (roadmap E5),
+            or `None` for the default policy. On the `Run` rather than only on
+            the step because raising the 5 µm cap is a decision about a *sample*,
+            and every position of one run has to be materialized under the same
+            one or two positions of the same wafer would be different sizes.
     """
 
     def __init__(
@@ -287,6 +299,7 @@ class Run:
         positions: Iterable[Sequence[float]] | None = None,
         resident: int = 3,
         strict: bool = True,
+        domain: DomainPolicy | None = None,
     ) -> None:
         self.recipe = recipe
         # `is None`, never `or`: `ProcessRegistry` and `MaterialLibrary` both
@@ -298,6 +311,7 @@ class Run:
         self.sink = sink
         self.resident = resident
         self.strict = strict
+        self.domain = domain
         self._chains: dict[Position, RevisionChain] = {}
         self._positions: list[Position] = list(as_positions(positions))
 
@@ -336,6 +350,7 @@ class Run:
             resident=self.resident,
             strict=self.strict,
             progress=progress,
+            domain=self.domain,
         )
         self._chains[point] = chain
         return chain

@@ -143,6 +143,11 @@ def structure_to_json(structure: Structure) -> tuple[dict[str, Any], dict[str, n
         "grid": grid_to_json(structure.grid),
         "materials": materials,
         "fields": fields,
+        # Scalars, so they go in the manifest rather than the archive — which is
+        # also what makes them readable by an external solver that only parses
+        # the JSON (plan §9's third job). See `Structure`'s docstring for why the
+        # substrate's thickness is one of these and not a `Field`.
+        "metadata": dict(structure.metadata),
     }
     return manifest, arrays
 
@@ -159,7 +164,11 @@ def structure_from_json(
         FieldKey(entry["name"], entry.get("material")): _array(arrays, entry, verify=verify)
         for entry in data.get("fields", ())
     }
-    return Structure(grid, phi, fields)
+    # `.get` with a default rather than `data["metadata"]`: a file written before
+    # M7 has no metadata key, and this format's own rule is that a reader
+    # tolerates what it has never heard of (plan §9, docs §4.1 invariant 5).
+    metadata = dict(data.get("metadata", {}))
+    return Structure(grid, phi, fields, metadata)
 
 
 def _array(

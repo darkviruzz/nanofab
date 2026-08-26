@@ -29,6 +29,7 @@ from nanofab_v3.io import (
     replay_cache_for,
     save_revision,
 )
+from nanofab_v3.kernel.domain import DomainPolicy
 from nanofab_v3.materials import METAL, RESIST, SILICON, didactic_library
 from nanofab_v3.model.artifact import MemoryArtifactSink
 from nanofab_v3.model.quantity import Quantity
@@ -275,6 +276,14 @@ def test_the_step_list_reads_summaries_and_faults_nothing(litho, registry, libra
 
 
 def test_a_failing_step_stops_a_strict_run(grid, registry, library) -> None:
+    """A coat that does not fit, under a domain cap that will not let it grow.
+
+    Since M7 the headroom is not a wall by itself: a coat taller than the domain
+    grows the domain and succeeds (roadmap E5), which is the whole point of the
+    milestone. What still fails — and what a strict run still has to stop on — is
+    a coat that does not fit under the **cap**, because that is the point where
+    the model would have to clip the sample to keep drawing it.
+    """
     overflowing = Recipe(
         grid=grid,
         recipe_id="too-thick",
@@ -285,7 +294,12 @@ def test_a_failing_step_stops_a_strict_run(grid, registry, library) -> None:
     )
 
     with pytest.raises(StepFailed, match="headroom"):
-        run_recipe(overflowing, registry=registry, library=library)
+        run_recipe(
+            overflowing,
+            registry=registry,
+            library=library,
+            domain=DomainPolicy(cap=grid.shape[0] * grid.spacing + 40.0),
+        )
 
 
 # -- 2. wafer positions (plan §8) ---------------------------------------------

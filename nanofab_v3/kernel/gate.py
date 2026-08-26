@@ -165,7 +165,9 @@ def commit(
         outcome = reinit.reinitialise(grid, structure.phi_of(material), policy)
         normalised[material] = outcome.phi
         displacement = max(displacement, outcome.displacement)
-    committed = Structure(grid, normalised, dict(structure.fields))
+    # `metadata` rides along untouched: it is a statement about the sample that
+    # no step's geometry can invalidate, and the gate re-derives geometry only.
+    committed = Structure(grid, normalised, dict(structure.fields), dict(structure.metadata))
     measure_after = measures.solid_measure(committed)
 
     # 2. Field scoping: a material-scoped field means nothing where its material

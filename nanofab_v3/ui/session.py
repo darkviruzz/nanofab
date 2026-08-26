@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from nanofab_v3.io.exchange import load_chain, save_chain
+from nanofab_v3.kernel.domain import DomainPolicy
 from nanofab_v3.io.manifest import recipe_from_json, recipe_to_json
 from nanofab_v3.materials import MaterialLibrary, MaterialType, didactic_library
 from nanofab_v3.materials.unknown import UnknownMaterials, unknown_materials
@@ -63,6 +64,9 @@ class Session:
             unless the caller supplied one.
         library: The `MaterialType` library the steps and the renderer read.
         plugins: What entry-point discovery loaded and refused, for the run log.
+        domain: How far the domain may grow around a step and where it stops
+            (roadmap E5). Held here because raising the cap is something an
+            operator asks for once and every later step has to run under.
         sink: Where an inspection step may put an artifact, or `None`.
     """
 
@@ -72,6 +76,7 @@ class Session:
         *,
         registry: ProcessRegistry | None = None,
         library: MaterialLibrary | None = None,
+        domain: DomainPolicy | None = None,
         recipe_id: str = "session",
         position: Position = CENTER,
         store: RevisionStore | None = None,
@@ -91,6 +96,9 @@ class Session:
         self.registry = registry
         # `is None`, never `or` — see `runtime.replay.Run` and plan §21.3.
         self.library = didactic_library() if library is None else library
+        # Roadmap E5's cap is "raisable on request", so the policy is a session
+        # value rather than a constant — the request lands here.
+        self.domain = DomainPolicy() if domain is None else domain
         self.sink = sink
         self.recipe = Recipe(
             grid=grid if grid is not None else default_grid(), recipe_id=recipe_id
@@ -176,6 +184,7 @@ class Session:
             recipe_id=self.recipe.recipe_id,
             position=self.position,
             sink=self.sink,
+            domain=self.domain,
         )
         self.recipe = self.recipe.with_step(entry)
         self.chain.append(revision)

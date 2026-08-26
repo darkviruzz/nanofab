@@ -171,7 +171,7 @@ def remove_region(
     for material in dropped:
         del phi[material]
         fields = {key: values for key, values in fields.items() if key.material != material}
-    return Structure(grid, phi, fields)
+    return Structure(grid, phi, fields, dict(structure.metadata))
 
 
 def region_measure(structure: Structure, mask: np.ndarray) -> float:

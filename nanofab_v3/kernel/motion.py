@@ -409,7 +409,7 @@ def offset_solid(
 
     originals = dict(structure.phi)
     phi = _bookkeep(originals, solid_before, solid_after, deposit_material, grid.spacing)
-    moved = Structure(grid, phi, dict(structure.fields))
+    moved = Structure(grid, phi, dict(structure.fields), dict(structure.metadata))
     # Trapezoidal front integral: the front's length changes while it moves, and
     # taking only its starting length would miss the curvature term entirely
     # (a disk grown by 10 nm would come out 10 % short).
@@ -535,7 +535,7 @@ def advect_front(
                 reinit_passes += 1
 
     phi = _bookkeep(originals, solid_start, solid, deposit_material, grid.spacing)
-    moved = Structure(grid, phi, dict(structure.fields))
+    moved = Structure(grid, phi, dict(structure.fields), dict(structure.metadata))
     return MotionOutcome(
         structure=moved,
         swept=math.copysign(swept, float(sign)),

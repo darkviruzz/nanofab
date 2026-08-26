@@ -32,6 +32,7 @@ from nanofab_v3.materials import (
 )
 from nanofab_v3.processes import builtin_registry
 from nanofab_v3.processes.contract import CapabilityError
+from nanofab_v3.kernel.domain import DomainPolicy
 from nanofab_v3.processes.substrate import cross_section_grid
 from nanofab_v3.runtime import CENTER, Recipe, RecipeStep, run_recipe
 from nanofab_v3.ui import scene as scene_builder
@@ -316,9 +317,17 @@ def test_a_session_grows_a_recipe_and_a_chain_together(registry, library) -> Non
 
 
 def test_a_session_shows_a_failing_gate_rather_than_raising(registry, library) -> None:
-    """Plan §4.5: a suspicious step is visible, never silent. `strict` is a batch flag."""
+    """Plan §4.5: a suspicious step is visible, never silent. `strict` is a batch flag.
+
+    The failing step is a coat that will not fit under a deliberately low domain
+    cap. Since M7 a coat taller than the headroom simply grows the domain (E5);
+    what a session still has to *show* rather than raise on is the cap, and the
+    log line beside the failure says what raising it would cost.
+    """
     grid = cross_section_grid(width=200.0, thickness=40.0, headroom=140.0)
-    session = Session(grid, registry=registry, library=library)
+    session = Session(
+        grid, registry=registry, library=library, domain=DomainPolicy(cap=260.0)
+    )
     session.run("substrate.select", {"material": SILICON, "surface": 40.0})
 
     revision = session.run("resist.spin_coat", {"material": RESIST, "thickness": 400.0})
@@ -326,6 +335,7 @@ def test_a_session_shows_a_failing_gate_rather_than_raising(registry, library) -
     assert not revision.ok
     assert len(session.chain) == 2
     assert any("headroom" in message for message in revision.validation.failures)
+    assert any("Raising the cap" in line and "MB of RAM" in line for line in revision.logs)
     assert not session.chain.summary(1).ok
 
 
