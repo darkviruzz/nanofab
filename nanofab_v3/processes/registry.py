@@ -278,10 +278,10 @@ def builtin_registry() -> ProcessRegistry:
     importable without pulling in every process — which is what a plugin host
     needs, and what keeps the import graph a tree.
 
-    Complete as of M5: every row of plan §6 is registered here. What M3 left out
-    with a milestone against it — inspection, particles and clean, anneal — is in
-    the last block, and `discover_plugins` is what adds anything else (plan §5.4,
-    §11).
+    Complete as of M5 for plan §6, and extended in M6 by the seven steps of
+    roadmap §3's process table. What M3 left out with a milestone against it —
+    inspection, particles and clean, anneal — is in the last block, and
+    `discover_plugins` is what adds anything else (plan §5.4, §11).
     """
     from nanofab_v3.processes import (
         anneal,
@@ -310,6 +310,16 @@ def builtin_registry() -> ProcessRegistry:
         etching.WET_ETCH_STEP,
         etching.RIE_STEP,
         etching.IBE_STEP,
+        # The chemistries of roadmap §3's process table (M6). Beside the three
+        # above rather than instead of them: same techniques, a second set of
+        # rate keys, which is plan §5.4 in the library rather than in the step.
+        etching.SPUTTER_ETCH_STEP,
+        etching.ICP_FLUORINE_STEP,
+        etching.RIE_CHLORINE_STEP,
+        etching.RIE_OXYGEN_STEP,
+        etching.WET_CR_STEP,
+        etching.WET_OXIDE_STEP,
+        deposition.SPUTTER_RATE,
         removal.DISSOLVE,
         removal.STRIP_RATE,
         removal.LIFT_OFF,

@@ -21,6 +21,14 @@ plumbing:
   is the exact geometric answer — one array operation, dose splitting bit-exact —
   and it keeps growing inside a cavity it has sealed. `ALD` runs the same growth
   behind `predicates.ReachableFront`, and stops. Scenario S3 is that difference.
+
+M6 added a fifth step, `deposit.sputter_rate`, and the difference from
+`deposit.sputter` is which direction the arithmetic runs. The older step is given
+a thickness and finds the time; this one is given a **time** and finds the
+thickness, from the target's `sputter_deposit` rate in the library. That is what
+rows 7-9 of roadmap §3's table actually state — "run the sputterer for so long"
+is the operator's input and the film is the outcome — and it is the shape in
+which a wrong rate is visible: the step reports the thickness it derived.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ from __future__ import annotations
 import math
 
 from nanofab_v3.kernel import flux, motion, predicates
-from nanofab_v3.materials import DEPOSIT, METAL, MaterialId
+from nanofab_v3.materials import DEPOSIT, METAL, SPUTTER_DEPOSIT, MaterialId
 from nanofab_v3.model import capability
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
@@ -255,6 +263,50 @@ def _run_ald(ctx: StepContext) -> StepResult:
     )
 
 
+def _run_sputter_rate(ctx: StepContext) -> StepResult:
+    material = MaterialId(str(ctx["material"]))
+    entry = ctx.library.get(material)
+    if entry is None:
+        raise ValueError(
+            f"no MaterialType {material!r} in this library, so there is no sputter "
+            "deposition rate to run at; add data/materials/"
+            f"{material}.json or pick a material the library knows"
+        )
+    rate = entry.rate_for(SPUTTER_DEPOSIT)
+    if rate <= 0.0:
+        raise ValueError(
+            f"material {material!r} has no {SPUTTER_DEPOSIT!r} rate, so this step would "
+            "deposit nothing. That zero means 'nobody stated a rate', not 'it does not "
+            f"grow' — give it one in data/materials/{material}.json, or use "
+            "deposit.sputter, which takes a thickness instead"
+        )
+    duration = float(ctx["duration"])
+    thickness = rate * duration
+    outcome = sputter_deposit(
+        ctx.structure,
+        material,
+        thickness=thickness,
+        exponent=ctx["exponent"],
+        angle=math.radians(ctx["angle"]),
+        mobility_length=ctx["mobility_length"],
+        rate=rate,
+    )
+    return StepResult(
+        structure=outcome.structure,
+        swept=outcome.swept,
+        provides=frozenset({capability.of_material(material)}),
+        measurements={
+            "thickness": Quantity(thickness, "nm"),
+            "duration": Quantity(duration, "s"),
+            "rate": Quantity(rate, "nm/s"),
+        },
+        logs=(
+            f"sputtered {material} for {duration:.1f} s at {rate:.4f} nm/s "
+            f"-> {thickness:.1f} nm",
+        ),
+    )
+
+
 _MATERIAL = ParamSpec("material", str, default=str(METAL), description="Deposited material")
 _THICKNESS = ParamSpec(
     "thickness",
@@ -319,4 +371,25 @@ ALD = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_ald,
+)
+
+SPUTTER_RATE = FunctionStep(
+    step_id="deposit.sputter_rate",
+    display_name="Sputter deposition (timed)",
+    fidelity=DIDACTIC,
+    schema=(
+        ParamSpec("material", str, default=str(METAL),
+                  description="Deposited material; its sputter_deposit rate sets the thickness"),
+        ParamSpec("duration", float, unit="s", default=None, minimum=0.0,
+                  description="Time in the chamber — the thickness follows from the rate"),
+        ParamSpec("exponent", float, default=1.0, minimum=0.0, maximum=8.0,
+                  description="Exponent n of the cos^n source distribution"),
+        ParamSpec("angle", float, unit="deg", default=0.0, minimum=-85.0, maximum=85.0,
+                  description="Source tilt from the surface normal"),
+        ParamSpec("mobility_length", float, unit="nm", default=0.0, minimum=0.0,
+                  description="Surface diffusion length of the arriving material"),
+    ),
+    required=frozenset(),
+    provided=frozenset(),
+    run_function=_run_sputter_rate,
 )
