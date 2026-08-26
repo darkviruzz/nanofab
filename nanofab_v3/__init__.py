@@ -14,6 +14,13 @@ Package layout (plan §14):
 - `processes/` — the process set (M3)
 - `runtime/` — revisions, runs, materialization (M4)
 - `io/` — persistence and exchange format (M4)
+- `ui/` — `SceneSnapshot`, the interactive `Session`, and the Qt shell (M4)
+
+The dependency runs one way through those: `runtime` declares the store
+protocols `io` implements, and `ui.scene`/`ui.session` decide everything about
+geometry and about a run without importing Qt. That last one is ADR-0001's
+finding turned into a rule a test can check — v1's defect was a renderer that
+owned the geometry.
 
 The S1-S4 acceptance tests passed on 2026-08-25, so v1 became a `ui_backups/`
 snapshot as plan §14 and AGENTS.md §7 require: the cross-section prototype is in

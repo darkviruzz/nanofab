@@ -15,10 +15,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The kernel, the runtime and the exchange format need numpy and scipy only.
+# PySide6 is what `nanofab_v3.ui.window` needs, and deliberately an extra:
+# `ui.scene` and `ui.session` — everything that decides geometry or drives a run
+# — import without it, which is what keeps ADR-0001's rule checkable on a
+# headless runner (see `tests/test_ui.py`).
 dev = ["pytest>=8.0"]
+ui = ["PySide6>=6.6"]
 
-# Only the v2 package is installable; the v1 entry files and the prototype stay
-# plain scripts next to it until M3 retires them (plan §14, AGENTS.md §7).
+# Only the v2 package is installable; the v1 application and the prototype are
+# `ui_backups/` snapshots as of 2026-08-25 (plan §14, AGENTS.md §7).
 [tool.setuptools.packages.find]
 include = ["nanofab_v3*"]
 

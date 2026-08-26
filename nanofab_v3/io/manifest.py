@@ -40,6 +40,7 @@ from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.reports import BalanceCheck, ValidationReport
 from nanofab_v3.model.structure import Structure
 from nanofab_v3.runtime.revision import ArtifactRef, HistoryEntry, Revision
+from nanofab_v3.runtime.run import LinearTilt, RadialProfile, Recipe, RecipeStep
 
 SCHEMA_ID = "structure.v2"
 """What this format is (plan §9). A file claiming anything else is refused."""
@@ -335,6 +336,88 @@ def revision_from_json(
             for name, q in data.get("measurements", {}).items()
         },
         logs=tuple(data.get("logs", ())),
+    )
+
+
+# -- the recipe ---------------------------------------------------------------
+
+
+def _value_to_json(value: Any) -> Any:
+    """One recipe parameter value, wafer-parameterised ones included.
+
+    A parameter that varies over the wafer is data, not a resolved number, so a
+    saved recipe has to carry the *function* — otherwise reopening a session and
+    adding a wafer position would silently apply the old position's values. The
+    two built-ins encode themselves; anything else raises rather than being
+    written as its resolved value at some arbitrary position, because that is the
+    failure that would look like it worked.
+    """
+    if isinstance(value, RadialProfile):
+        return {"kind": "radial", "radii": list(value.radii), "values": list(value.values)}
+    if isinstance(value, LinearTilt):
+        return {"kind": "tilt", "center": value.center, "gradient": list(value.gradient)}
+    if isinstance(value, Quantity):
+        return {"kind": "quantity", "value": value.value, "unit": value.unit}
+    if isinstance(value, (bool, int, float, str)) or value is None:
+        return value
+    if hasattr(value, "at"):
+        raise ValueError(
+            f"{type(value).__name__} varies over the wafer and this format does not know "
+            "how to write it; RadialProfile and LinearTilt are the two it does"
+        )
+    raise ValueError(f"cannot write a recipe parameter of type {type(value).__name__}")
+
+
+def _value_from_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        kind = value.get("kind")
+        if kind == "radial":
+            return RadialProfile(
+                radii=tuple(float(v) for v in value["radii"]),
+                values=tuple(float(v) for v in value["values"]),
+            )
+        if kind == "tilt":
+            gradient = tuple(float(v) for v in value.get("gradient", (0.0, 0.0)))
+            return LinearTilt(center=float(value["center"]), gradient=(gradient[0], gradient[1]))
+        if kind == "quantity":
+            return Quantity(float(value["value"]), str(value.get("unit", "")))
+        raise ValueError(f"unknown parameter encoding {kind!r}")
+    return value
+
+
+def recipe_to_json(recipe: Recipe) -> dict[str, Any]:
+    """A whole `Recipe` as plain JSON values — steps, wafer parameters and grid."""
+    return {
+        "schema_id": SCHEMA_ID,
+        "code_version": code_version(),
+        "recipe_id": recipe.recipe_id,
+        "grid": grid_to_json(recipe.grid),
+        "steps": [
+            {
+                "step_id": step.step_id,
+                "params": {name: _value_to_json(v) for name, v in step.params.items()},
+            }
+            for step in recipe.steps
+        ],
+    }
+
+
+def recipe_from_json(data: Mapping[str, Any]) -> Recipe:
+    """Rebuild a `Recipe`, tolerating keys this version has never heard of."""
+    check_schema(data)
+    return Recipe(
+        grid=grid_from_json(data["grid"]),
+        steps=tuple(
+            RecipeStep(
+                step_id=str(entry["step_id"]),
+                params={
+                    name: _value_from_json(value)
+                    for name, value in entry.get("params", {}).items()
+                },
+            )
+            for entry in data.get("steps", ())
+        ),
+        recipe_id=str(data.get("recipe_id", "recipe")),
     )
 
 
