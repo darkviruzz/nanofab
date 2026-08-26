@@ -21,6 +21,15 @@ what M4's runtime will grow around rather than replace.
 The RNG seed is `(recipe id, position, step index)` exactly as §5.2 and ADR-0004
 require, so two runs of the same chain at the same wafer position produce the
 same sample, and adding a position later replays to the sample it would have had.
+
+**A fifth thing happens, added in M6 (roadmap E15), and it happens here because
+here is the only place every step passes through.** After the commit, the
+committed structure's materials are checked against the library, and one the
+library cannot answer for produces a warning and a log line rather than a silent
+rate of zero. Putting it in each wrapper would have meant thirty places to
+forget it and no coverage for a plugin's step at all; putting it after the commit
+rather than before catches a material the step itself *introduced*, which is the
+case that actually bit — a scattered particle nobody's recipe ever named.
 """
 
 from __future__ import annotations
@@ -34,6 +43,7 @@ import numpy as np
 from nanofab_v3.kernel import gate as commit_gate
 from nanofab_v3.kernel import reinit
 from nanofab_v3.materials import MaterialLibrary, didactic_library
+from nanofab_v3.materials.unknown import UnknownMaterials, unknown_materials
 from nanofab_v3.model.artifact import ArtifactRef, ArtifactSink
 from nanofab_v3.model.occurrence import LineageReport
 from nanofab_v3.model.quantity import Quantity
@@ -73,7 +83,12 @@ class StepOutcome:
         measurements: What the step measured, as `Quantity`.
         artifacts: What it wrote, as references (docs §4.2.2). Empty unless the
             caller gave the step somewhere to put one.
-        logs: The step's own log lines, followed by the gate's.
+        logs: The step's own log lines, followed by the gate's and, when there
+            were any, the unknown materials'.
+        unknown: Materials the committed structure carries that the library
+            cannot answer for (E15). Empty is the normal case. Carried as a
+            value, not only as a warning, so a UI can offer to describe them and
+            a headless caller can decide what an unknown material means to it.
     """
 
     step_id: str
@@ -84,6 +99,7 @@ class StepOutcome:
     measurements: Mapping[str, Quantity] = field(default_factory=dict)
     artifacts: tuple[ArtifactRef, ...] = ()
     logs: tuple[str, ...] = ()
+    unknown: UnknownMaterials = field(default_factory=UnknownMaterials)
 
     @property
     def ok(self) -> bool:
@@ -142,6 +158,10 @@ def run_step(
         policy=policy,
         tolerances=tolerances,
     )
+    unknown = unknown_materials(
+        library, outcome.structure.materials, seen_in=step.step_id
+    )
+    unknown.warn()
     return StepOutcome(
         step_id=step.step_id,
         structure=outcome.structure,
@@ -150,7 +170,8 @@ def run_step(
         capabilities=outcome.capabilities,
         measurements=result.measurements,
         artifacts=tuple(result.artifacts),
-        logs=tuple(result.logs) + outcome.report.describe(),
+        logs=tuple(result.logs) + outcome.report.describe() + unknown.describe(),
+        unknown=unknown,
     )
 
 

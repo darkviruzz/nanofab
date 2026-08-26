@@ -10,7 +10,9 @@ these models into the kernel's `SurfaceRates` and `flux.AngularYield` is
 Since M6 the entries themselves are not in code: `store` reads them from
 `data/materials/*.json` and `schema` is the one place that knows what a file
 looks like (roadmap E14). `didactic_library()` is the shipped set, and
-`application_library()` is that plus the operator's own directory.
+`application_library()` is that plus the operator's own directory. `unknown`
+holds what happens when a sample carries a material none of them describes
+(E15): a warning and a question, never a silent rate of zero.
 """
 
 from __future__ import annotations
@@ -72,6 +74,12 @@ from nanofab_v3.materials.store import (
     save_material,
     user_materials_dir,
 )
+from nanofab_v3.materials.unknown import (
+    MissingMaterial,
+    UnknownMaterials,
+    UnknownMaterialWarning,
+    unknown_materials,
+)
 
 __all__ = [
     "ALUMINA",
@@ -107,8 +115,11 @@ __all__ = [
     "MaterialId",
     "MaterialLibrary",
     "MaterialType",
+    "MissingMaterial",
     "SpinCurve",
     "SputterResponse",
+    "UnknownMaterialWarning",
+    "UnknownMaterials",
     "application_library",
     "builtin_materials_dir",
     "didactic_library",
@@ -121,6 +132,7 @@ __all__ = [
     "save_material",
     "to_dict",
     "to_json",
+    "unknown_materials",
     "user_materials_dir",
     "write_material",
 ]

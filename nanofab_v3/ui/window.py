@@ -197,12 +197,33 @@ class MainWindow(QMainWindow):
             return
         self.log.append(self.session.log_lines(revision))
         self._refresh_all()
+        self._ask_about_unknown_materials()
         if not revision.ok:
             self.statusBar().showMessage(
                 f"#{revision.index} {revision.step_id}: "
                 + "; ".join(revision.validation.failures),
                 10_000,
             )
+
+    def _ask_about_unknown_materials(self) -> None:
+        """Roadmap E15: a material the library cannot answer for gets asked about.
+
+        After the step rather than before it, because a material can arrive
+        without any step naming it — a scattered particle, a plugin's own film —
+        and that is the case the rule was written for. The step is not undone: it
+        already ran at rate 0, which is what the run log says, and describing the
+        material now means the *next* step knows it. Undoing it would be worse,
+        because it would make the warning cost work rather than explain it.
+        """
+        unknown = self.session.unknown_materials()
+        if not unknown:
+            return
+        from nanofab_v3.ui.material_dialog import ask_about
+
+        for entry in ask_about(unknown.missing, self):
+            path = self.session.describe_material(entry)
+            self.log.append((f"described {entry.material_id} -> {path}",))
+        self._refresh_all()
 
     def _on_new(self) -> None:
         self.session.reset()

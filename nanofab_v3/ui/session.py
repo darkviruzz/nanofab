@@ -35,6 +35,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from nanofab_v3.io.exchange import load_chain, save_chain
 from nanofab_v3.io.manifest import recipe_from_json, recipe_to_json
 from nanofab_v3.materials import MaterialLibrary, didactic_library
+from nanofab_v3.materials.unknown import UnknownMaterials, unknown_materials
 from nanofab_v3.model.grid import Grid
 from nanofab_v3.model.structure import Structure
 from nanofab_v3.processes.contract import CapabilityError, ParameterError
@@ -114,6 +115,31 @@ class Session:
         """The head's geometry, or the empty domain before the first step."""
         current = self.chain.structure
         return self.recipe.initial() if current is None else current
+
+    def unknown_materials(self) -> UnknownMaterials:
+        """Materials on the head revision that the library cannot answer for (E15).
+
+        Recomputed rather than remembered, for the same reason an occurrence is
+        (plan §3.5): the answer changes when the library does, and an operator who
+        has just described `tungsten` should not have to re-run the step to stop
+        being asked about it. It is a set difference over a handful of ids.
+        """
+        return unknown_materials(self.library, self.structure.materials)
+
+    def describe_material(self, entry) -> None:
+        """Add a `MaterialType` to this session's library and save it to disk (E15).
+
+        Two effects on purpose. The session picks it up now — `self.library` is a
+        value, so this is a rebind rather than a mutation — and
+        `store.save_material` puts it in the writable root, so the next session
+        and every other one start out knowing it. A material described once and
+        forgotten on restart would be a worse answer than the warning.
+        """
+        from nanofab_v3.materials import save_material
+
+        path = save_material(entry)
+        self.library = self.library.with_entry(entry)
+        return path
 
     def blocked_reason(self, step_id: str) -> str | None:
         """Why a step cannot run right now, in the sentence the operator reads."""

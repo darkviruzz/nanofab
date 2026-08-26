@@ -33,6 +33,7 @@ from nanofab_v3.materials import (
     SILICON,
     MaterialLibrary,
     MaterialType,
+    UnknownMaterialWarning,
     didactic_library,
 )
 from nanofab_v3.model import capability
@@ -646,18 +647,29 @@ def test_a_library_a_process_has_never_heard_of_still_runs(patterned: Structure)
     the *processes*: a deposition of an undescribed material falls back to its
     parameters, because the alternative is a package that cannot draw anything
     the didactic library does not contain.
+
+    Since M6 it is not silent about it either (roadmap E15). Both halves are
+    asserted here because they are the two halves of one decision: free text
+    stays legal, and it stops being quiet. `tests/test_unknown_material.py` has
+    the rest.
     """
     sparse = MaterialLibrary.of(MaterialType(material_id=SILICON, name="Silicon"))
 
-    outcome = run_step(
-        builtin_registry()["deposit.evaporate"],
-        patterned,
-        {"material": "gold", "thickness": 10.0},
-        library=sparse,
-    )
+    with pytest.warns(UnknownMaterialWarning) as caught:
+        outcome = run_step(
+            builtin_registry()["deposit.evaporate"],
+            patterned,
+            {"material": "gold", "thickness": 10.0},
+            library=sparse,
+        )
 
     assert "gold" in outcome.structure.phi
     assert capability.of_material("gold") in outcome.capabilities
+    # The resist was already on the sample and this library never described it,
+    # so both are reported — which is the point: what is checked is the sample,
+    # not the parameter somebody typed.
+    assert set(outcome.unknown.ids) == {"gold", RESIST}
+    assert len(caught) == 2
 
 
 # -- 4. particles and clean (plan §6 rows 16-17, milestone M5) ----------------

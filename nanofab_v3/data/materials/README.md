@@ -52,5 +52,13 @@ whether TiO2 is inert.
 
 Copy an existing file, change the id and the numbers, and drop it into the
 writable root — no rebuild, no code change. The application will pick it up on
-the next start. An unknown material met during a run produces a warning and, in
-the shell, a dialog that writes the file for you (roadmap E15).
+the next start.
+
+A material a sample carries that no file describes is never silent (roadmap
+E15): the step still runs — trying something uncalibrated is the didactic point —
+but it warns, says so in the run log, and in the shell raises a dialog that
+writes the file for you. It goes to the writable root and is marked uncalibrated,
+which is what tells a later reader that nothing in it came from a measurement.
+
+A rate a file simply does not list is a different thing and does **not** warn:
+`rate_for` answers 0.0, which is the deliberate statement "this does not move".
