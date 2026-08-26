@@ -78,6 +78,9 @@ class MainWindow(QMainWindow):
         self.steps.step_chosen.connect(self._on_step_chosen)
         self.steps.run_requested.connect(self._on_run)
         self.revisions.revision_chosen.connect(self._on_revision_chosen)
+        self.revisions.repeat_requested.connect(self._on_repeat)
+        self.revisions.adjust_requested.connect(self._on_adjust)
+        self.revisions.remove_requested.connect(self._on_remove)
         self.canvas.hovered.connect(self.statusBar().showMessage)
         self.wafer.position_chosen.connect(self._on_wafer_position)
 
@@ -195,23 +198,10 @@ class MainWindow(QMainWindow):
         self.form.set_values(revision.history.params)
 
     def _on_run(self, step_id: str) -> None:
-        try:
-            revision = self.session.run(step_id, self.form.values())
-        except (CapabilityError, ParameterError) as error:
-            # The engine's verdict, shown rather than second-guessed: the UI has
-            # no separate idea of what a legal recipe is (see `panels`).
-            QMessageBox.warning(self, "Step not run", str(error))
-            return
-        self.log.append(self.session.log_lines(revision))
-        self._refresh_all()
-        self._ask_about_unknown_materials()
-        self._offer_to_raise_the_domain_cap(revision)
-        if not revision.ok:
-            self.statusBar().showMessage(
-                f"#{revision.index} {revision.step_id}: "
-                + "; ".join(revision.validation.failures),
-                10_000,
-            )
+        # The engine's verdict is shown rather than second-guessed: the UI has no
+        # separate idea of what a legal recipe is (see `panels`). `_run_and_show`
+        # is where that happens, shared with E12's repeat.
+        self._run_and_show(lambda: self.session.run(step_id, self.form.values()))
 
     def _ask_about_unknown_materials(self) -> None:
         """Roadmap E15: a material the library cannot answer for gets asked about.
@@ -264,6 +254,78 @@ class MainWindow(QMainWindow):
                 f"domain cap raised to {wanted / 1000.0:.2f} um — rerun the step to use it",
             )
         )
+
+    # -- E12: repeat, adjust, remove -----------------------------------------
+
+    def _on_repeat(self, index: int) -> None:
+        """Run the step that made this revision again, at the head.
+
+        Appending, not replacing: a second 10 s etch really is 20 s of etching,
+        and pretending otherwise would be the one thing a didactic tool must not
+        do with a process time.
+        """
+        self._run_and_show(lambda: self.session.repeat(index))
+
+    def _on_adjust(self, index: int) -> None:
+        """Truncate to before this revision and put its parameters back in the form.
+
+        E12's "anpassen", spelled out: there is no branching here, so adjusting a
+        step is throwing away what came after it and running it again. The cost
+        is asked about rather than assumed, because it is measured in work.
+        """
+        losing = len(self.session.chain) - index
+        if losing > 1 and not self._confirm_truncate(index, losing):
+            return
+        entry = self.session.recipe[index]
+        params = self.session.parameters_of(index)
+        self.session.rewind(index)
+        self.steps.select_step(entry.step_id)
+        self._on_step_chosen(entry.step_id)
+        self.form.apply_values(params)
+        self._refresh_all()
+        self.statusBar().showMessage(
+            f"Adjusting {entry.step_id}: change the parameters and press Run", 8000
+        )
+
+    def _on_remove(self, index: int) -> None:
+        """Drop this revision and everything after it."""
+        losing = len(self.session.chain) - index
+        if losing > 1 and not self._confirm_truncate(index, losing):
+            return
+        self.session.rewind(index)
+        self._refresh_all()
+        self.statusBar().showMessage(f"Removed {losing} revision(s)", 5000)
+
+    def _confirm_truncate(self, index: int, losing: int) -> bool:
+        """Ask before throwing away work — and say exactly how much of it."""
+        answer = QMessageBox.question(
+            self,
+            "Remove revisions?",
+            f"This drops revision #{index} and the {losing - 1} after it.\n\n"
+            "A snapshot is a record, not a branch: what came after is gone rather "
+            "than kept beside what comes next.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _run_and_show(self, action) -> None:
+        """Run something that appends a revision, and show whatever it said."""
+        try:
+            revision = action()
+        except (CapabilityError, ParameterError) as error:
+            QMessageBox.warning(self, "Step not run", str(error))
+            return
+        self.log.append(self.session.log_lines(revision))
+        self._refresh_all()
+        self._ask_about_unknown_materials()
+        self._offer_to_raise_the_domain_cap(revision)
+        if not revision.ok:
+            self.statusBar().showMessage(
+                f"#{revision.index} {revision.step_id}: "
+                + "; ".join(revision.validation.failures),
+                10_000,
+            )
 
     def _on_new(self) -> None:
         self.session.reset()

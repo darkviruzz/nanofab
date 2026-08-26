@@ -190,8 +190,35 @@ class Session:
         self.chain.append(revision)
         return revision
 
+    def repeat(self, index: int) -> Revision:
+        """Run the step that produced revision `index` again, at the head (E12).
+
+        The chain is not touched: repeating is *appending*, which is what a real
+        second exposure or a second etch is. That it produces a different result
+        than the first — a second 10 s etch is 20 s of etching — is the honest
+        answer and is why this is not a "re-run" that replaces anything.
+        """
+        entry = self.recipe[index]
+        return self.run(entry.step_id, dict(entry.params))
+
+    def parameters_of(self, index: int) -> dict[str, Any]:
+        """What the step that produced revision `index` was given.
+
+        From the *recipe*, not from the revision's history: the history records
+        the validated values that actually ran, and a form wants the values
+        somebody typed — including the ones they left as defaults.
+        """
+        return dict(self.recipe[index].params)
+
     def rewind(self, index: int) -> None:
-        """Drop revision `index` and everything after it, recipe included."""
+        """Drop revision `index` and everything after it, recipe included (E12).
+
+        Truncation, never branching: `ui/window.py`'s first line has said "a
+        snapshot is a record, not a branch" since M4, and E12 keeps it. Adjusting
+        a step is therefore this plus running it again with different values, and
+        the history that led somewhere else is gone rather than kept beside the
+        one that led here.
+        """
         self.chain.rewind(index)
         self.recipe = Recipe(
             grid=self.recipe.grid,

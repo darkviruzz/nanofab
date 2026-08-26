@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -177,6 +178,20 @@ class StepListPanel(QWidget):
             empty.setFlags(Qt.NoItemFlags)
             self.list.addItem(empty)
         self._on_selection(self.list.currentItem(), None)
+
+    def select_step(self, step_id: str) -> bool:
+        """Select a step by id, if the filter is currently letting it through.
+
+        Returns whether it could. E12's "adjust" uses it, and a step hidden by
+        the search box is a legitimate miss rather than an error — the caller
+        loads the parameters either way.
+        """
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            if item.data(Qt.UserRole) == step_id:
+                self.list.setCurrentItem(item)
+                return True
+        return False
 
     def selected_step_id(self) -> str | None:
         item = self.list.currentItem()
@@ -435,22 +450,76 @@ class RevisionListPanel(QWidget):
     Reads `RevisionChain`'s **summaries**, never its revisions: a row is bytes,
     so scrubbing a 60-step chain does not fault 6 MB per row back off disk.
 
+    Since M8 the three things E12 allows are reachable from a row: **repeat** the
+    step that made it, **adjust** it, or **remove** it. All three are truncation
+    or appending, never branching — `ui/window.py`'s first paragraph has said "a
+    snapshot is a record, not a branch" since M4 and E12 keeps it. What that
+    costs is stated where it is spent: adjusting throws away everything after the
+    revision being adjusted, and the confirmation says how many.
+
     Signals:
         revision_chosen: `(index)` when the selection changes.
+        repeat_requested / adjust_requested / remove_requested: `(index)`.
     """
 
     revision_chosen = Signal(int)
+    repeat_requested = Signal(int)
+    adjust_requested = Signal(int)
+    remove_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.list = QListWidget()
         self.list.currentRowChanged.connect(self._on_row)
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._on_context_menu)
+        self.list.installEventFilter(self)
         heading = QLabel("Revisions")
         heading.setFont(_bold(heading.font()))
+        hint = QLabel("Right-click a revision, or press Del to remove it.")
+        hint.setStyleSheet("color: #8a949e;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(heading)
         layout.addWidget(self.list, 1)
+        layout.addWidget(hint)
+
+    # -- E12: repeat, adjust, remove -----------------------------------------
+
+    def eventFilter(self, watched, event) -> bool:  # type: ignore[override]
+        """Del removes the selected revision — the shortcut E12 asks for."""
+        if (
+            watched is self.list
+            and event.type() == QEvent.KeyPress
+            and event.key() in (Qt.Key_Delete, Qt.Key_Backspace)
+        ):
+            index = self.selected_index()
+            if index is not None:
+                self.remove_requested.emit(index)
+                return True
+        return super().eventFilter(watched, event)
+
+    def _on_context_menu(self, point) -> None:
+        index = self.selected_index()
+        item = self.list.itemAt(point)
+        if item is not None:
+            index = self.list.row(item)
+        if index is None or index < 0:
+            return
+        menu = QMenu(self)
+        repeat = menu.addAction("Repeat this step")
+        repeat.setToolTip("Run it again at the head of the chain — appends, changes nothing")
+        adjust = menu.addAction("Adjust this step…")
+        adjust.setToolTip("Truncate back to before it and load its parameters into the form")
+        menu.addSeparator()
+        remove = menu.addAction("Remove this revision and everything after it")
+        chosen = menu.exec(self.list.viewport().mapToGlobal(point))
+        if chosen is repeat:
+            self.repeat_requested.emit(index)
+        elif chosen is adjust:
+            self.adjust_requested.emit(index)
+        elif chosen is remove:
+            self.remove_requested.emit(index)
 
     def refresh(self, chain: RevisionChain, *, select_last: bool = True) -> None:
         blocked = self.list.blockSignals(True)
