@@ -17,10 +17,16 @@ This file defines how the **Coding Assistant** should operate in this repository
 - Project memory and decisions:
   - `memory.md`
 - Structure model v2 — the only actively built code base:
-  - `docs/plans/v2-structure-model.md` (the specification; §17-§21 amend the agreed text with what implementation measured), `docs/adr/*.md`
+  - `docs/plans/v2-structure-model.md` (the specification; its §17 onward amend the agreed text with what implementation measured — read those before trusting an earlier section), `docs/adr/*.md`
+  - `docs/plans/m6-m9-roadmap.md` continues the plan's milestone list past where it ends, with the decisions (E1…) the later handoffs cite; `docs/plans/backlog-later.md` is what was deliberately deferred, each entry with what would trigger it
   - `nanofab_v3/model/` — `Grid`, `Structure`, fields, capabilities, reports, `ArtifactRef`/`ArtifactSink`
   - `nanofab_v3/kernel/` — set ops, constructors, motion, reinit, flux, predicates, regions, commit gate
-  - `nanofab_v3/materials/` — the `MaterialType` library
+  - `nanofab_v3/materials/` — the `MaterialType` library: the models, the JSON
+    format, the roots it is read from, and what an unknown material does
+  - `nanofab_v3/data/materials/` — **the library itself**, one JSON file per
+    material (roadmap E14). Since M6 the code holds no `MaterialType`; a shipped
+    root inside the package plus a writable one outside it, and
+    `data/materials/README.md` says which numbers came from where
   - `nanofab_v3/processes/` — the process contract, registry (+ entry-point plugin discovery) and didactic step set
   - `nanofab_v3/runtime/` — revisions, runs, wafer positions, replay + cache
   - `nanofab_v3/io/` — the `.npz` + JSON exchange format, revision stores, replay cache
