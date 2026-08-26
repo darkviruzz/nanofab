@@ -308,6 +308,47 @@ def test_a_chain_run_twice_produces_the_same_sample(library: MaterialLibrary) ->
             )
 
 
+def test_replaying_at_a_new_position_equals_a_fresh_run_at_that_position(
+    library: MaterialLibrary,
+) -> None:
+    """The property plan §8's materialization is, stated at the engine seam.
+
+    Adding a wafer position later replays the chain from substrate selection with
+    that position's resolved parameters. That is only "exactly what the position
+    would have been" if a chain at a position is reproducible **at that
+    position**, which is what this asserts: the same recipe run twice at the
+    wafer edge agrees with itself, and the seed that separates it from the centre
+    is a different seed rather than a different sample by accident.
+
+    `runtime.materialize` is the same property one layer up, with the cache in
+    front of it and with a recipe whose parameters actually vary over the wafer
+    (`tests/test_runtime.py`). Here the recipe is position-independent on
+    purpose: what is being pinned down is the *seeding*, not the parameters.
+    """
+    grid = substrate.cross_section_grid(width=200.0, thickness=40.0, headroom=140.0)
+    registry = builtin_registry()
+    edge = (60.0, 0.0)
+    recipe = [
+        (registry["substrate.select"], {"material": SILICON, "surface": 40.0}),
+        (registry["resist.spin_coat"], {"material": RESIST, "thickness": 60.0}),
+        (registry["litho.expose_ideal"], {"material": RESIST, "center": 100.0, "width": 60.0}),
+        (registry["develop.ideal"], {"material": RESIST}),
+    ]
+
+    replayed = run_chain(recipe, Structure(grid), library=library, position=edge)
+    fresh = run_chain(recipe, Structure(grid), library=library, position=edge)
+
+    assert [o.step_id for o in replayed] == [o.step_id for o in fresh]
+    for a, b in zip(replayed, fresh):
+        assert a.capabilities == b.capabilities
+        assert a.structure.materials == b.structure.materials
+        for material in a.structure.materials:
+            assert np.array_equal(
+                np.asarray(a.structure.phi_of(material)), np.asarray(b.structure.phi_of(material))
+            )
+    assert step_seed("recipe", edge, 3) != step_seed("recipe", (0.0, 0.0), 3)
+
+
 def test_a_chain_threads_capabilities_from_step_to_step(library: MaterialLibrary) -> None:
     """What a revision promises is what the next step is gated against."""
     grid = substrate.cross_section_grid(width=200.0, thickness=40.0, headroom=140.0)
