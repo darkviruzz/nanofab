@@ -1,6 +1,7 @@
 # Plan: Structure Model v2
 
-- Status: Agreed (design interview 2026-08-24/25), implementation not started
+- Status: Agreed (design interview 2026-08-24/25); implemented through M6.
+  §17–§22 amend the agreed text with what implementation measured
 - Inputs: ADR-0001 (v1 autopsy, measured), design interview rounds 1–3, ADR-0002…0004
 - Scope: a new package (working name `nanofab_v3`, successor of `nanofab_modular`) that
   puts the sample's geometry and state on solid ground. No compatibility with v1
@@ -1659,3 +1660,194 @@ overlooked:
    `ArtifactRef`s and not what they point at, which is correct (docs §4.2.2) and
    means moving a saved session moves the manifest and not the SEM images.
    Bundling is a packaging question for the format, not a model one.
+
+## 22. Corrections from implementation (M6)
+
+M6 is roadmap `docs/plans/m6-m9-roadmap.md`'s first milestone rather than one of
+§14's, so this section continues §17–§21 for a plan whose own milestone list ends
+at M5 (§21.8). What it corrects is mostly §3.4 — the sentence "a **MaterialType**
+— a library entry" turns out to have been a statement about a *file*.
+
+### 22.1 One rate key cannot hold two rate sets
+
+The roadmap's §3 maps the student table's row 1, "sputter etching", onto the
+existing `ION_BEAM` process class, marked *(existiert)*. It cannot be taken
+literally, and the reason is arithmetic rather than taste.
+
+`ion_beam` already carried the didactic ratios S1–S5 are tuned to — silicon 1.0,
+oxide 0.8, resist 1.2 nm/s. The table's row 1 gives the same three materials
+0.2333, 0.2000 and 0.2500. Writing the table's numbers into that key would have
+changed what every existing ion-beam recipe *means*, four-fold and silently, and
+E14's own completion criterion is bit-identity of the migrated models — so the
+same milestone would have asserted that nothing changed and changed something.
+
+The resolution is the roadmap's own rule (`§3`: *additiv erweitern, nichts
+umbenennen*) applied one step further than its table anticipated: row 1 became a
+seventh new class, `sputter_etch`, and `ion_beam` was left alone. Recorded here
+as **E18**, because a later reader comparing the table to `PROCESS_CLASSES` will
+count thirteen where §3 implies twelve.
+
+It is not a workaround. Plan §5.4 already says several registered processes may
+model the same technique at different fidelity; this is the same statement one
+layer down, in the rate table instead of in the step. `etch.ibe` and
+`etch.sputter` are one technique, one wrapper (`ion_beam_etch` gained a
+`process_class` argument) and two columns of the library — and the honest reading
+of "didactic numbers" versus "a measured table" is that they are two sets of
+numbers, not one set with a disagreement in it.
+
+The general form, and the part worth keeping: **a rate key is a claim about
+provenance as much as about physics.** Two numbers from different sources under
+one name make the library's own provenance unreadable, which is what `rate_notes`
+(§22.4) exists to prevent one level further down.
+
+### 22.2 "Bit-identical" is a claim about a commit, so the test carries both halves
+
+E14 asks the migrated library to be bit-identical to `didactic_library()`. The
+obvious test — compare the loaded library against the function — becomes vacuous
+the moment the function *is* the loader, which is the same commit. And the
+non-obvious problem is the next one: M6 then *deliberately* added the table's
+rates to `oxide`, `silicon` and `resist`, so a test that forbade every difference
+would have had to be relaxed on the day it was written.
+
+`tests/test_material_files.py` holds the eight pre-migration entries as literals,
+copied out of the commit before the migration, **and** a dict of every change M6
+made to one of them. The assertion is `pre + declared additions == what loaded`.
+Both halves earn their keep: the first says the migration lost nothing, the
+second says every later difference between the code that was and the files that
+are is deliberate and listed in one place. A rate edited by hand in a JSON file
+fails a test naming the material, instead of quietly changing what a scenario
+means.
+
+The prose fields (`notes`, `rate_notes`) are excluded from that comparison and
+checked separately — that every table-derived rate has a stated provenance, and
+that every borrowed one says it is assumed. Pinning prose would have made the
+test a transcription exercise; pinning *that prose exists* is the actual rule.
+
+### 22.3 A library that loads from the source tree is a library the exe does not have
+
+The roadmap says `data/materials/`. Taken as a repo-root directory it is in git
+and in **no** install: `pip install nanofab-v3` installs `nanofab_v3/` and leaves
+it behind, and §11's one-file exe would collect a path that only exists in a
+checkout. So it is `nanofab_v3/data/materials/`, inside the package, with
+`pyproject.toml`'s `package-data` for a wheel and `collect_data_files` in
+`nanofab_v3.spec` for the exe.
+
+Measured rather than argued, because §21.6's lesson was that the delivery
+boundary is where assumptions die:
+
+- a wheel built from this tree carries all eleven files plus the README, and a
+  **non-editable** install of it loads them (`builtin_materials_dir()` resolving
+  to `…/site-packages/nanofab_v3/data/materials`);
+- the frozen exe reports `materials: 11 from 2 root(s)` with its shipped root at
+  `/tmp/_MEI…/nanofab_v3/data/materials`, and passes 7 of 7 scenarios.
+
+`builtin_materials_dir()` tries `importlib.resources` and falls back to the
+package directory, and both paths are needed: the fallback is what answers under
+PyInstaller's one-file unpacking. And `--version` now prints how many materials
+loaded and from where, because the failure mode of getting this wrong is an
+application that starts normally and dies at the first rate lookup — on somebody
+else's machine.
+
+**Two roots, and the split is `builtin_registry()` versus `application_registry()`
+one layer down** (§21.6). `didactic_library()` reads the shipped root only and is
+what the tests, the scenarios and `--selftest` use; `application_library()` reads
+that plus a writable directory outside the package and is what the shell uses. A
+check whose numbers depended on what happened to be in somebody's home directory
+would answer differently on every machine, and the material library is the one
+input the acceptance scenarios are least able to notice a change in.
+
+### 22.4 A spin curve is not a rate, and the power law does not carry the points
+
+`rates` is keyed by process class and answers nm/s. The student table's process
+11 answers nm at an rpm, which is neither — hence roadmap E17's fourth submodel
+on `MaterialType`, beside `develop`, `dissolve` and `sputter_response`, and on
+the *resist* for the reason E13 puts tone there: the thickness a resist spins to
+belongs to the resist, not to the coating step.
+
+The arithmetic that decided interpolation over a fit is worth keeping because it
+is the sort of thing a later reader will want to "simplify". Anchored on the
+1000 rpm point, `d = k·rpm^-1/2` is **+6.3 %** at 2000 rpm and **−6.8 %** at
+5000 — the error changes sign, so no single power law passes through the five
+measured points, and the effective exponent drifts from 0.588 to 0.456 because
+the curve flattens. The interpolation is linear in **log-log**: it passes exactly
+through every measured point and gives each segment its own local exponent, which
+is the quantity that drift was computed from in the first place. Measured points
+are returned before any arithmetic runs, so 3000 rpm answers `82.0` and not
+`82.00000000000001` — a quoted measurement with a float tail invites a reader to
+wonder what else was computed.
+
+Two things the data does not contain and the model therefore does not either.
+Outside 1000–5000 rpm the curve **clamps and the run log says so**; and there is
+**no time axis**, so `spin_time` is a documented parameter whose help text states
+it does not enter the thickness. Both are the same rule: the alternative to
+saying "nobody measured this" is a plausible number, and a plausible number is
+the only kind that cannot be noticed.
+
+### 22.5 An unknown *material* has to warn; a missing *rate* must not
+
+E15's failure came from a real project: a chromium particle the library had never
+heard of, silently at rate 0 through every process, behaving exactly like a
+perfect hard mask. Every lookup in `processes.rates` filters on `material in
+library`, so nothing raised and nothing printed.
+
+The fix is one check, and its **placement is the whole of it**. It lives in
+`processes.engine.run_step`, which is the only place every step passes through —
+per-wrapper there would be thirty places to forget it and no coverage for a
+plugin's step at all — and it runs **after** the commit, on the committed
+structure's materials, because a material can arrive without any step naming it.
+The particle it is named after arrived exactly that way.
+
+What took the most care was the boundary, and it is a boundary of meaning rather
+than of implementation. `MaterialType.rate_for` answering 0.0 for a class a
+material has no entry for is a **documented statement** — "this does not move" —
+and it is how a hard mask behaves without being modelled as one (§4.2). Warning
+about that would fire on nearly every step and teach everybody to ignore
+warnings, which would cost the feature its only mechanism. So: the library not
+being *askable* about a material warns; the library being asked and answering
+zero does not.
+
+Free text stays legal, and that is not a concession — plan §5.4 already lets a
+plugin bring a material the didactic library has never seen (§21.6's example
+plugin does), and trying something uncalibrated is the didactic point. What ends
+is the silence.
+
+### 22.6 Measured M6 costs, extending §17.7, §18.8, §19.6, §20.8 and §21.5
+
+M6 touches no kernel, so §17.7's conclusion — the upwind stencil over the whole
+domain dominates, and a narrow-band solver is still the structural fix that is
+deliberately not built — is unchanged for a sixth milestone. What is measured
+here is the *data* layer, and the question it answers is whether reading a
+library from disk costs anything worth noticing. It does not.
+
+| | |
+|---|---|
+| `load_library`, 11 files, cold | **4.1 ms** |
+| the same, warm OS cache | 0.8 ms |
+| `didactic_library()`, memoised | **0.022 ms** |
+| one material through `to_json`/`from_json` | 0.11 ms |
+| `unknown_materials` over a structure's materials | **0.002 ms** |
+| `SpinCurve.thickness` | 0.0014 ms |
+| the whole shipped library on disk | 11 kB in 11 files |
+| 31 implementation digests, cold | 116 ms (was 64–69 ms for 18) |
+| the frozen exe, this machine, no PySide6 installed | 60 MB, `--selftest` **4.0 s** solver / 5.8 s wall |
+
+Three things follow.
+
+**The memoisation is what makes the migration free, and it is load-bearing.**
+`engine.run_step` falls back to `didactic_library()` when no library is passed —
+once per step — so an unmemoised loader would put eleven file reads inside every
+step and turn §21.5's warm five-position fan (0.01 s) into a disk-bound one. At
+0.022 ms it is below the noise of anything else a step does. The cache is keyed
+on the root paths and cleared by `save_material`, so E15's dialog is visible
+immediately rather than after a restart.
+
+**E15's check is free at the scale it runs at**, which is what let it go in the
+common path rather than behind a flag: 0.002 ms against the 25 ms an *inspection*
+step costs through the commit gate (§21.7), i.e. four orders of magnitude down.
+
+**The exe numbers are not comparable to §21.5's and should not be read as an
+improvement.** 60 MB against 115 MB and 4.0 s against 6.9 s are a different
+machine, a different OS and — decisively — a build with no PySide6 present to
+freeze. §21.5's own first sentence applies: a number measured on one machine is a
+statement about that machine. What the build *does* establish is the packaging
+claim of §22.3, which is a yes/no and travels.

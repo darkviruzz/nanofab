@@ -183,6 +183,28 @@ Schleuderzeit dort eine Rolle spielt; `SpinCurve` müsste dafür erweitert werde
 
 ---
 
+## B12 — Prozessraten für TiO₂
+
+**Was:** `titania` ist seit M6 in der Bibliothek (E16), trägt aber **keine**
+tabellengestützte Rate: die Studenten-Tabelle hat keine TiO₂-Zeile. Es hat nur
+didaktische Werte auf den vier alten Prozessklassen (`deposit`, `dry_etch`,
+`ion_beam`, `wet_etch`) und gar nichts auf den Chemie-Klassen.
+
+**Warum zurückgestellt:** Dieselbe Regel wie B11, eine Ebene höher. Eine
+erfundene ICP- oder RIE-Rate für TiO₂ wäre plausibel und nicht bemerkbar; eine
+fehlende ist bemerkbar. Der `notes`-Text des Eintrags sagt deshalb ausdrücklich,
+dass eine 0 dort „niemand hat eine Rate genannt" heißt und nicht „inert" — genau
+die Unterscheidung, gegen deren Verwischen E15 antritt.
+
+**Auslöser:** M8s TiO₂-Gitter-Demo (Al₂O₃-Ätzstopp auf Fused Silica) braucht
+mindestens eine Ätzchemie für TiO₂. Dann ist zu entscheiden — nicht zu raten —,
+ob die Zahl aus einer Messung kommt oder als *didaktisch* markiert wird, wie es
+`rate_notes` für die anderen erfundenen Werte tut.
+
+**Aufwand:** eine JSON-Datei, kein Code (E14).
+
+---
+
 ## B10 — Lokalisierung tatsächlich ausliefern
 
 **Was:** M8 legt die Übersetzungs-Indirektion an (E10), aber es gibt nur eine

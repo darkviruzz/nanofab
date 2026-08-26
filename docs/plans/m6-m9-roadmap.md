@@ -140,6 +140,18 @@ schreibt sie nach `data/materials/`.
 **E16 — Fehlende Standardmaterialien kommen in die Bibliothek**, nicht in die
 Demos. Chrom und Fused Silica sind zu gängig, um demo-spezifisch zu sein.
 
+**E18 — Die Sputterätz-Zeile der Tabelle bekommt eine *eigene* Prozessklasse**
+(entschieden in M6, nachgetragen). §3 unten bildet Zeile 1 auf das bestehende
+`ion_beam` ab. Das geht nicht: `ion_beam` trägt bereits die didaktischen Zahlen,
+auf die S1–S5 abgestimmt sind (Silizium 1.0 gegen die 0.2333 der Tabelle), und
+E14s Abnahmekriterium ist gerade die *Bitgleichheit* der migrierten Modelle —
+derselbe Meilenstein hätte behauptet, nichts geändert zu haben, und etwas
+geändert. Also ist Zeile 1 eine **siebte** neue Klasse `sputter_etch` geworden,
+`ion_beam` blieb unangetastet: §3s eigene Regel („additiv erweitern, nichts
+umbenennen") einen Schritt weiter als die Tabelle es vorsah. Dieselbe Technik,
+derselbe Wrapper, zwei Spalten der Bibliothek — Plan §5.4 in der Ratentabelle
+statt im Step. Ausführlich in Plan §22.1.
+
 **E17 — Die Schleuderkurve trägt das Material, nicht der Step.** Ein neues
 Untermodell `SpinCurve` an `MaterialType`, in derselben Reihe wie `develop`,
 `dissolve` und `sputter_response`. Die Schichtdicke ist eine Eigenschaft des
@@ -172,7 +184,7 @@ Winkelverteilung des Flussmodells (`kernel/flux.py:160-280`). Also:
 
 | # | Prozess | Prozessklasse | Material → nm/s |
 |---|---|---|---|
-| 1 | Sputter etching | `ion_beam` *(existiert)* | chrome 0.1667 · oxide 0.2000 · silicon 0.2333 · resist 0.2500 |
+| 1 | Sputter etching | ~~`ion_beam` *(existiert)*~~ → `sputter_etch` *(neu, E18)* | chrome 0.1667 · oxide 0.2000 · silicon 0.2333 · resist 0.2500 |
 | 2 | ICP etching (Fluor) | `icp_fluorine` *(neu)*, gerichtet | chrome 0.0333 · fused_silica 0.8333 · silicon 0.6667 · resist 1.0000 |
 | 3 | RIE etching (Chlor) | `rie_chlorine` *(neu)*, isotrop | chrome 0.8333 · fused_silica 0.0 · resist 0.1667 |
 | 4 | RIE etching (Sauerstoff) | `rie_oxygen` *(neu)*, isotrop | chrome 0.0 · fused_silica 0.0 · resist 1.6667 |
@@ -241,9 +253,14 @@ Quelle), Ätzraten am *angegriffenen* — beides passt ohne Umbau in
 
 ## 4. Meilensteine
 
-### M6 — Datenfundament
+### M6 — Datenfundament ✅ *erledigt 2026-08-26*
 
 Berührt keinen Kernel, entblockt alles andere, sofort nützlich.
+
+**Ergebnis:** Bibliothek in `nanofab_v3/data/materials/*.json` (11 Materialien,
+kein Material mehr im Code), 13 Prozessklassen, 31 Steps, 448 Tests grün, exe
+7/7. Eine Abweichung vom Plan unten, entschieden und dokumentiert: E18 oben und
+Plan §22.1. Alles Weitere in Plan §22 und in memory.md 2026-08-26.
 
 1. Materialbibliothek nach `data/materials/*.json` migrieren (E14), inkl. Loader,
    Schema-Validierung und Round-Trip-Test gegen `didactic_library()` — die
@@ -264,6 +281,12 @@ Berührt keinen Kernel, entblockt alles andere, sofort nützlich.
 394 Tests weiter grün; die 11 Tabellenprozesse sind als Steps aufrufbar; ein
 Spin-Coat bei 3000 rpm liefert 82 nm ohne dass jemand eine Dicke eintippt; ein
 unbekanntes Material erzeugt eine sichtbare Warnung statt einer stillen Null.
+
+*Erfüllt.* Dazu, weil `data/` neu war und eine Bibliothek, die aus dem
+Source-Baum lädt, erst in der Exe auffällt: das Verzeichnis liegt **im Paket**
+(`nanofab_v3/data/materials/`), ein Wheel trägt es, eine Nicht-Editable-Install
+lädt daraus, und die gebaute Exe meldet `materials: 11 from 2 root(s)` und läuft
+7/7 durch. Plan §22.3.
 
 ### M7 — Substrat & Domain
 

@@ -26,8 +26,14 @@ Lies zuerst:
    *nicht* dazugehört
 6. ADR-0001…0004; memory.md ab 2026-08-25
 
-Kontext: M6 hat die Materialbibliothek nach `data/materials/*.json` migriert und
-die Prozessklassen erweitert. Heute kennt `SELECT_SUBSTRATE`
+Kontext (Stand nach M6, gemessen): Die Materialbibliothek liegt vollständig in
+`nanofab_v3/data/materials/*.json` — **im Paket**, nicht im Repo-Wurzelverzeichnis
+(Plan §22.3) —, 11 Materialien, kein `MaterialType` mehr im Code.
+`didactic_library()` ist ein Loader über die ausgelieferten Dateien;
+`application_library()` liest zusätzlich ein beschreibbares Verzeichnis
+(Plan §22.3 — dieselbe Trennung wie `builtin_registry()`/`application_registry()`).
+13 Prozessklassen (E18: `sputter_etch` ist eine eigene, `ion_beam` unverändert),
+31 Steps, 448 Tests grün, `--version` meldet die Bibliothek mit. Heute kennt `SELECT_SUBSTRATE`
 (`processes/substrate.py:51-98`) nur `material` und `surface`; die Domainmaße
 kommen getrennt aus `cross_section_grid()` (`:26-48`). Genau diese Trennung löst
 M7 auf.
