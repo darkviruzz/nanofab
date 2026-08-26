@@ -17,15 +17,19 @@ This file defines how the **Coding Assistant** should operate in this repository
 - Project memory and decisions:
   - `memory.md`
 - Structure model v2 — the only actively built code base:
-  - `docs/plans/v2-structure-model.md` (the specification; §17-§20 amend the agreed text with what implementation measured), `docs/adr/*.md`
-  - `nanofab_v3/model/` — `Grid`, `Structure`, fields, capabilities, reports
+  - `docs/plans/v2-structure-model.md` (the specification; §17-§21 amend the agreed text with what implementation measured), `docs/adr/*.md`
+  - `nanofab_v3/model/` — `Grid`, `Structure`, fields, capabilities, reports, `ArtifactRef`/`ArtifactSink`
   - `nanofab_v3/kernel/` — set ops, constructors, motion, reinit, flux, predicates, regions, commit gate
   - `nanofab_v3/materials/` — the `MaterialType` library
-  - `nanofab_v3/processes/` — the process contract, registry and didactic step set
+  - `nanofab_v3/processes/` — the process contract, registry (+ entry-point plugin discovery) and didactic step set
   - `nanofab_v3/runtime/` — revisions, runs, wafer positions, replay + cache
   - `nanofab_v3/io/` — the `.npz` + JSON exchange format, revision stores, replay cache
-  - `nanofab_v3/ui/` — `SceneSnapshot` v2, the interactive `Session`, the Qt shell
+  - `nanofab_v3/ui/` — `SceneSnapshot` v2, the interactive `Session`, the wafer fan + its view, the Qt shell
     (`python -m nanofab_v3.ui`; PySide6 is the `[ui]` extra)
+  - `nanofab_v3/acceptance.py` — S1-S5 as shipped code (the packaged exe's DoD path)
+  - `nanofab_v3/cli.py`, `nanofab_v3/__main__.py` — `python -m nanofab_v3`, `--selftest`, `--version`
+  - `nanofab_v3.spec` — the PyInstaller recipe (`pyinstaller nanofab_v3.spec`; `console=True`, see plan §21.5)
+  - `examples/nanofab-plugin-example/` — an out-of-tree process plugin; not part of the distribution, exists so plugin discovery has a second implementer
   - `tests/`
 - Product docs:
   - `NanoFab_Process_Manager_Documentation/*.md`
@@ -54,6 +58,10 @@ This file defines how the **Coding Assistant** should operate in this repository
   criteria are defined in `docs/plans/v2-structure-model.md` §13. A change to `nanofab_v3`
   is not validated by `compileall` alone.
 - Avoid unnecessary GUI process loops; prefer compile/import/smoke checks unless UI behavior must be tested directly.
+- Before a release, also run the packaged exe's own DoD path (plan §14, §21.5):
+  `pyinstaller nanofab_v3.spec && ./dist/nanofab_v3 --selftest`. `tests/test_scenarios.py`
+  and `nanofab_v3/acceptance.py` share one definition of S1-S5, so this checks the build
+  rather than re-checking the model.
 
 ## 5) memory.md Policy (Keep Updated)
 After meaningful work, append an entry with these mandatory fields:
