@@ -21,6 +21,13 @@ Two paths to a picture, both from the same snapshot:
   the honest picture of what the model actually stores, which is why the toggle
   is in the UI rather than hidden.
 
+Since M8 the nm-to-pixel map has **two** scales rather than one (roadmap E8).
+A domain within about 4:1 of square is drawn true to scale; a more extreme one
+has its long axis compressed so it is legible at all. The rule is
+`scene.display_scale`, deliberately Qt-free so it can be reasoned about without a
+widget, and the factor it produces is painted into the corner of every picture —
+never absent, never silent. `set_true_to_scale` is the button that turns it off.
+
 The one rendering convention: **the first grid axis is drawn upwards, the second
 to the right.** Same convention as the commit gate's headroom guard ("the max
 face of the first axis"), so "up" means the same thing in a picture and in an
@@ -43,7 +50,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from nanofab_v3.ui.scene import EMPTY_COLOR, SceneSnapshot
+from nanofab_v3.ui.scene import EMPTY_COLOR, DisplayScale, SceneSnapshot, display_scale
 
 _MARGIN = 12
 """Pixels of breathing room around the domain."""
@@ -64,6 +71,7 @@ class CrossSectionCanvas(QWidget):
         self._index_image: QImage | None = None
         self._show_index_map = False
         self._show_outlines = True
+        self._true_to_scale = False
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
@@ -92,8 +100,18 @@ class CrossSectionCanvas(QWidget):
 
     # -- the nm <-> pixel map ------------------------------------------------
 
-    def _viewport(self) -> tuple[float, float, float, float] | None:
-        """`(scale, x0, y0, height)` mapping nm to pixels, or `None` with no scene.
+    def set_true_to_scale(self, on: bool) -> None:
+        """Force a 1:1 picture, whatever the domain's aspect ratio (roadmap E8)."""
+        self._true_to_scale = bool(on)
+        self.update()
+
+    def display_scale(self) -> DisplayScale | None:
+        """How many pixels a nanometre gets on each axis, or `None` with no scene."""
+        view = self._viewport()
+        return None if view is None else DisplayScale(up=view[0], right=view[1])
+
+    def _viewport(self) -> tuple[float, float, float, float, float] | None:
+        """`(scale_up, scale_right, x0, y0, height)` in pixels, or `None` with no scene.
 
         Isotropic on purpose: a cross-section with a stretched vertical axis is
         the picture that makes a 20 nm film look like a 200 nm one, and every
@@ -106,19 +124,21 @@ class CrossSectionCanvas(QWidget):
         span_right = max(right1 - right0, self._scene.grid.spacing)
         usable_w = max(1, self.width() - 2 * _MARGIN)
         usable_h = max(1, self.height() - 2 * _MARGIN)
-        scale = min(usable_w / span_right, usable_h / span_up)
-        x0 = _MARGIN + 0.5 * (usable_w - span_right * scale)
-        y0 = _MARGIN + 0.5 * (usable_h - span_up * scale)
-        return scale, x0, y0, span_up * scale
+        scale = display_scale(
+            span_up, span_right, usable_h, usable_w, isotropic=self._true_to_scale
+        )
+        x0 = _MARGIN + 0.5 * (usable_w - span_right * scale.right)
+        y0 = _MARGIN + 0.5 * (usable_h - span_up * scale.up)
+        return scale.up, scale.right, x0, y0, span_up * scale.up
 
     def _to_pixels(self, points: np.ndarray) -> np.ndarray:
         """`(N, 2)` nm in grid-axis order to `(N, 2)` pixels in screen order."""
         view = self._viewport()
         assert view is not None and self._scene is not None
-        scale, x0, y0, height = view
+        scale_up, scale_right, x0, y0, height = view
         up0, _, right0, _ = self._scene.extent
-        screen_x = x0 + (points[:, 1] - right0) * scale
-        screen_y = y0 + height - (points[:, 0] - up0) * scale
+        screen_x = x0 + (points[:, 1] - right0) * scale_right
+        screen_y = y0 + height - (points[:, 0] - up0) * scale_up
         return np.stack([screen_x, screen_y], axis=1)
 
     def _to_nm(self, x: float, y: float) -> tuple[float, float] | None:
@@ -126,9 +146,9 @@ class CrossSectionCanvas(QWidget):
         view = self._viewport()
         if view is None or self._scene is None:
             return None
-        scale, x0, y0, height = view
+        scale_up, scale_right, x0, y0, height = view
         up0, _, right0, _ = self._scene.extent
-        return (up0 + (y0 + height - y) / scale, right0 + (x - x0) / scale)
+        return (up0 + (y0 + height - y) / scale_up, right0 + (x - x0) / scale_right)
 
     # -- painting ------------------------------------------------------------
 
@@ -143,9 +163,9 @@ class CrossSectionCanvas(QWidget):
             painter.end()
             return
 
-        scale, x0, y0, height = self._viewport()  # type: ignore[misc]
+        scale_up, scale_right, x0, y0, height = self._viewport()  # type: ignore[misc]
         up0, up1, right0, right1 = scene.extent
-        domain = QRectF(x0, y0, (right1 - right0) * scale, height)
+        domain = QRectF(x0, y0, (right1 - right0) * scale_right, height)
         painter.fillRect(domain, QColor(EMPTY_COLOR).lighter(115))
 
         if self._show_index_map and self._index_image is not None:
@@ -200,10 +220,16 @@ class CrossSectionCanvas(QWidget):
             Qt.AlignLeft | Qt.AlignTop,
             scene.caption,
         )
+        # Roadmap E8: the distortion factor is *permanently* visible. A silently
+        # compressed etch flank is worse for a didactic tool than an awkward
+        # view, because flank angles are exactly what is being judged.
+        ratio = DisplayScale(up=scale_up, right=scale_right)
+        painter.setPen(QColor("#c8ced4") if ratio.true_to_scale else QColor("#ffd166"))
         painter.drawText(
             domain.adjusted(6, 4, -6, -4),
             Qt.AlignRight | Qt.AlignBottom,
-            f"{right1 - right0:.0f} x {up1 - up0:.0f} nm at {scene.grid.spacing:g} nm/cell",
+            f"{right1 - right0:.0f} x {up1 - up0:.0f} nm at {scene.grid.spacing:g} nm/cell"
+            f"   ·   {ratio.describe()}",
         )
         painter.end()
 

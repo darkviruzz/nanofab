@@ -698,3 +698,76 @@ def surface_normals(structure: Structure, *, samples: int = 48) -> np.ndarray | 
     normal = np.divide(normal, np.where(length == 0.0, 1.0, length))
     tip = points + normal * (6.0 * grid.spacing)
     return np.stack([points, tip], axis=1)
+
+
+# -- how a domain is fitted into a widget (roadmap E8) ------------------------
+
+ASPECT_LIMIT = 4.0
+"""How far from square a picture may be drawn before its long axis is compressed.
+
+Roadmap E8: *"automatisch maßstabsgetreu bis ~4:1, darüber gestaucht — mit
+permanent sichtbarem Verzerrungsfaktor und einem Knopf zum Umschalten"*.
+"""
+
+
+@dataclass(frozen=True)
+class DisplayScale:
+    """The nm-to-pixel scale of each axis, and how much they disagree.
+
+    Attributes:
+        up: Pixels per nm along the stacking axis (drawn upwards).
+        right: Pixels per nm along the lateral axis.
+        distortion: `right / up`. Exactly 1 means true to scale.
+    """
+
+    up: float
+    right: float
+
+    @property
+    def distortion(self) -> float:
+        return self.right / self.up
+
+    @property
+    def true_to_scale(self) -> bool:
+        """Whether a flank angle read off this picture is the flank's real angle."""
+        return abs(self.distortion - 1.0) < 1e-9
+
+    def describe(self) -> str:
+        """The label E8 wants permanently visible — never absent, never silent."""
+        if self.true_to_scale:
+            return "1:1 true to scale"
+        factor = self.distortion if self.distortion > 1.0 else 1.0 / self.distortion
+        squeezed = "vertical" if self.distortion > 1.0 else "horizontal"
+        return f"{factor:.2f}x compressed {squeezed}ly — angles are not true"
+
+
+def display_scale(
+    span_up: float,
+    span_right: float,
+    usable_up: float,
+    usable_right: float,
+    *,
+    limit: float = ASPECT_LIMIT,
+    isotropic: bool = False,
+) -> DisplayScale:
+    """Fit a domain into a widget, compressing its long axis only past `limit`.
+
+    Roadmap E8's rule, and its reasoning is worth keeping next to the arithmetic:
+    **a silently compressed etch flank is worse for a didactic tool than an
+    awkward view**, because flank angles are exactly what is being judged. So a
+    domain within `limit` of square is drawn true to scale and a more extreme one
+    has its *long* axis compressed until the picture is `limit:1` — never more,
+    and never without saying so (`DisplayScale.describe`).
+
+    A 1200 x 240 nm cross-section is 5:1 and therefore drawn with a 1.25x
+    vertical exaggeration; a 250 nm x 5 um one would otherwise be a sliver. The
+    factor is reported either way, and `isotropic=True` is the button that turns
+    the whole thing off.
+    """
+    if min(span_up, span_right, usable_up, usable_right) <= 0.0:
+        raise ValueError("a display scale needs positive spans")
+    aspect = span_right / span_up
+    target = aspect if isotropic else min(max(aspect, 1.0 / limit), limit)
+    ratio = target / aspect
+    up = min(usable_right / (span_right * ratio), usable_up / span_up)
+    return DisplayScale(up=up, right=up * ratio)

@@ -149,6 +149,15 @@ class MainWindow(QMainWindow):
         self.light_box.stateChanged.connect(self._refresh_canvas)
         row.addWidget(self.light_box)
         row.addStretch(1)
+        self.true_to_scale_box = QCheckBox("true to scale")
+        self.true_to_scale_box.setToolTip(
+            "Draw the domain 1:1 whatever its aspect ratio. Off by default: a very "
+            "deep or very narrow domain is otherwise a sliver. The compression "
+            "factor is shown in the picture either way — it is never silent."
+        )
+        self.true_to_scale_box.stateChanged.connect(
+            lambda _state: self.canvas.set_true_to_scale(self.true_to_scale_box.isChecked())
+        )
         self.index_map_box = QCheckBox("index map")
         self.index_map_box.setToolTip(
             "Paint material_index directly — one pixel per cell, the honest "
@@ -157,6 +166,7 @@ class MainWindow(QMainWindow):
         self.index_map_box.stateChanged.connect(
             lambda state: self.canvas.set_index_map_visible(bool(state))
         )
+        row.addWidget(self.true_to_scale_box)
         row.addWidget(self.index_map_box)
         return row
 
