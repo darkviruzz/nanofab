@@ -897,3 +897,23 @@ def test_an_artifact_reference_survives_the_save_load_round_trip(
     # the payload is on disk, not in the file the revision was written to
     assert (tmp_path / "artifacts" / original.artifacts[0].uri).exists()
     assert stem.with_suffix(".json").stat().st_size < 8000
+
+
+def test_an_empty_registry_is_not_silently_replaced_by_the_builtins(grid, library) -> None:
+    """`ProcessRegistry` and `MaterialLibrary` both define `__len__` (plan §21.3).
+
+    So an empty one is **falsy**, and `registry or builtin_registry()` swaps a
+    caller's deliberate choice for the defaults without a word. Every such site
+    now tests `is None`. The failure this prevents is the quiet kind: a `Run`
+    built against a registry that turned out to be empty would run the builtins
+    and report success.
+    """
+    recipe = Recipe(
+        grid, (RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),), "r"
+    )
+
+    run = Run(recipe, registry=ProcessRegistry(), library=library)
+
+    assert len(run.registry) == 0
+    with pytest.raises(KeyError, match="substrate.select"):
+        run.chain(CENTER)

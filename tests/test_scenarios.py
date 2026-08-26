@@ -32,6 +32,8 @@ outcome cannot tell a working model from a broken one that happens to agree.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -47,12 +49,13 @@ from nanofab_v3.materials import (
     UNDERLAYER,
     didactic_library,
 )
+from nanofab_v3 import acceptance
 from nanofab_v3.processes import builtin_registry, contamination, run_chain
 from nanofab_v3.processes.substrate import cross_section_grid
 
-SURFACE = 40.0
-CENTRE = 150.0
-WINDOW = 100.0
+SURFACE = acceptance.SURFACE
+CENTRE = acceptance.CENTRE
+WINDOW = acceptance.WINDOW
 
 
 @pytest.fixture(scope="module")
@@ -96,18 +99,24 @@ def _top_profile(structure: Structure) -> np.ndarray:
 # -- S1: naive lift-off -------------------------------------------------------
 
 
+def _resolve(registry, steps):
+    """`(step_id, params)` from `nanofab_v3.acceptance` -> what `run_chain` takes.
+
+    The recipes live in the shipped module so the packaged exe can run them
+    (plan §14's DoD) and this file measures the *same* ones — one definition of
+    what S1 is, rather than two that drift.
+    """
+    return [(registry[step_id], dict(params)) for step_id, params in steps]
+
+
 def _lift_off_recipe(registry, *, metal_thickness=20.0, resist_thickness=90.0):
     """substrate -> resist -> ideal exposure -> ideal development -> evaporation."""
-    return [
-        (registry["substrate.select"], {"material": SILICON, "surface": SURFACE}),
-        (registry["resist.spin_coat"], {"material": RESIST, "thickness": resist_thickness}),
-        (
-            registry["litho.expose_ideal"],
-            {"material": RESIST, "pattern": "window", "center": CENTRE, "width": WINDOW},
+    return _resolve(
+        registry,
+        acceptance.lift_off_steps(
+            metal_thickness=metal_thickness, resist_thickness=resist_thickness
         ),
-        (registry["develop.ideal"], {"material": RESIST}),
-        (registry["deposit.evaporate"], {"material": METAL, "thickness": metal_thickness}),
-    ]
+    )
 
 
 @pytest.fixture(scope="module")
@@ -223,16 +232,7 @@ def s2_masked(registry, library):
     """60 nm of oxide on silicon under a resist mask with an 80 nm window."""
     grid = cross_section_grid(width=300.0, thickness=SURFACE, headroom=220.0)
     outcomes = run_chain(
-        [
-            (registry["substrate.select"], {"material": SILICON, "surface": SURFACE}),
-            (registry["deposit.conformal_offset"], {"material": OXIDE, "thickness": 60.0}),
-            (registry["resist.spin_coat"], {"material": RESIST, "thickness": 60.0}),
-            (
-                registry["litho.expose_ideal"],
-                {"material": RESIST, "pattern": "window", "center": CENTRE, "width": 80.0},
-            ),
-            (registry["develop.ideal"], {"material": RESIST}),
-        ],
+        _resolve(registry, acceptance.masked_oxide_steps()),
         Structure(grid),
         library=library,
     )
@@ -373,29 +373,11 @@ def test_s3_control_the_same_stack_without_the_ald_lifts_off_cleanly(s1) -> None
 
 
 def _bilayer_recipe(registry, *, mouth=80.0, cavity=120.0, under=50.0, imaging=60.0):
-    """A real lift-off stack: an underlayer that clears wider than the imaging resist.
-
-    The undercut profile is what a lift-off resist *is*. It cannot come from one
-    layer here, because ideal development removes exactly what was exposed and
-    nothing laterally — so the bilayer is modelled the way it works in a
-    cleanroom: a non-imaging underlayer that the developer clears further back
-    than the top layer's own window.
-    """
-    return [
-        (registry["substrate.select"], {"material": SILICON, "surface": SURFACE}),
-        (registry["resist.spin_coat"], {"material": UNDERLAYER, "thickness": under}),
-        (registry["resist.spin_coat"], {"material": RESIST, "thickness": imaging}),
-        (
-            registry["litho.expose_ideal"],
-            {"material": RESIST, "pattern": "window", "center": CENTRE, "width": mouth},
-        ),
-        (
-            registry["litho.expose_ideal"],
-            {"material": UNDERLAYER, "pattern": "window", "center": CENTRE, "width": cavity},
-        ),
-        (registry["develop.ideal"], {"material": RESIST}),
-        (registry["develop.ideal"], {"material": UNDERLAYER}),
-    ]
+    """A real lift-off stack, from the shipped module — see `_resolve`."""
+    return _resolve(
+        registry,
+        acceptance.bilayer_steps(mouth=mouth, cavity=cavity, under=under, imaging=imaging),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -490,27 +472,9 @@ def test_s4_every_step_passes_the_commit_gate(s4) -> None:
 
 # -- S5: micromasking — the particle a clean cannot reach ---------------------
 
-PARTICLE_SEED = {"count": 5, "radius": 8.0}
-"""Five 8 nm particles. Two of them overlap at this seed and count as one
-occurrence, which is ADR-0003 doing its job rather than a fixture to fix."""
-
-
 def _particle_recipe(registry, *, bury: bool):
-    """substrate -> particles -> (a conformal film) -> clean.
-
-    `bury=False` is the control: the identical draw from the identical seed,
-    cleaned before anything covers it.
-    """
-    steps = [
-        (registry["substrate.select"], {"material": SILICON, "surface": SURFACE}),
-        (registry["particle.seed"], dict(PARTICLE_SEED)),
-    ]
-    if bury:
-        steps.append(
-            (registry["deposit.conformal_offset"], {"material": ALUMINA, "thickness": 10.0})
-        )
-    steps.append((registry["clean.particles"], {"material": PARTICLE}))
-    return steps
+    """substrate -> particles -> (a conformal film) -> clean, from the shipped module."""
+    return _resolve(registry, acceptance.particle_steps(bury=bury))
 
 
 @pytest.fixture(scope="module")
@@ -651,3 +615,64 @@ def test_s5_every_step_passes_the_commit_gate(s5, s5_control) -> None:
     """
     assert all(outcome.ok for outcome in s5)
     assert all(outcome.ok for outcome in s5_control)
+
+
+# -- the shipped scenarios (plan §14's DoD path) ------------------------------
+
+
+def test_the_shipped_scenarios_all_pass(registry, library) -> None:
+    """`nanofab_v3.acceptance` is what the packaged exe runs — plan §14's DoD.
+
+    The exe cannot run pytest, so the recipes and one headline check per scenario
+    live in the package and `--selftest` runs them. This asserts they pass, which
+    is what keeps the shipped scenarios and the detailed ones above from
+    drifting: the recipes are literally the same objects (`_resolve`), and if a
+    headline check stopped holding, the suite goes red before the exe does.
+    """
+    results = acceptance.run_all(registry=registry, library=library)
+
+    assert [result.name for result in results] == [
+        scenario.name for scenario in acceptance.scenarios()
+    ]
+    failed = {result.name: result.failures for result in results if not result.ok}
+    assert not failed, failed
+    assert all(result.steps > 0 for result in results)
+
+
+def test_a_scenario_that_breaks_reports_rather_than_raises(registry, library) -> None:
+    """In an exe, a traceback on stderr is not a result anybody can act on.
+
+    So `run_scenario` catches, and the failure is the scenario's own — a
+    self-test that died on S2 would have said nothing about S3, S4 or S5.
+    """
+    broken = replace(
+        acceptance.scenarios()[0],
+        steps=(("substrate.select", {"material": SILICON}),),  # no `surface`
+    )
+
+    result = acceptance.run_scenario(broken, registry=registry, library=library)
+
+    assert not result.ok
+    assert "ParameterError" in result.failures[0]
+    assert result.seconds >= 0.0
+
+
+def test_a_headline_check_actually_checks(registry, library) -> None:
+    """A check that passes whatever happened is worse than no check.
+
+    S1's lift-off pointed at a material that is not in the stack dissolves
+    nothing, so the three evaporated pieces all stay — and the scenario has to
+    say so. Without this, "S1 passed" would be a sentence about the recipe
+    running rather than about the sample it produced.
+    """
+    wrong_bath = replace(
+        acceptance.scenarios()[0],
+        steps=acceptance.lift_off_steps()
+        + (("strip.lift_off", {"material": UNDERLAYER}),),
+        strict=False,
+    )
+
+    result = acceptance.run_scenario(wrong_bath, registry=registry, library=library)
+
+    assert not result.ok
+    assert any("lift-off should leave" in failure for failure in result.failures)

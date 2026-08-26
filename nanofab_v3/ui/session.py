@@ -88,7 +88,8 @@ class Session:
         else:
             self.plugins = DiscoveryReport()
         self.registry = registry
-        self.library = library or didactic_library()
+        # `is None`, never `or` — see `runtime.replay.Run` and plan §21.3.
+        self.library = didactic_library() if library is None else library
         self.sink = sink
         self.recipe = Recipe(
             grid=grid if grid is not None else default_grid(), recipe_id=recipe_id

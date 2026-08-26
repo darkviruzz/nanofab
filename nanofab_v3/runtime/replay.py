@@ -154,8 +154,8 @@ def run_recipe(
     return _materialize(
         recipe,
         position,
-        registry=registry or builtin_registry(),
-        library=library or didactic_library(),
+        registry=builtin_registry() if registry is None else registry,
+        library=didactic_library() if library is None else library,
         cache=None,
         store=store,
         sink=sink,
@@ -188,8 +188,8 @@ def materialize(
     return _materialize(
         recipe,
         position,
-        registry=registry or builtin_registry(),
-        library=library or didactic_library(),
+        registry=builtin_registry() if registry is None else registry,
+        library=didactic_library() if library is None else library,
         cache=cache,
         store=store,
         sink=sink,
@@ -289,8 +289,11 @@ class Run:
         strict: bool = True,
     ) -> None:
         self.recipe = recipe
-        self.registry = registry or builtin_registry()
-        self.library = library or didactic_library()
+        # `is None`, never `or`: `ProcessRegistry` and `MaterialLibrary` both
+        # define `__len__`, so an *empty* one is falsy and `or` would silently
+        # replace a caller's deliberate choice with the defaults (plan §21.3).
+        self.registry = builtin_registry() if registry is None else registry
+        self.library = didactic_library() if library is None else library
         self.cache = cache
         self.sink = sink
         self.resident = resident
