@@ -21,6 +21,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
@@ -46,7 +47,8 @@ from nanofab_v3.ui.panels import (
 )
 from nanofab_v3.ui.scene import ALWAYS_ON, OVERLAY_KINDS, light_preview
 from nanofab_v3.ui.scene import build as build_scene
-from nanofab_v3.ui.session import Session, demo_recipe
+from nanofab_v3.ui.demos import DEMOS, demo
+from nanofab_v3.ui.session import Session
 from nanofab_v3.ui.wafer import WaferFan, default_cache_dir
 from nanofab_v3.ui.wafer_view import WaferPanel
 
@@ -185,6 +187,13 @@ class MainWindow(QMainWindow):
         demo = QAction("Run the &lift-off demo", self)
         demo.triggered.connect(self._on_demo)
         session_menu.addAction(demo)
+
+        demo_menu = self.menuBar().addMenu("&Demos")
+        for entry in DEMOS:
+            action = QAction(entry.title, self)
+            action.setToolTip(f"{entry.summary} — {len(entry.steps)} steps")
+            action.triggered.connect(lambda _checked, key=entry.key: self._on_demo(key))
+            demo_menu.addAction(action)
 
         wafer_menu = self.menuBar().addMenu("&Wafer")
         fan = QAction("&Fan this recipe over the wafer", self)
@@ -388,14 +397,37 @@ class MainWindow(QMainWindow):
         self.log.view.clear()
         self._refresh_all()
 
-    def _on_demo(self) -> None:
-        """Run S1 end to end — the acceptance scenario, not a mock-up of one."""
-        grid, steps = demo_recipe()
-        self.session.reset(grid)
-        for step in steps:
-            revision = self.session.run(step.step_id, step.params)
-            self.log.append(self.session.log_lines(revision))
+    def _on_demo(self, key: str = "lift_off") -> None:
+        """Run one demo end to end (roadmap M8): a real recipe, not a mock-up of one.
+
+        The explanation goes into the run log **before** the first step, because
+        what makes a demo teach anything is knowing what to watch for while it
+        happens — afterwards it is a shape somebody has to interpret.
+
+        Run in the foreground with a wait cursor and the events pumped between
+        steps, so the chain and the log fill in as it goes. The etch-stop demo is
+        about 25 s of solver; backgrounding it the way the wafer fan does would be
+        the better answer and is deliberately not done here, because the fan's
+        runner is built around *positions* and one interactive chain is not that.
+        """
+        entry = demo(key)
+        self.session.reset(entry.grid)
+        self.log.view.clear()
+        self.log.append((entry.describe(),))
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for index, step in enumerate(entry.steps, start=1):
+                self.statusBar().showMessage(
+                    f"{entry.title}: step {index} of {len(entry.steps)} — {step.step_id}"
+                )
+                revision = self.session.run(step.step_id, step.params)
+                self.log.append(self.session.log_lines(revision))
+                self.revisions.refresh(self.session.chain)
+                QApplication.processEvents()
+        finally:
+            QApplication.restoreOverrideCursor()
         self._refresh_all()
+        self.statusBar().showMessage(f"{entry.title}: {entry.watch_for}", 30_000)
 
     # -- the wafer fan (plan §8, §14) ----------------------------------------
 

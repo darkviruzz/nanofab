@@ -212,13 +212,32 @@ _M6_MODEL_ADDITIONS: dict[str, dict] = {
 """Everything else M6 added to a migrated entry — one spin curve (E17, §3.1)."""
 
 
+_M8_RATE_ADDITIONS: dict[str, dict[str, float]] = {
+    "alumina": {ICP_FLUORINE: 0.02},
+}
+"""Rates a *later* milestone added to a migrated entry, with the reason it did.
+
+M8's grating demo needs an etch stop, and backlog B12 asked for that number to be
+**decided** rather than guessed: the ratio is didactic, the direction is physics
+(a fluorine plasma makes AlF3, which is not volatile, so alumina stops a fluorine
+etch where titania does not), and `rate_notes` on the file says so.
+
+A second dict rather than an entry in the first, because which milestone changed
+what is exactly the thing this file exists to keep legible.
+"""
+
+
 def _expected() -> MaterialLibrary:
-    """The pre-migration entries, plus exactly the changes M6 declared above."""
+    """The pre-migration entries, plus exactly the changes since, milestone by milestone."""
     return MaterialLibrary.of(
         *(
             replace(
                 entry,
-                rates={**entry.rates, **_M6_RATE_ADDITIONS.get(str(entry.material_id), {})},
+                rates={
+                    **entry.rates,
+                    **_M6_RATE_ADDITIONS.get(str(entry.material_id), {}),
+                    **_M8_RATE_ADDITIONS.get(str(entry.material_id), {}),
+                },
                 **_M6_MODEL_ADDITIONS.get(str(entry.material_id), {}),
             )
             for entry in _PRE_MIGRATION
@@ -491,18 +510,26 @@ def test_the_didactic_classes_kept_every_name_and_every_number() -> None:
     assert library[OXIDE].rate_for(WET_ETCH_OXIDE) == 16.6667
 
 
-def test_titania_carries_no_table_rate_and_says_that_a_zero_is_not_an_inertness() -> None:
+def test_titania_carries_no_table_rate_and_says_which_numbers_are_didactic() -> None:
     """E16 puts TiO2 in the library; the table has no TiO2 row, so nothing is invented.
 
     Backlog B11's rule about spin curves, applied to rates: a plausible made-up
     number is worse than an absent one, because only the absent one can be
-    noticed. What keeps it from being a silent zero is the note.
+    noticed. What keeps a number that *is* needed from being a silent invention
+    is the note — M8's etch-stop demo forced exactly that decision (B12), and the
+    result is one rate that says out loud where it came from.
     """
-    titania = didactic_library()[TITANIA]
+    library = didactic_library()
+    titania = library[TITANIA]
 
-    assert not any(process_class in titania.rates for process_class in _TABLE_CLASSES)
-    assert titania.rate_for(ICP_FLUORINE) == 0.0
-    assert "no table-derived rate" in titania.notes and "B12" in titania.notes
+    assert "nothing here is table-derived" in titania.notes and "B12" in titania.notes
+    for process_class in _TABLE_CLASSES:
+        if process_class == ICP_FLUORINE:
+            continue
+        assert process_class not in titania.rates, process_class
+    assert titania.rate_note(ICP_FLUORINE).startswith("Didactic, not from the process table")
+    # The one thing the number has to do: stop a fluorine etch at the alumina.
+    assert titania.rate_for(ICP_FLUORINE) / library[ALUMINA].rate_for(ICP_FLUORINE) == 25.0
 
 
 def test_chromium_is_the_material_the_table_exercises_everywhere() -> None:

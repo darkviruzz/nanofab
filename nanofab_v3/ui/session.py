@@ -337,22 +337,17 @@ def demo_recipe(registry: ProcessRegistry | None = None) -> tuple[Grid, tuple[Re
     What the application opens with, so the first thing anybody sees is a chain
     that produces a pattern rather than an empty domain. It is the acceptance
     scenario itself, not a mock-up of one.
-    """
-    from nanofab_v3.materials import METAL, RESIST, SILICON
 
-    grid = cross_section_grid(width=300.0, thickness=40.0, headroom=200.0)
-    steps = (
-        RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
-        RecipeStep("resist.spin_coat", {"material": RESIST, "thickness": 90.0}),
-        RecipeStep(
-            "litho.expose_ideal",
-            {"material": RESIST, "pattern": "window", "center": 150.0, "width": 100.0},
-        ),
-        RecipeStep("develop.ideal", {"material": RESIST}),
-        RecipeStep("deposit.evaporate", {"material": METAL, "thickness": 20.0}),
-        RecipeStep("strip.lift_off", {"material": RESIST}),
-    )
-    return grid, steps
+    Since M8 there are four demos and they live in `ui.demos` with the sentence
+    that says what to watch for in each. This stays as the shorthand for the
+    first of them — and **delegates** rather than repeating it, because two
+    definitions of one recipe is exactly the drift this repository keeps refusing
+    everywhere else.
+    """
+    from nanofab_v3.ui.demos import lift_off
+
+    demo = lift_off()
+    return demo.grid, demo.steps
 
 
 __all__ = [
