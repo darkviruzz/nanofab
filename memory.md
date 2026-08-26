@@ -1614,3 +1614,33 @@ Known risks and what was deliberately left:
 - **The concave-corner residual above is real.** It is bounded by a cell and did not move any measurement in the suite, but a geometry with many concave corners on a coarse grid is where it would show. The principled fix is a sub-cell fast-marching seed rather than an EDT-plus-offset; that is a backlog item, not M9.
 - **`union_front` is called every sub-step and now allocates a full EDT plus an index array.** At 241×301 that is 6.4 ms and cheaper than what it replaced; at a 3D grid the index array is `ndim` full-size integer fields, which is the thing to watch if 3D ever becomes real work.
 - The measurement that the residual sits at concave corners was taken against `regions.signed_distance_of` as ground truth, which is itself cell-quantised — so "true −0.9" is ±0.5. That is enough to tell a 1.97 gradient from a real kink (the same cells read 0.01–0.16 on the reference), and not enough to calibrate a correction.
+
+## Update 2026-08-26 (M6-M9 handoff — and the E13 bug that writing it found)
+
+- Wrote `docs/plans/m6-m9-handoff.md`: a **retrospective** handoff (the others in that directory are forward-looking), collecting the ten remarks that came up while M6-M9 were implemented, evaluating each, and ranking what to do about them. Grouped as R1-R10 with a priority tag; §3 promotes four of them to rules; §4 ranks the work.
+- Fixed one bug found while writing it (**R1**): `develop.ideal` never read the resist's own `tone`.
+
+Why it changed:
+- User asked for exactly this document as the last deliverable of the M6-M9 run.
+
+The bug, because it is the substantive part:
+1. **E13's model half was never wired, and two pieces of documentation said it was.** `_run_develop_ideal` passed `ctx["tone"]` through, and that parameter defaulted to `"positive"` unconditionally — while the step's description said *"`tone` comes from the resist's own develop model"* and `lithography`'s module docstring said the develop step reads tone from the `DevelopModel`. `DevelopModel.tone` existed, was serialised into every resist JSON, and was read by nobody. Measured on the new test's fixture: a negative resist developed as positive leaves **7080 cells instead of 4779**.
+2. **Fixed with the convention M6 and M7 already established**: `tone` defaults to `""`, `lithography.developed_tone()` answers from the material, and the log says which happened ("negative tone, from the resist" / "positive tone, typed"). The override stays — "our negative resist behaves like a positive one in this developer" is legitimate; what ends is having to say a negative resist is negative. No change for the shipped library (both resists are positive), so no scenario moved.
+3. **How it stayed invisible is the more useful finding.** E13 and E17 are two clauses of one shape in roadmap §2, and **neither was ever written into a §4 milestone task list** — M6 got E14-E17, M8 got E8-E12, E13 got nothing. E17's model half was in a list and shipped; E13's was in none and did not; both UI halves were in none and did not. Four DoDs passed over it because no DoD mentioned it, and the prose asserting the behaviour is what made the code read as if somebody had already done it.
+
+The other nine remarks, in one line each (full evaluation in the handoff):
+4. **R2** `seeded_distance` is off by up to a cell at a concave corner — bounded, local, the clamp costs double and buys a third of it. Leave it.
+5. **R3** M7's "the labeller is the scaling bottleneck" and M8's "the grating splits into several occurrences" are one module — and **the M8 remark was overstated**: measured now, the chromium grating is *one* body of 130 951 cells plus **thirteen one-cell specks**, ten of which are diagonal neighbours of the bulk. Fix the specks (they come from the etch front, not the labeller), do not filter by size — `scatter_particles` allows a 0.5 nm radius, so a one-cell body is a real feature S5 is built on.
+6. **R4** `DomainPolicy` outside the cache key is benign only because a resize changes framing, not geometry. One paragraph in ADR-0004 before B9 makes that false.
+7. **R5** three "obviously right" fixes in M9 were measurably wrong, all three the same shape: a local fix for a global defect. Recorded in four places so they are not retried.
+8. **R6** `application_library()` reads a directory no test sees. Intended; make it diagnosable by logging the roots at startup as `--version` already does.
+9. **R7** the provenance convention (E18, the two SiO₂ entries, B12, `titania`'s zeros) exists as four precedents and no statement. Thirty lines in the materials README, before B7 arrives.
+10. **R8** three small UI edges — the 24 s demo freeze, `substrate.select`'s twelve-parameter form, the unscrollable Markdown `QLabel`. Two of them share a widget change with R1.
+11. **R9** there is **no CI**, and nine Qt tests still sit behind `importorskip` — the mechanism that hid them for three milestones is intact and the thing that would catch it does not exist. A workflow that fails on a non-zero skip count is the cheapest insurance in the list.
+12. **R10** `union_front` is 2.2x faster in 2D but allocates `ndim` full-size index fields; a note about a door, not a room.
+
+Validated: `python -m compileall nanofab_v3 tests`, `python -m pytest` (**556** passed, 0 skipped).
+
+Known risks:
+- The E13 fix changes `develop.ideal`'s implementation digest, so cached revisions of that step are retired. Intended — the behaviour changed — and no shipped recipe changes result, because both library resists are positive.
+- `develop.ideal` still requires `resist.exposed` by the literal material id `RESIST`, so a resist under another name cannot be developed through the step API even now. Noticed while testing the fix, not addressed: it is a capability-naming question (E16 encourages new materials, `of_field(RESIST, ...)` predates it), and it deserves its own decision rather than a change smuggled into a bug fix.
