@@ -284,6 +284,7 @@ def builtin_registry() -> ProcessRegistry:
     §11).
     """
     from nanofab_v3.processes import (
+        anneal,
         contamination,
         deposition,
         etching,
@@ -318,6 +319,7 @@ def builtin_registry() -> ProcessRegistry:
         inspection.SEM,
         inspection.PROFILOMETER,
         inspection.ELLIPSOMETER,
+        anneal.ANNEAL,
     ):
         registry.register(step)
     return registry

@@ -25,6 +25,7 @@ from nanofab_v3.kernel import gate as commit_gate
 from nanofab_v3.kernel import occurrences, predicates
 from nanofab_v3.materials import (
     ALUMINA,
+    HARD_RESIST,
     METAL,
     OXIDE,
     PARTICLE,
@@ -53,6 +54,7 @@ from nanofab_v3.processes import (
     step_seed,
 )
 from nanofab_v3.processes import (
+    anneal,
     contamination,
     deposition,
     inspection,
@@ -892,3 +894,141 @@ def test_etch_inspect_etch_inspect_is_four_plain_steps(wafer, library) -> None:
     assert len(sink) == 2
     first, second = outcomes[1].measurements, outcomes[3].measurements
     assert second["mean_height"].value < first["mean_height"].value
+
+
+# -- 6. anneal (plan §6 row 15, §16, milestone M5) ----------------------------
+
+
+def _bake(temperature=200.0, duration=600.0, **overrides):
+    params = {
+        "temperature": temperature,
+        "duration": duration,
+        "material": str(RESIST),
+        "becomes": str(HARD_RESIST),
+        "activation": 150.0,
+    }
+    params.update(overrides)
+    return params
+
+
+def test_an_anneal_changes_the_material_and_not_the_geometry(patterned, library) -> None:
+    """Plan §21.2's decision: a property change is a change of library entry.
+
+    `StepContext.library` is passed in and never stored (plan §3.4), so an
+    anneal cannot hand back a modified one. It does not need to: the same `phi`
+    goes to a different `MaterialType`, and every rate downstream follows.
+    """
+    outcome = run_step(anneal.ANNEAL, patterned, _bake(), library=library)
+
+    assert outcome.ok
+    assert RESIST not in outcome.structure.phi
+    assert HARD_RESIST in outcome.structure.phi
+    assert outcome.structure.measure(
+        outcome.structure.inside(HARD_RESIST)
+    ) == pytest.approx(patterned.measure(patterned.inside(RESIST)), rel=1e-3)
+
+
+def test_the_capabilities_swap_without_anything_being_told_to(patterned, library) -> None:
+    """The gate re-derives both halves from the structure it was handed."""
+    before = capability.derived(patterned)
+    outcome = run_step(anneal.ANNEAL, patterned, _bake(), library=library)
+
+    assert "material:resist" in before
+    assert "material:resist" not in outcome.capabilities
+    assert "material:resist_hardbaked" in outcome.capabilities
+    assert anneal.ANNEALED in outcome.capabilities
+    # a latent image in a resist that has been hard-baked is not a latent image
+    assert "resist.exposed" not in outcome.capabilities
+
+
+def test_a_bake_below_the_activation_leaves_the_material_alone(patterned, library) -> None:
+    """A soft bake is still a thermal budget, and still not a transformation."""
+    outcome = run_step(anneal.ANNEAL, patterned, _bake(temperature=90.0), library=library)
+
+    assert RESIST in outcome.structure.phi
+    assert HARD_RESIST not in outcome.structure.phi
+    assert outcome.measurements["thermal_budget"].value > 0.0
+    assert any("below" in line for line in outcome.logs)
+
+
+def test_the_thermal_budget_accumulates_over_bakes(patterned, library) -> None:
+    """A sample carries its whole thermal history, not its last bake.
+
+    Global, because a furnace heats the whole sample: two 300 s bakes and one
+    600 s bake leave the same number.
+    """
+    once = run_step(
+        anneal.ANNEAL, patterned, _bake(duration=600.0, material="", becomes=""),
+        library=library,
+    )
+    first = run_step(
+        anneal.ANNEAL, patterned, _bake(duration=300.0, material="", becomes=""),
+        library=library,
+    )
+    twice = run_step(
+        anneal.ANNEAL, first.structure, _bake(duration=300.0, material="", becomes=""),
+        library=library, index=1,
+    )
+
+    assert twice.measurements["thermal_budget"].value == pytest.approx(
+        once.measurements["thermal_budget"].value
+    )
+    assert anneal.THERMAL_BUDGET.key() in twice.structure.fields
+
+
+def test_hard_baking_a_resist_is_a_resist_the_solvent_no_longer_takes(
+    wafer, library
+) -> None:
+    """The mechanism, and why it is worth a material rather than a footnote.
+
+    The *rate* tier is where chemistry lives: `dissolve_rates` gives a rate of
+    zero to a material the bath does not attack, and a hard-baked resist has no
+    `DissolveModel` at all. Both runs are the same recipe with one step inserted.
+    """
+    registry = builtin_registry()
+    coat = (registry["resist.spin_coat"], {"material": RESIST, "thickness": 60.0})
+    strip = (registry["strip.rate"], {"solvent": "acetone", "duration": 3.0})
+
+    coated = run_chain([coat], wafer, library=library)[-1].structure
+    applied = coated.measure(coated.inside(RESIST))
+    baked = run_chain(
+        [coat, (registry["anneal.thermal"], _bake()), strip], wafer, library=library
+    )
+    control = run_chain([coat, strip], wafer, library=library)
+
+    left = baked[-1].structure
+    stripped = control[-1].structure
+
+    assert applied > 0.0
+    # acetone left the baked film standing, whole
+    assert left.measure(left.inside(HARD_RESIST)) == pytest.approx(applied)
+    # ... and took the unbaked one entirely. The *key* survives an advection —
+    # only a region operation drops a material — so the measure is the assertion.
+    assert stripped.measure(stripped.inside(RESIST)) == 0.0
+
+
+def test_the_anneal_says_which_behaviour_changed(patterned, library) -> None:
+    """Behaviour lives in the library, so the log says which of it moved."""
+    outcome = run_step(anneal.ANNEAL, patterned, _bake(), library=library)
+
+    line = next(line for line in outcome.logs if "->" in line)
+    assert "no longer soluble" in line
+    assert "no longer developable" in line
+    assert "dry_etch 0.5 -> 0.25 nm/s" in line
+
+
+def test_an_anneal_moves_no_geometry_and_reflow_stays_open(patterned, library) -> None:
+    """Plan §16: curvature-driven reflow is deliberately not built.
+
+    The assertion that keeps it that way — an anneal sweeps no front, so it is
+    outside the balance check, and the transformed material's field is the very
+    array the old one had.
+    """
+    result = anneal.ANNEAL.run(
+        StepContext(structure=patterned, params={
+            spec.name: spec.default for spec in anneal.ANNEAL.parameter_schema()
+        } | _bake(), library=library)
+    )
+
+    assert result.swept is None
+    assert result.structure.phi_of(HARD_RESIST) is patterned.phi_of(RESIST)

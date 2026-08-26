@@ -46,6 +46,7 @@ UNDERLAYER = MaterialId("underlayer")
 METAL = MaterialId("metal")
 ALUMINA = MaterialId("alumina")
 PARTICLE = MaterialId("particle")
+HARD_RESIST = MaterialId("resist_hardbaked")
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,7 @@ class MaterialLibrary:
 def didactic_library() -> MaterialLibrary:
     """The material set the built-in processes of plan §6 are written against.
 
-    Seven materials, chosen to be exactly what S1-S5 need and no more:
+    Eight materials, chosen to be exactly what S1-S5 need and no more:
 
     - `silicon` — the substrate. Etched by the dry techniques, untouched by the
       developer and by the buffered-oxide wet etchant, which is what makes the
@@ -149,6 +150,12 @@ def didactic_library() -> MaterialLibrary:
     - `alumina` — the conformal ALD film of S3. Its only job is to be deposited
       over a resist sidewall and seal it, so its rates matter less than its
       presence.
+    - `resist_hardbaked` — what `resist` becomes above its own bake temperature,
+      and the reason `anneal.thermal` needs no mutable library (plan §21.2). Same
+      geometry, a different entry: the develop model is gone, the solvent no
+      longer attacks it (`dissolve=None`), and it etches half as fast. A resist
+      hard-baked before lift-off is a resist lift-off cannot remove, which is a
+      real mistake with a shape in this model rather than a table of numbers.
     - `particle` — airborne debris, and the only material in the set that is not
       *deposited* by anything: it arrives. Inert in every bath (a `WET_ETCH` rate
       of zero and no `dissolve` model), which is exactly what makes S5's
@@ -191,6 +198,17 @@ def didactic_library() -> MaterialLibrary:
             dissolve=DissolveModel(solvent="acetone", rate=40.0, swells=True),
             density=1.19,
             optical_n=1.51,
+            optical_k=0.0,
+            absorption=0.0015,
+        ),
+        MaterialType(
+            material_id=HARD_RESIST,
+            name="Hard-baked resist",
+            display_color="#8a6d1f",
+            rates={DRY_ETCH: 0.25, ION_BEAM: 0.9, WET_ETCH: 0.0},
+            sputter_response=SputterResponse(rise=1.5, fall=1.0),
+            density=1.28,
+            optical_n=1.58,
             optical_k=0.0,
             absorption=0.0015,
         ),
@@ -243,6 +261,7 @@ def didactic_library() -> MaterialLibrary:
 
 __all__ = [
     "ALUMINA",
+    "HARD_RESIST",
     "PARTICLE",
     "METAL",
     "UNDERLAYER",
