@@ -33,6 +33,7 @@ from nanofab_v3.materials import (
 from nanofab_v3.processes import builtin_registry
 from nanofab_v3.processes.contract import CapabilityError
 from nanofab_v3.kernel.domain import DomainPolicy
+from nanofab_v3.model import capability
 from nanofab_v3.processes.substrate import cross_section_grid
 from nanofab_v3.runtime import CENTER, Recipe, RecipeStep, run_recipe
 from nanofab_v3.ui import scene as scene_builder
@@ -460,7 +461,10 @@ def test_the_step_list_greys_out_what_the_revision_cannot_run(qt_app, library) -
     from nanofab_v3.ui.panels import StepListPanel
 
     panel = StepListPanel(builtin_registry())
-    panel.refresh(frozenset())
+    # A sample that exists, so the sentence is about the *step's* requirement.
+    # With nothing at all it is E4's instead — asserted just below, because both
+    # are things the step list has to be able to say.
+    panel.refresh(frozenset({capability.DOMAIN}))
     blocked = [
         panel.list.item(row).toolTip()
         for row in range(panel.list.count())
@@ -469,7 +473,16 @@ def test_the_step_list_greys_out_what_the_revision_cannot_run(qt_app, library) -
 
     assert blocked and "resist.exposed" in blocked[0]
 
-    panel.refresh(frozenset({f"material:{RESIST}", f"{RESIST}.exposed"}))
+    panel.refresh(frozenset())
+    before_anything = [
+        panel.list.item(row).toolTip()
+        for row in range(panel.list.count())
+        if panel.list.item(row).data(Qt.UserRole) == "develop.ideal"
+    ]
+
+    assert before_anything and "substrate is always the first step" in before_anything[0]
+
+    panel.refresh(frozenset({capability.DOMAIN, f"material:{RESIST}", f"{RESIST}.exposed"}))
     ready = [
         panel.list.item(row).toolTip()
         for row in range(panel.list.count())
