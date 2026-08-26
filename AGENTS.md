@@ -9,28 +9,27 @@ This file defines how the **Coding Assistant** should operate in this repository
    - `./ripgrep/rg.exe --files`
    - `git status --short`
 4. Detect current build/version dynamically (do not hardcode):
-   - `./ripgrep/rg.exe -n "^APP_NAME|^APP_VERSION" nanofab_manager*.py`
-5. If multiple candidate app entry files exist, ask the user which one is active before major changes.
+   - structure model v2: `./ripgrep/rg.exe -n "^__version__" nanofab_v3/__init__.py`
+   - a snapshotted application: `./ripgrep/rg.exe -n "^APP_NAME|^APP_VERSION" ui_backups/*/nanofab_manager.py`
+5. There is one actively built code base (`nanofab_v3/`). The PySide6 applications live in `ui_backups/` and are read-only history — never edit a snapshot in place.
 
 ## 2) Repository Map (Read in This Order)
 - Project memory and decisions:
   - `memory.md`
-- Active UI/runtime entry:
-  - `nanofab_manager.py` (or user-selected active entry file)
-- Modular engine and process logic:
-  - `nanofab_modular/domain.py`
-  - `nanofab_modular/step_api.py`
-  - `nanofab_modular/engine.py`
-  - `nanofab_modular/registry.py`
-  - `nanofab_modular/steps/*.py`
-- Structure model v2 (successor of `nanofab_modular`, built alongside v1):
-  - `docs/plans/v2-structure-model.md` (the specification), `docs/adr/*.md`
-  - `nanofab_v3/model/`, `nanofab_v3/kernel/`
+- Structure model v2 — the only actively built code base:
+  - `docs/plans/v2-structure-model.md` (the specification; §17-§19 amend the agreed text with what implementation measured), `docs/adr/*.md`
+  - `nanofab_v3/model/` — `Grid`, `Structure`, fields, capabilities, reports
+  - `nanofab_v3/kernel/` — set ops, constructors, motion, reinit, flux, predicates, regions, commit gate
+  - `nanofab_v3/materials/` — the `MaterialType` library
+  - `nanofab_v3/processes/` — the process contract, registry and didactic step set
+  - `nanofab_v3/runtime/`, `nanofab_v3/io/` — placeholders, milestone M4
   - `tests/`
 - Product docs:
   - `NanoFab_Process_Manager_Documentation/*.md`
-- Baselines/backups:
-  - `ui_backups/`
+- Baselines/backups (read-only history; each has its own `README.md`):
+  - `ui_backups/2026-08-25_v0.2.0_nanofab-manager/` — the v0.2.0 PySide6 app and the `nanofab_modular` engine
+  - `ui_backups/2026-08-25_v1.0.0_cross-section-prototype/` — the prototype ADR-0001 was written against
+  - `ui_backups/2026-03-05_v0.1.0_baseline/`
 
 ## 3) Efficient Reading Strategy
 1. Read `memory.md` first for latest decisions and known issues.
@@ -46,7 +45,7 @@ This file defines how the **Coding Assistant** should operate in this repository
 - Use local virtualenv Python for all runs/checks:
   - `./.venv/Scripts/python.exe ...`
 - Preferred fast validation (both steps, in this order):
-  1. `./.venv/Scripts/python.exe -m compileall nanofab_manager.py nanofab_modular nanofab_v3 tests`
+  1. `./.venv/Scripts/python.exe -m compileall nanofab_v3 tests`
   2. `./.venv/Scripts/python.exe -m pytest`
 - The test suite covers `nanofab_v3` (structure model v2); its layers and the acceptance
   criteria are defined in `docs/plans/v2-structure-model.md` §13. A change to `nanofab_v3`
@@ -73,17 +72,17 @@ The **Coding Assistant** may propose improvements to `AGENTS.md`, but must **alw
 - Before potentially breaking changes:
   1. Create a snapshot folder in `ui_backups/`:
      - `ui_backups/YYYY-MM-DD_vX.Y.Z_<label>/`
-  2. Include:
-     - active app file(s),
-     - `nanofab_modular/`,
-     - relevant spec file(s),
-     - `memory.md` snapshot.
-- Backups should be runnable/self-contained whenever practical.
+  2. Include whatever makes the snapshot stand on its own:
+     - the code being snapshotted and everything it imports locally,
+     - relevant spec file(s), with their paths repointed at the snapshot's own filenames,
+     - a `README.md` saying what it is, how to run it, and what replaced it.
+- Backups should be runnable/self-contained whenever practical. Verify it: `compileall` the folder and import its local packages from inside it.
+- Never edit a snapshot after taking it — it is a record, not a branch.
 
 ## 8) Build/Finish Flow
-1. Confirm active version from source constants (`APP_VERSION`) in active entry file.
+1. Confirm active version from `nanofab_v3.__version__`.
 2. Run validations:
-   - `./.venv/Scripts/python.exe -m compileall <active_app_file> nanofab_modular nanofab_v3 tests`
+   - `./.venv/Scripts/python.exe -m compileall nanofab_v3 tests`
    - `./.venv/Scripts/python.exe -m pytest`
 3. Run minimal smoke test for key flows when feasible.
 4. Update `memory.md` with outcome and any release notes.

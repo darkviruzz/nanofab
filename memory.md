@@ -1311,3 +1311,33 @@ Next steps / known risks:
 1. **`AGENTS.md` is not yet updated** — §6 forbids editing it without asking. §1 (the version probe reads `nanofab_manager*.py`), §2 (the repository map lists the root app and `nanofab_modular`), §4 and §8 (the `compileall` invocation names both) and §7 (the snapshot content list) all still describe the old root. A proposed diff has been shown to the user and is **awaiting approval**; until then those five sections point at files that no longer exist at the root.
 2. `NanoFab_Process_Manager_Documentation/` still describes the v1 application, and plan §12/§16 already record that the docs catch up later. Unchanged by this move.
 3. Plan §10 still expects the `nanofab_manager` shell to carry over in M4. That is now a statement about reading it out of `ui_backups/2026-08-25_v0.2.0_nanofab-manager/` rather than off the root; the snapshot's README says so.
+
+## Update 2026-08-25 (AGENTS.md Realigned to the Cleared Root + M4 Handoff)
+- `AGENTS.md` updated after the user approved the proposed diff (§6 requires asking first; the diff was shown and approved in full, including the one line that goes beyond path corrections).
+  - §1.4/§1.5 — the version probe read `nanofab_manager*.py` at the root, which no longer exists there. Now `nanofab_v3/__init__.py` for the structure model and `ui_backups/*/nanofab_manager.py` for a snapshotted application. The "ask which entry file is active" rule became gestureless with one code base and is replaced by "snapshots are read-only".
+  - §2 — repository map rebuilt around `nanofab_v3`'s subpackages and the three snapshot folders.
+  - §4/§8 — `compileall nanofab_manager.py nanofab_modular nanofab_v3 tests` -> `compileall nanofab_v3 tests`; §8's version check reads `nanofab_v3.__version__`.
+  - §7 — the snapshot content list was written for the old root (`nanofab_modular/` by name). Generalised, plus two things this session learned: repoint a spec's paths at the snapshot's own filenames, and *verify* self-containment rather than assume it. The one addition beyond path correction, explicitly approved: **"Never edit a snapshot after taking it — it is a record, not a branch."**
+- Wrote `docs/plans/m4-runtime-handoff.md` in the shape of the M2 and M3 handoffs: what M4 builds on, the seams already wired (`run_step`/`run_chain`/`StepOutcome`, `step_seed`, the completed commit gate, the rendering inputs), the one design decision to make first, the traps that recur, the measured budget, and a suggested order.
+
+Why it changed:
+- The root cleanup left five sections of AGENTS.md pointing at files that had moved; the user approved the correction. The M4 handoff was requested to close out the session.
+
+The design decision the M4 handoff asks to be made first:
+1. **Is a `Revision` a stored `Structure`, or a position in a replayable recipe?** Plan §3.6 lists `structure: Structure` as a field; plan §8 specifies lazy replay with a cache. Both are agreed text and they are not the same design, and the persistence granularity, the cache key, the cost of scrubbing a chain and whether a 60-step run fits in memory all hang off it. The handoff recommends "a Revision stores its Structure, and the *chain* is what is lazy" on the measured basis below.
+
+Measurements taken while writing the handoff (reference grid 540x1200 at 1 nm):
+2. **Persistence is a non-issue, by a factor nobody would have guessed.** One revision (2 materials + 1 field) is 5.83 MB raw and **0.04 MB compressed** — 137x, lossless, round-trip bit-identical. The reason is structural rather than lucky: a signed-distance field on a grid is piecewise linear, so a scene freshly ion-beam-etched for 30 s holds only **2964 distinct float32 values in 648 000 cells**. `savez_compressed` costs 22-28 ms, `np.load` 10 ms. A 20-step chain is ~116 MB in RAM and **~0.8 MB on disk**, which is what makes "keep a few resident, spill the rest, fault them back" the obvious shape.
+3. **Revisions share no arrays at all.** Zero shared by identity between consecutive revisions of the S1 chain, *including* silicon between `substrate.select` and `resist.spin_coat`, where the content is bit-identical. The commit gate reinitialises every material on every commit and returns a fresh array. Making `reinit.reinitialise` return its input when the field did not move would collapse a chain's footprint by the fraction of materials a step does not touch — most of them, in a lithography chain — and would make `Structure`'s "arrays are shared cheaply between revisions" docstring true, which it currently is not. Recorded as M4's second, nearly free decision.
+4. Rendering inputs measured for the same reason: `marching_squares` on the union 21 ms, `material_contours` 28 ms, `material_index` 15 ms, `label_occurrences` 54 ms. A full re-contour is one frame, so the thing to avoid is re-contouring on every mouse move, not contouring at all.
+5. S1 end to end (6 steps at 241x301) is **0.53 s**, so a 20-step replay at the reference grid is roughly 10-20 s of solver plus 0.6 s of I/O — inside plan §8's "seconds to ~a minute" and background-job territory as docs §9.2 already requires.
+
+Validation run:
+- `python -m compileall nanofab_v3 tests` -> clean; `python -m pytest tests/` -> **249 passed**, unchanged (documentation and AGENTS.md only).
+- `AGENTS.md` re-grepped after the edit: the only remaining `nanofab_manager`/`nanofab_modular` mentions are the two that deliberately point into `ui_backups/`.
+- The persistence round-trip was verified rather than assumed: `np.array_equal` on every field after `savez_compressed` -> `np.load`.
+
+Next steps / known risks:
+1. M4 is next per plan §14. `docs/plans/m4-runtime-handoff.md` has the seams, the decision to make first, the traps, the budget and the order.
+2. The array-sharing finding (3) is a change to `kernel/reinit.py` or `kernel/gate.py` — i.e. to code M0-M3's tests cover heavily. It is worth doing early in M4 while the chain footprint is still the thing being designed, and it needs the dose-splitting and balance tests to stay green.
+3. `NanoFab_Process_Manager_Documentation/` still describes the v1 application. Plan §12/§16 already record that the docs catch up later; M4's UI work is the natural moment.
