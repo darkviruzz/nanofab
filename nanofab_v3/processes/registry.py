@@ -334,7 +334,6 @@ class ProcessRegistry:
         """Everything `matching` searches, lowercased and memoised per registry."""
         cached = self._haystacks.get(step_id)
         if cached is None:
-            step = self[step_id]
             cached = " ".join(
                 (step_id, self.display_name(step_id), self.describe(step_id))
             ).lower()
