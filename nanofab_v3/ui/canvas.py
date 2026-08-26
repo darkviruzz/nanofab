@@ -167,6 +167,17 @@ class CrossSectionCanvas(QWidget):
                 painter.fillPath(path, color if not self._show_index_map else Qt.NoBrush)
                 painter.drawPath(path)
 
+        # The light preview goes under the overlays: it is what the mask would do,
+        # and the overlays are what the sample did (roadmap E9). Drawing the
+        # prediction on top of the result would suggest it is the newer fact.
+        if scene.light:
+            light = QColor(scene.light.color)
+            light.setAlpha(190)
+            painter.setPen(QPen(light, 1.4, Qt.DotLine))
+            flat = self._to_pixels(scene.light.segments.reshape(-1, 2)).reshape(-1, 2, 2)
+            for start, end in flat:
+                painter.drawLine(QPointF(start[0], start[1]), QPointF(end[0], end[1]))
+
         for overlay in scene.overlays:
             color = QColor(overlay.color)
             painter.setPen(QPen(color, 1.6, Qt.DashLine))

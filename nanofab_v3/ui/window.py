@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 from nanofab_v3 import __version__
 from nanofab_v3.io import replay_cache_for
 from nanofab_v3.processes.contract import CapabilityError, ParameterError
+from nanofab_v3.processes.lithography import pattern_from_params as lithography_pattern
 from nanofab_v3.ui.canvas import CrossSectionCanvas
 from nanofab_v3.ui.panels import (
     ParameterForm,
@@ -43,7 +44,7 @@ from nanofab_v3.ui.panels import (
     RunLogPanel,
     StepListPanel,
 )
-from nanofab_v3.ui.scene import OVERLAY_KINDS
+from nanofab_v3.ui.scene import ALWAYS_ON, OVERLAY_KINDS, light_preview
 from nanofab_v3.ui.scene import build as build_scene
 from nanofab_v3.ui.session import Session, demo_recipe
 from nanofab_v3.ui.wafer import WaferFan, default_cache_dir
@@ -121,13 +122,32 @@ class MainWindow(QMainWindow):
         row.addWidget(QLabel("Overlays:"))
         for kind in OVERLAY_KINDS:
             box = QCheckBox(kind)
-            # Off by default and computed only when ticked: a predicate is
-            # 3-12 ms at the reference grid, which is cheap once and not cheap
-            # every frame (handoff §4.3).
-            box.setToolTip(f"Compute the {kind} predicate for the shown revision")
+            if kind in ALWAYS_ON:
+                # Roadmap E9: the exposure *result* colours without being asked.
+                # It reads a stored field rather than computing a predicate, so
+                # it is free, and a latent image you have to remember to look for
+                # is a latent image nobody looks at.
+                box.setChecked(True)
+                box.setToolTip(
+                    f"Show the {kind} field the exposure wrote. On by default: it is "
+                    "read, not computed."
+                )
+            else:
+                # Off by default and computed only when ticked: a predicate is
+                # 3-12 ms at the reference grid, which is cheap once and not cheap
+                # every frame (handoff §4.3).
+                box.setToolTip(f"Compute the {kind} predicate for the shown revision")
             box.stateChanged.connect(self._refresh_canvas)
             self._overlays[kind] = box
             row.addWidget(box)
+        self.light_box = QCheckBox("light preview")
+        self.light_box.setToolTip(
+            "Draw where the light would fall, from the mask parameters in the form — "
+            "geometry only, before the step runs. The difference from the exposed "
+            "overlay is the aerial image."
+        )
+        self.light_box.stateChanged.connect(self._refresh_canvas)
+        row.addWidget(self.light_box)
         row.addStretch(1)
         self.index_map_box = QCheckBox("index map")
         self.index_map_box.setToolTip(
@@ -180,7 +200,33 @@ class MainWindow(QMainWindow):
     def _refresh_canvas(self) -> None:
         overlays = [kind for kind, box in self._overlays.items() if box.isChecked()]
         index = self.revisions.selected_index()
-        self.canvas.set_scene(self.session.scene(index, overlays=overlays))
+        scene = self.session.scene(index, overlays=overlays)
+        preview = self._light_preview(index)
+        self.canvas.set_scene(scene if preview is None else scene.with_light(preview))
+
+    def _light_preview(self, index: int | None):
+        """E9's preview, from the form's own values — never from the sample.
+
+        Only while an exposure step is selected, because the mask parameters are
+        that step's and asking any other step for them would be inventing a mask.
+        Failures are swallowed on purpose: a half-typed period in a spin box is a
+        normal state for a form to be in, and a preview is not worth a dialog.
+        """
+        if not self.light_box.isChecked():
+            return None
+        step_id = self.steps.selected_step_id() or ""
+        if not step_id.startswith("litho."):
+            return None
+        structure = (
+            self.session.structure
+            if index is None or not len(self.session.chain)
+            else self.session.chain[index].structure
+        )
+        try:
+            pattern = lithography_pattern(structure.grid, self.form.values())
+            return light_preview(structure, pattern)
+        except (ValueError, KeyError, TypeError):
+            return None
 
     def _on_step_chosen(self, step_id: str) -> None:
         registry = self.session.registry

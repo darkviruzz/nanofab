@@ -49,6 +49,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from dataclasses import replace
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -121,15 +122,37 @@ class Overlay:
     note: str = ""
 
 
-OVERLAY_KINDS = ("reachable", "voids", "unsupported", "normals")
-"""The overlays `SceneSnapshot.build` knows how to compute."""
+OVERLAY_KINDS = ("exposed", "dose", "reachable", "voids", "unsupported", "normals")
+"""The overlays `SceneSnapshot.build` knows how to compute.
+
+`exposed` and `dose` are first because they are different in kind from the rest.
+The other four are *predicates* — questions asked of the geometry, computed on
+request because each costs milliseconds (plan §20.6). These two are **stored
+fields**, already on the structure, and roadmap E9 asks that the exposure result
+always colour rather than waiting to be switched on: a latent image you have to
+remember to look for is a latent image nobody looks at.
+"""
+
+ALWAYS_ON = ("exposed", "dose")
+"""Overlays a shell shows without being asked (E9). Free — they read a field."""
 
 _OVERLAY_COLORS = {
+    "exposed": "#ffe066",
+    "dose": "#ff9f43",
     "reachable": "#5ac8fa",
     "voids": "#ff6b6b",
     "unsupported": "#ffd166",
     "normals": "#a0e7a0",
 }
+
+DOSE_LEVELS = (0.25, 0.5, 0.75, 1.0)
+"""Iso-dose contours, as fractions of the peak dose present.
+
+Fractions rather than absolute mJ/cm^2, because what a reader is looking for is
+the *shape* of the aerial image and where it crosses the resist's clearing dose —
+and the clearing dose is a property of the resist, which this module deliberately
+does not know about (it holds no physics, plan §10).
+"""
 
 
 @dataclass(frozen=True)
@@ -146,6 +169,10 @@ class SceneSnapshot:
             (-1) where a cell is empty.
         palette: Colour per material, for the index map and the legend.
         caption: One line naming the revision.
+        light: Where the light would go, when a shell has asked for the preview
+            (roadmap E9). Empty otherwise, and never computed from the structure
+            — it comes from the mask parameters, which is why it is set by the
+            caller rather than by `build`.
     """
 
     grid: Grid
@@ -154,6 +181,11 @@ class SceneSnapshot:
     index_map: np.ndarray | None = None
     palette: Mapping[MaterialId, str] = dataclass_field(default_factory=dict)
     caption: str = ""
+    light: LightPreview = dataclass_field(default_factory=lambda: LightPreview())
+
+    def with_light(self, light: LightPreview) -> "SceneSnapshot":
+        """The same snapshot with a light preview on it."""
+        return replace(self, light=light)
 
     @property
     def extent(self) -> tuple[float, float, float, float]:
@@ -243,7 +275,13 @@ def build(
     return SceneSnapshot(
         grid=grid,
         shapes=tuple(shapes),
-        overlays=tuple(_overlay(structure, kind) for kind in overlays if kind in OVERLAY_KINDS),
+        overlays=tuple(
+            overlay
+            for overlay in (
+                _overlay(structure, kind) for kind in overlays if kind in OVERLAY_KINDS
+            )
+            if overlay.label
+        ),
         index_map=structure.material_index if index_map else None,
         palette={shape.material: shape.color for shape in shapes},
         caption=caption,
@@ -398,10 +436,169 @@ def _display_names(library: MaterialLibrary | None) -> dict[MaterialId, str]:
     return {key: entry.name for key, entry in library.entries.items()}
 
 
+@dataclass(frozen=True)
+class LightPreview:
+    """Where the light goes, drawn from the mask parameters — not from a simulation.
+
+    Roadmap E9 splits lithography into two pictures on purpose, and the *whole
+    didactic content is the difference between them*:
+
+    - this one is geometry. Straight rays down through the open parts of the
+      mask, stopping at the surface they strike. It knows nothing about dose,
+      blur, absorption or the resist, and it is available **before** the step
+      runs, from the values sitting in the form;
+    - the `exposed` and `dose` overlays are the simulated result, with the
+      aerial image's blur and the Beer-Lambert falloff in them, and they always
+      colour.
+
+    A student who expects the second to look like the first has just learned what
+    an aerial image is. Merging them into one "exposure view" would delete the
+    lesson, which is why this is a separate object rather than a seventh overlay:
+    an overlay is derived from a `Structure`, and this is derived from a *recipe
+    parameter* the sample has never seen.
+
+    Attributes:
+        segments: `(N, 2, 2)` ray segments in nm, in the grid's axis order.
+        color: `#rrggbb`.
+        note: One sentence for the legend.
+    """
+
+    segments: np.ndarray | None = None
+    color: str = "#fff3bf"
+    note: str = ""
+
+    def __bool__(self) -> bool:
+        return self.segments is not None and len(self.segments) > 0
+
+
+def light_preview(
+    structure: Structure,
+    pattern: np.ndarray,
+    *,
+    rays_per_opening: int = 5,
+) -> LightPreview:
+    """Rays through the open parts of `pattern`, down to whatever they hit first.
+
+    `pattern` is the signed-distance field the exposure step would use, sampled
+    on the same grid — so this shows the mask that is *about to* be applied,
+    which is the point of a preview.
+
+    Each ray stops at the topmost solid cell in its column, because a ray drawn
+    through the sample would say the light goes through it. Where a column is
+    empty the ray runs to the floor of the domain, which is the honest picture of
+    a window with nothing under it.
+    """
+    grid = structure.grid
+    if grid.ndim != 2:
+        raise ValueError("the light preview is 2D, like the rest of the rendering")
+    open_columns = np.any(np.asarray(pattern) <= 0.0, axis=0)
+    if not np.any(open_columns):
+        return LightPreview(note="the mask is closed everywhere")
+
+    solid = structure.solid_mask
+    rows = np.arange(grid.shape[0]).reshape(-1, 1)
+    top_cell = np.where(solid.any(axis=0), np.max(np.where(solid, rows, -1), axis=0), -1)
+    top_nm = np.where(
+        top_cell >= 0,
+        grid.origin[0] + grid.spacing * top_cell,
+        grid.extent(0)[0],
+    )
+    ceiling = grid.extent(0)[1]
+
+    segments = []
+    runs = _runs(open_columns)
+    for start, stop in runs:
+        # Never more rays than the opening has columns: three rays on one column
+        # would be a picture claiming three times the light, and a narrow opening
+        # is exactly where somebody is looking closely.
+        count = max(1, min(int(rays_per_opening), int(stop - start)))
+        # Inset by half a ray spacing so the outermost rays sit inside the
+        # opening rather than on its edge, where an edge ray would suggest the
+        # mask edge is a place light both does and does not reach.
+        offsets = (np.arange(count) + 0.5) / count
+        for offset in offsets:
+            column = int(start + offset * (stop - start))
+            column = min(max(column, int(start)), int(stop) - 1)
+            x = grid.origin[1] + grid.spacing * column
+            segments.append([[ceiling, x], [float(top_nm[column]), x]])
+    openings = len(runs)
+    return LightPreview(
+        segments=np.array(segments, dtype=float) if segments else None,
+        note=(
+            f"{openings} opening{'s' if openings != 1 else ''} in the mask; "
+            "geometry only — no dose, no blur, no absorption"
+        ),
+    )
+
+
+def _runs(mask: np.ndarray):
+    """`(start, stop)` index pairs of each contiguous True run in a 1-D mask."""
+    padded = np.concatenate(([False], np.asarray(mask, dtype=bool), [False]))
+    edges = np.flatnonzero(padded[1:] != padded[:-1])
+    return list(zip(edges[0::2], edges[1::2]))
+
+
+def _field_overlay(structure: Structure, kind: str) -> Overlay:
+    """`exposed` or `dose` — the latent image, drawn from the field that holds it.
+
+    Roadmap §0 found these fields existed and were rendered nowhere, which made
+    the whole ideal/physical split invisible in the application that is supposed
+    to teach it. E9 fixes that and asks for the *result* to colour always, with
+    the light preview as the separate, optional picture beside it.
+
+    Material-scoped, so a structure with two resists has two of each; they are
+    merged into one overlay here because the question a reader has is "what was
+    exposed", not "which resist's field says so".
+    """
+    grid = structure.grid
+    color = _OVERLAY_COLORS[kind]
+    keys = [key for key in structure.fields if key.name == kind]
+    if not keys:
+        return Overlay(kind, "", color, note="")
+    # Clipped to the material each field is scoped to. `expose_ideal` writes over
+    # the whole grid on purpose — the commit gate's scoping rule is what keeps
+    # the field meaningful (plan §3.3) — but a *picture* of a latent image
+    # floating in empty space above the resist is a picture of nothing.
+    planes = []
+    for key in keys:
+        values = np.asarray(structure.field(key), dtype=np.float64)
+        if key.material is not None and key.material in structure.phi:
+            values = np.where(structure.inside(key.material), values, 0.0)
+        planes.append(values)
+    stacked = np.maximum.reduce(planes)
+    if kind == "exposed":
+        mask = stacked > 0.5
+        return Overlay(
+            kind,
+            "Exposed",
+            color,
+            outlines=_mask_outlines(grid, mask),
+            note=f"{int(np.count_nonzero(mask))} cells the pattern struck",
+        )
+    peak = float(np.max(stacked))
+    if peak <= 0.0:
+        return Overlay(kind, "Dose", color, note="no dose anywhere")
+    outlines: list[np.ndarray] = []
+    for level in DOSE_LEVELS:
+        outlines.extend(contour_kernel.marching_squares(grid, (level * peak) - stacked))
+    return Overlay(
+        kind,
+        "Dose",
+        color,
+        outlines=tuple(fillable_outlines(grid, outlines)) if outlines else (),
+        note=(
+            f"iso-dose at {', '.join(f'{int(l * 100)}%' for l in DOSE_LEVELS)} "
+            f"of {peak:.0f} mJ/cm^2"
+        ),
+    )
+
+
 def _overlay(structure: Structure, kind: str) -> Overlay:
     """Compute one inspect overlay (plan §10's "predicate highlights")."""
     grid = structure.grid
     color = _OVERLAY_COLORS[kind]
+    if kind in ALWAYS_ON:
+        return _field_overlay(structure, kind)
     if kind in ("reachable", "voids"):
         # `solid_phi` is the right field for a *connectivity* question even
         # though §17.1 forbids reading geometry off it: what is read here is the

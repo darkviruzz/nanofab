@@ -359,6 +359,17 @@ class _ArrayFlux:
 # -- registered steps ---------------------------------------------------------
 
 
+def pattern_from_params(grid: Grid, params) -> np.ndarray:
+    """The mask an exposure step's parameters describe, on `grid`.
+
+    Public because roadmap E9's light preview needs the *same* pattern the step
+    would use, before the step runs: a preview built from a second reading of the
+    parameters would be a second definition of what the mask is, and the two
+    would drift the first time a parameter was added.
+    """
+    return _pattern_from_params(grid, params)
+
+
 def _pattern_from_params(grid: Grid, ctx: StepContext) -> np.ndarray:
     """Build the exposure pattern named by the step parameters."""
     if ctx["pattern"] == "grating":
