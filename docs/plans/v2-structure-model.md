@@ -1,6 +1,6 @@
 # Plan: Structure Model v2
 
-- Status: Agreed (design interview 2026-08-24/25); implemented through M7.
+- Status: Agreed (design interview 2026-08-24/25); implemented through M8.
   §17 onward amend the agreed text with what implementation measured
 - Inputs: ADR-0001 (v1 autopsy, measured), design interview rounds 1–3, ADR-0002…0004
 - Scope: a new package (working name `nanofab_v3`, successor of `nanofab_modular`) that
@@ -2047,3 +2047,158 @@ difference explains it — same occurrence counts, same geometry, same sub-steps
 statement about that machine**, and this one is a statement about a shared
 virtual one. The per-component numbers above are the ones to trust; the
 end-to-end ones are recorded so that nobody later reads a speed-up into them.
+
+## 24. Corrections from implementation (M8)
+
+M8 is roadmap §4's third milestone and the first that is almost entirely about
+the application rather than the model. What it corrects is mostly §10 — "the UI
+decides didactics" — by finding the places where the UI was not deciding
+anything because the thing it would decide about was invisible.
+
+### 24.1 A UI milestone whose UI tests skip is a UI milestone with no tests
+
+`tests/test_ui.py` and `tests/test_wafer.py` had nine Qt tests behind
+`pytest.importorskip("PySide6")`, and PySide6 was not installed in this
+repository's container. They had been skipping for three milestones. Nobody was
+being told anything by them.
+
+Installing Qt and setting `QT_QPA_PLATFORM=offscreen` in `tests/conftest.py` —
+before anything imports Qt, `setdefault` so a developer can still watch the
+widgets — turned the nine skips into runs, and **one failed immediately**:
+`StepListPanel.refresh(frozenset())` answered M7's E4 sentence where the test
+expected the step's own requirement. The new behaviour was right; the test had
+been asserting the old one for a day without anyone finding out.
+
+Worth recording as a rule rather than a fix: **a skipped test is not a passing
+test, and a suite that reports its skips as a number rather than a list makes
+them invisible.** The skip count had been "9" in every commit message since M5.
+
+### 24.2 E10 has to come before E11, and it is one feature rather than two
+
+The roadmap lists process descriptions and the step filter as separate items.
+They are not: the filter searches *name and description*, so a list you can
+search for "undercut" or "hard mask" is only possible once the steps say what
+they do. Written the other way round, E11 would have been a filter over 31 short
+names, which is a filter nobody needs.
+
+Two decisions inside E10 that are not obvious:
+
+**`description` is deliberately not on the `ProcessStep` protocol.** That
+protocol is `runtime_checkable`, and `registry.register` gates on
+`isinstance(step, ProcessStep)` — so a member added there would make every plugin
+written before M8 fail the check and be refused registration. It lives on
+`FunctionStep`, `registry.describe` reads it with `getattr`, and a step with
+nothing to say gets its display name back: a poor description, never a missing
+one.
+
+**The key is structural, not the English text.** `nanofab_v3.text` is the
+indirection E10 asks for and *not* the catalog B10 says to defer, which together
+mean one thing: a key beside each string now (`step.<id>.description`) costs
+nothing and is the entire difference on the day a second language arrives, where
+31 bare strings would be 31 call sites to edit. Keying on the English text would
+have been the tempting shortcut and would break every translation the first time
+somebody fixed a typo.
+
+### 24.3 Two pictures of one exposure, and why they are two objects
+
+E9 asks for a light preview and an exposure overlay and says the didactic content
+is the difference between them. That difference only survives if they cannot be
+confused, so they are different kinds of thing in the code as well:
+
+- an **`Overlay`** is derived from a `Structure`. It is what the simulation
+  produced — blur, depth falloff, the lot;
+- a **`LightPreview`** is derived from a *recipe parameter the sample has never
+  seen*. It exists before the step runs and knows nothing about the resist.
+
+Merging them into one "exposure view" would have been the natural refactor and
+would delete the lesson: a student who expects the second to look like the first
+has just learned what an aerial image is.
+
+The preview is offered only while an exposure step is selected, because asking
+any other step for mask parameters would be inventing a mask; and it uses
+`lithography.pattern_from_params`, the step's own, because two readings of the
+parameters would drift the first time one was added — and the drift would look
+like an optical effect.
+
+### 24.4 A latent image stored over the whole grid is not a latent image over the whole grid
+
+`expose_ideal` writes `exposed` over the entire domain on purpose (§3.3's scoping
+rule is what keeps it meaningful — resist spun *after* an exposure arrives
+unexposed whatever the pattern said about those cells). Drawing that field
+directly puts a latent image in the empty space above the resist, which is a
+picture of nothing, and the first implementation did exactly that: 24 341 cells
+"struck" where the answer is 8 000.
+
+The overlay clips each field to the material it is scoped to. The general form:
+**a field's storage extent and its meaningful extent are different, and a
+renderer must use the second.** The commit gate already knows this — it is why
+the scoping rule exists — and the renderer had to learn it separately.
+
+### 24.5 A picture that is silently compressed is worse than one that is awkward
+
+E8's own sentence, and it survives contact with the implementation unchanged. The
+rule is: draw a domain within about 4:1 of square true to scale, compress the
+*long* axis of a more extreme one until the picture is 4:1, and never do either
+without saying so.
+
+What implementation added is the shape of the saying. The distortion factor is
+painted into every picture including when it is **1** ("1:1 true to scale"),
+because a label that appears only when something is wrong is a label whose
+absence has to be interpreted — and the interpretation "no label means nothing to
+report" is indistinguishable from "no label means nobody drew one". The pixel-to-
+nm hit test follows both scales, or the status bar would name a different cell
+than the cursor is over.
+
+### 24.6 B12, decided rather than guessed — which is what B12 asked for
+
+M8's etch-stop demo needs a number the student process table does not contain:
+neither TiO₂ nor Al₂O₃ has a row. B11's rule (an invented spin curve is worse
+than none) would say leave it out; B12's own text says the opposite for this
+case — *"dann ist zu entscheiden — nicht zu raten — ob die Zahl aus einer Messung
+kommt oder als didaktisch markiert wird"*.
+
+So the *ratio* is didactic and the *direction* is physics: a fluorine plasma
+makes AlF₃, which is not volatile, so alumina stops a fluorine etch where titania
+does not. `rate_notes` on both files says that in those words, and
+`tests/test_material_files.py` gained a second additions dict so that which
+milestone changed which number stays legible rather than merging into one pile.
+
+The distinction worth carrying: **an invented number is dishonest when it is
+indistinguishable from a measured one, not when it is invented.** The library has
+carried didactic rates since M0 and says so per entry; what B11 forbids is a
+curve labelled "AZ10XT" that nobody measured.
+
+### 24.7 Measured M8 costs, extending §17.7, §18.8, §19.6, §20.8, §21.5, §22.6 and §23.7
+
+| | |
+|---|---|
+| `registry.matching` over 31 steps, warm | **0.006 ms** |
+| the same, cold (builds the search text) | 0.17 ms |
+| `scene.build`, no overlays, 1200×640 @ 1 nm | 78 ms |
+| … `+ exposed` | **+81 ms** |
+| … `+ dose` (four iso-contours) | +63 ms |
+| … `+ reachable` (a predicate, for comparison) | +73 ms |
+| `light_preview` | 1.3 ms |
+| `display_scale` | 0.0008 ms |
+| the four demos, end to end | 0.5 / 10.6 / 23.8 / 2.9 s |
+| the frozen exe, with Qt this time | 116 MB, `--selftest` 4.0 s solver / 6.8 s wall |
+
+Two of these corrected something that had been written down as a reason.
+
+**"Free — they read a field" was wrong, and it was in a docstring.** The `exposed`
+overlay's *data* is free; **drawing** it is not — an outline costs a distance
+transform and a marching-squares pass, which is 81 ms at this grid, the same
+order as the predicate it was being contrasted against. The wording is corrected
+in place. They stay on by default anyway, and now for the reason that actually
+holds: a scene is rebuilt when the revision changes and not per frame (§20.6), so
+80 ms sits next to a step that takes seconds.
+
+**The search is genuinely free, which is what made a live filter reasonable.**
+0.006 ms per keystroke over 31 steps, because the searchable text is memoised per
+registry and invalidated on `register`. Had it been milliseconds the filter would
+have needed a timer, and a filter with a timer is a filter that feels broken.
+
+The exe is 116 MB against M5's measured 115 MB, with Qt frozen in both times, and
+its self-test is unchanged at 4.0 s of solver — which is the point of measuring
+it: three milestones of new steps, a new library format, a resize and a rewritten
+shell, and the seven scenarios cost what they cost in M5.

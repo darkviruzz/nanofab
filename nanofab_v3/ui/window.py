@@ -125,14 +125,16 @@ class MainWindow(QMainWindow):
         for kind in OVERLAY_KINDS:
             box = QCheckBox(kind)
             if kind in ALWAYS_ON:
-                # Roadmap E9: the exposure *result* colours without being asked.
-                # It reads a stored field rather than computing a predicate, so
-                # it is free, and a latent image you have to remember to look for
-                # is a latent image nobody looks at.
+                # Roadmap E9: the exposure *result* colours without being asked,
+                # because a latent image you have to remember to look for is a
+                # latent image nobody looks at. Not free — the outline costs
+                # about as much as a predicate (§24.7) — but a scene is rebuilt
+                # when the revision changes, not per frame.
                 box.setChecked(True)
                 box.setToolTip(
-                    f"Show the {kind} field the exposure wrote. On by default: it is "
-                    "read, not computed."
+                    f"Show the {kind} field the exposure wrote. On by default (roadmap "
+                    "E9): the result of an exposure should not be something you have "
+                    "to switch on."
                 )
             else:
                 # Off by default and computed only when ticked: a predicate is

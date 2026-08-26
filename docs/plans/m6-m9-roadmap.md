@@ -346,9 +346,23 @@ weit sie wollte. Deshalb zusätzlich ein Retry: Step laufen lassen, Platzmangel
 sehen, Eingabe vergrößern, nochmal (höchstens zweimal, Wachstum verdoppelnd).
 Plan §23.3.
 
-### M8 — UI-Reife
+### M8 — UI-Reife ✅ *erledigt 2026-08-26*
 
 Alles voneinander unabhängig, gut parallelisierbar.
+
+**Ergebnis:** 31 Step-Langtexte an der Registrierung mit
+Übersetzungs-Indirektion (`nanofab_v3/text.py`), durchsuchbare Step-Liste,
+`exposed`/`dose` als immer färbende Overlays plus Licht-Vorschau,
+Revisions-Truncate mit Entf und Kontextmenü, AR-Darstellung mit permanent
+sichtbarem Verzerrungsfaktor, vier Demos mit Picker. 547 Tests grün, Exe 7/7.
+Details in Plan §24 und memory.md 2026-08-26.
+
+**Zwei Punkte waren enger verzahnt als die Liste vermuten lässt.** E10 und E11
+sind *ein* Feature: der Filter sucht über Namen **und Beschreibung**, also ist
+eine nach „undercut" durchsuchbare Liste erst möglich, wenn die Steps sagen, was
+sie tun (Plan §24.2). Und die neun Qt-Tests liefen seit M5 nicht — sie
+übersprangen, weil PySide6 im Container fehlte. Nach der Installation fiel sofort
+eine M7-Regression auf, die einen Tag lang niemandem aufgefallen war (§24.1).
 
 1. Prozessbeschreibungen (E10) — Langtext an jedem der 24 Steps: was er tut,
    welche Felder was bedeuten, welche Inputs nötig sind.
@@ -365,6 +379,12 @@ Alles voneinander unabhängig, gut parallelisierbar.
 **DoD:** Jeder Step erklärt sich selbst; die Step-Liste ist durchsuchbar; man
 sieht vor dem Belichten, wo Licht hinfällt, und danach, was belichtet wurde;
 Revisionen sind löschbar; die Demos sind auswählbar und laufen.
+
+*Erfüllt.* Die Demos laufen nicht nur, sie zeigen das, was ihr eigener Text
+ankündigt — jeweils als Test: das Chrom-Gitter 200 nm tief mit steilen Flanken
+und ohne Maske am Ende, der Ätzstopp mit unversehrtem Substrat nach 350 s, das
+Black Silicon als *ein* zusammenhängender Wald mit dem Gegenversuch (vorher
+reinigen → flach) daneben.
 
 ### M9 — Kernel-Bugfix: Domain-Rand
 

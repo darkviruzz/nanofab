@@ -126,15 +126,22 @@ OVERLAY_KINDS = ("exposed", "dose", "reachable", "voids", "unsupported", "normal
 """The overlays `SceneSnapshot.build` knows how to compute.
 
 `exposed` and `dose` are first because they are different in kind from the rest.
-The other four are *predicates* — questions asked of the geometry, computed on
-request because each costs milliseconds (plan §20.6). These two are **stored
-fields**, already on the structure, and roadmap E9 asks that the exposure result
-always colour rather than waiting to be switched on: a latent image you have to
-remember to look for is a latent image nobody looks at.
+The other four are *predicates* — questions asked of the geometry. These two are
+**stored fields**, already on the structure, and roadmap E9 asks that the exposure
+result always colour rather than waiting to be switched on: a latent image you
+have to remember to look for is a latent image nobody looks at.
 """
 
 ALWAYS_ON = ("exposed", "dose")
-"""Overlays a shell shows without being asked (E9). Free — they read a field."""
+"""Overlays a shell shows without being asked (E9).
+
+The *data* is free — it is a field the structure already carries. **Drawing** it
+is not: an outline costs a distance transform and a marching-squares pass, which
+is ~80 ms at the reference grid, the same order as a predicate. Measured rather
+than assumed (plan §24.7), and they stay on anyway because a scene is rebuilt
+when the revision changes and not per frame (§20.6) — 80 ms against a step that
+takes seconds is not where the time goes.
+"""
 
 _OVERLAY_COLORS = {
     "exposed": "#ffe066",

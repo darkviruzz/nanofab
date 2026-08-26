@@ -187,7 +187,20 @@ Schleuderzeit dort eine Rolle spielt; `SpinCurve` müsste dafür erweitert werde
 
 ---
 
-## B12 — Prozessraten für TiO₂
+## B12 — Prozessraten für TiO₂ ✅ *erledigt in M8*
+
+**Ergebnis:** M8s Ätzstopp-Demo hat die Entscheidung erzwungen, und sie ist so
+gefallen, wie dieser Eintrag es verlangt hat — **entschieden, nicht geraten**:
+`titania` und `alumina` haben je eine `icp_fluorine`-Rate, das *Verhältnis*
+(25:1) ist didaktisch gewählt, die *Richtung* ist Physik (Fluorplasma bildet
+AlF₃, nicht flüchtig — deshalb stoppt Al₂O₃ eine Fluorätzung und TiO₂ nicht), und
+`rate_notes` sagt in beiden Dateien genau das. Alle übrigen Chemieklassen bleiben
+bei TiO₂ leer. Plan §24.6.
+
+Der ursprüngliche Eintrag, als Begründung:
+
+---
+
 
 **Was:** `titania` ist seit M6 in der Bibliothek (E16), trägt aber **keine**
 tabellengestützte Rate: die Studenten-Tabelle hat keine TiO₂-Zeile. Es hat nur
