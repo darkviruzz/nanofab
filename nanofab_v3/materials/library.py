@@ -45,6 +45,7 @@ RESIST = MaterialId("resist")
 UNDERLAYER = MaterialId("underlayer")
 METAL = MaterialId("metal")
 ALUMINA = MaterialId("alumina")
+PARTICLE = MaterialId("particle")
 
 
 @dataclass(frozen=True)
@@ -128,7 +129,7 @@ class MaterialLibrary:
 def didactic_library() -> MaterialLibrary:
     """The material set the built-in processes of plan §6 are written against.
 
-    Six materials, chosen to be exactly what S1-S4 need and no more:
+    Seven materials, chosen to be exactly what S1-S5 need and no more:
 
     - `silicon` — the substrate. Etched by the dry techniques, untouched by the
       developer and by the buffered-oxide wet etchant, which is what makes the
@@ -148,6 +149,14 @@ def didactic_library() -> MaterialLibrary:
     - `alumina` — the conformal ALD film of S3. Its only job is to be deposited
       over a resist sidewall and seal it, so its rates matter less than its
       presence.
+    - `particle` — airborne debris, and the only material in the set that is not
+      *deposited* by anything: it arrives. Inert in every bath (a `WET_ETCH` rate
+      of zero and no `dissolve` model), which is exactly what makes S5's
+      micromasking a **reachability** finding rather than a chemistry one — the
+      particle a clean leaves behind is one it could not reach, never one it
+      could not attack. It erodes slowly under the dry techniques, because a
+      particle that survived an ion beam untouched would be a wall rather than a
+      defect.
     """
     return MaterialLibrary.of(
         MaterialType(
@@ -211,6 +220,16 @@ def didactic_library() -> MaterialLibrary:
             optical_k=2.83,
         ),
         MaterialType(
+            material_id=PARTICLE,
+            name="Particle",
+            display_color="#8d6e63",
+            rates={DRY_ETCH: 0.3, ION_BEAM: 0.6, WET_ETCH: 0.0},
+            sputter_response=SputterResponse(rise=1.6, fall=1.0),
+            density=2.5,
+            optical_n=1.60,
+            optical_k=0.10,
+        ),
+        MaterialType(
             material_id=ALUMINA,
             name="ALD alumina",
             display_color="#9ccfd8",
@@ -224,6 +243,7 @@ def didactic_library() -> MaterialLibrary:
 
 __all__ = [
     "ALUMINA",
+    "PARTICLE",
     "METAL",
     "UNDERLAYER",
     "OXIDE",

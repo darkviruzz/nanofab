@@ -26,6 +26,7 @@ from nanofab_v3.kernel import occurrences, predicates
 from nanofab_v3.materials import (
     ALUMINA,
     METAL,
+    PARTICLE,
     RESIST,
     SILICON,
     MaterialLibrary,
@@ -49,7 +50,13 @@ from nanofab_v3.processes import (
     run_step,
     step_seed,
 )
-from nanofab_v3.processes import deposition, lithography, removal, substrate
+from nanofab_v3.processes import (
+    contamination,
+    deposition,
+    lithography,
+    removal,
+    substrate,
+)
 from nanofab_v3.processes.contract import validate_params
 
 # -- fixtures -----------------------------------------------------------------
@@ -646,3 +653,105 @@ def test_a_library_a_process_has_never_heard_of_still_runs(patterned: Structure)
 
     assert "gold" in outcome.structure.phi
     assert capability.of_material("gold") in outcome.capabilities
+
+
+# -- 4. particles and clean (plan §6 rows 16-17, milestone M5) ----------------
+
+
+def test_a_particle_rests_on_whatever_is_topmost_in_its_column(patterned) -> None:
+    """The placement decision: on the surface, not at a random point in the domain.
+
+    On a developed window the topmost solid differs by 80 nm between the resist
+    and the floor of the window, and a particle in either column sits on *that*
+    column's surface. A uniform draw over the domain would put most of them
+    inside the resist, where `add_material` would carve them away to nothing.
+    """
+    rng = np.random.default_rng(7)
+    seeded, landed = contamination.scatter_particles(
+        patterned, rng, count=40, radius=5.0
+    )
+
+    assert landed == 40
+    cells = predicates.cells_of(seeded, PARTICLE)
+    tops = contamination.surface_rows(patterned)
+    for column in np.flatnonzero(np.any(cells, axis=0)):
+        lowest = int(np.flatnonzero(cells[:, column]).min())
+        assert lowest > tops[column] - 2  # never buried in what it landed on
+
+
+def test_particles_that_overlap_are_one_occurrence() -> None:
+    """ADR-0003 again: identity is derived, so two touching particles are one piece.
+
+    Six 20 nm particles cannot fit side by side across a 100 nm domain, so some
+    of them land on each other — and what comes out is fewer occurrences than
+    particles, which is the derived view answering rather than a bookkeeping
+    choice made when they were placed.
+    """
+    grid = substrate.cross_section_grid(width=100.0, thickness=20.0, headroom=120.0)
+    wafer = substrate.select_substrate(grid, SILICON, surface=20.0)
+
+    crowded, landed = contamination.scatter_particles(
+        wafer, np.random.default_rng(0), count=6, radius=20.0
+    )
+
+    assert landed == 6
+    assert 1 <= contamination.count_occurrences(crowded, PARTICLE) < landed
+
+
+def test_a_particle_with_no_surface_to_land_on_is_skipped() -> None:
+    """An empty domain has nothing to land on, and no floor is invented for it."""
+    grid = substrate.cross_section_grid(width=100.0, thickness=20.0, headroom=60.0)
+    empty = Structure(grid)
+
+    seeded, landed = contamination.scatter_particles(empty, np.random.default_rng(1),
+                                                     count=5, radius=4.0)
+
+    assert landed == 0
+    assert seeded is empty
+
+
+def test_seeding_no_particles_returns_the_sample_untouched(wafer) -> None:
+    seeded, landed = contamination.scatter_particles(
+        wafer, np.random.default_rng(2), count=0, radius=4.0
+    )
+    assert (landed, seeded) == (0, wafer)
+
+
+def test_the_particle_step_draws_only_from_the_context_rng(wafer, library) -> None:
+    """§5.2's contract, from the registry's side: same seed, same sample.
+
+    The lint that refuses `np.random` at registration is best-effort (it reads
+    the wrapper's source); this is the behavioural half of the same rule, and it
+    is what ADR-0004's replay actually rests on.
+    """
+    registry = builtin_registry()
+    step = registry["particle.seed"]
+
+    def once(recipe_id, position):
+        outcome = run_step(step, wafer, {"count": 6, "radius": 6.0, "radius_spread": 0.4},
+                           library=library, recipe_id=recipe_id, position=position, index=1)
+        return predicates.cells_of(outcome.structure, PARTICLE)
+
+    assert np.array_equal(once("r", (0.0, 0.0)), once("r", (0.0, 0.0)))
+    assert not np.array_equal(once("r", (0.0, 0.0)), once("r", (30.0, 0.0)))
+    assert not np.array_equal(once("r", (0.0, 0.0)), once("other", (0.0, 0.0)))
+
+
+def test_a_clean_on_a_sample_with_no_particles_is_a_no_op(wafer) -> None:
+    cleaned, removed, left = contamination.clean(wafer, PARTICLE)
+
+    assert (cleaned, removed, left) == (wafer, 0, 0)
+
+
+def test_clean_takes_a_whole_occurrence_and_not_the_cells_it_touched(wafer) -> None:
+    """Per occurrence, for `removal.dissolve`'s reason: a bath takes the piece."""
+    seeded, _ = contamination.scatter_particles(
+        wafer, np.random.default_rng(3), count=4, radius=7.0
+    )
+    before = contamination.count_occurrences(seeded, PARTICLE)
+
+    cleaned, removed, left = contamination.clean(seeded, PARTICLE)
+
+    assert before >= 1
+    assert (removed, left) == (before, 0)
+    assert PARTICLE not in cleaned.phi

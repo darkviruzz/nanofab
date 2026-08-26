@@ -1,6 +1,6 @@
-"""S1-S4: the acceptance scenarios (plan §1, §13.3) — the definition of done.
+"""S1-S5: the acceptance scenarios (plan §1, §13.3) — the definition of done.
 
-Plan §14 makes these four tests the definition of done for milestone M3, and
+Plan §14 makes the first four the definition of done for milestone M3, and
 plan §1 makes them the definition of "works" for the whole structure model. Each
 one is a **recipe**, run through the registry and the commit gate exactly as the
 application would run it, and asserted through the predicates of §7 rather than
@@ -20,6 +20,10 @@ What each scenario has to *emerge* rather than be told:
 - **S4** — a broad lobe reaches down a sidewall a point source cannot see, and
   what it leaves there stays standing after the resist goes, because it is
   attached to the film on the substrate.
+- **S5** (M5, plan §6 rows 16-17) — a particle that was buried by a film before
+  the clean is **unreachable**, so the clean leaves it and the defect stays.
+  Nothing is told to leave it: `reachable_occurrences` answers, exactly as it
+  does for S3's sealed resist.
 
 Every scenario also runs its **control**: the same recipe with the one change
 that makes the mechanism go away. A test that only asserts the interesting
@@ -37,12 +41,13 @@ from nanofab_v3.materials import (
     ALUMINA,
     METAL,
     OXIDE,
+    PARTICLE,
     RESIST,
     SILICON,
     UNDERLAYER,
     didactic_library,
 )
-from nanofab_v3.processes import builtin_registry, run_chain
+from nanofab_v3.processes import builtin_registry, contamination, run_chain
 from nanofab_v3.processes.substrate import cross_section_grid
 
 SURFACE = 40.0
@@ -80,6 +85,12 @@ def _profile(structure: Structure, material=METAL) -> np.ndarray:
     cells = structure.inside(material)
     columns = np.flatnonzero(np.any(cells, axis=0))
     return np.array([int(np.flatnonzero(cells[:, c]).max()) for c in columns])
+
+
+def _top_profile(structure: Structure) -> np.ndarray:
+    """Height of the topmost solid cell per column, in nm — the sample's skyline."""
+    rows = contamination.surface_rows(structure)
+    return rows * structure.grid.spacing + structure.grid.origin[0]
 
 
 # -- S1: naive lift-off -------------------------------------------------------
@@ -475,3 +486,168 @@ def test_s4_control_an_evaporation_on_the_same_stack_leaves_a_flat_pattern(
 def test_s4_every_step_passes_the_commit_gate(s4) -> None:
     """Nine steps, two materials developed and one deposited through an overhang."""
     assert all(outcome.ok for outcome in s4)
+
+
+# -- S5: micromasking — the particle a clean cannot reach ---------------------
+
+PARTICLE_SEED = {"count": 5, "radius": 8.0}
+"""Five 8 nm particles. Two of them overlap at this seed and count as one
+occurrence, which is ADR-0003 doing its job rather than a fixture to fix."""
+
+
+def _particle_recipe(registry, *, bury: bool):
+    """substrate -> particles -> (a conformal film) -> clean.
+
+    `bury=False` is the control: the identical draw from the identical seed,
+    cleaned before anything covers it.
+    """
+    steps = [
+        (registry["substrate.select"], {"material": SILICON, "surface": SURFACE}),
+        (registry["particle.seed"], dict(PARTICLE_SEED)),
+    ]
+    if bury:
+        steps.append(
+            (registry["deposit.conformal_offset"], {"material": ALUMINA, "thickness": 10.0})
+        )
+    steps.append((registry["clean.particles"], {"material": PARTICLE}))
+    return steps
+
+
+@pytest.fixture(scope="module")
+def s5(registry, library):
+    """The whole of S5, run once: particles, a film over them, and a clean."""
+    grid = cross_section_grid(width=300.0, thickness=SURFACE, headroom=200.0)
+    return run_chain(
+        _particle_recipe(registry, bury=True),
+        Structure(grid),
+        library=library,
+        recipe_id="s5",
+    )
+
+
+@pytest.fixture(scope="module")
+def s5_control(registry, library):
+    """The control: the same particles, cleaned before anything buries them."""
+    grid = cross_section_grid(width=300.0, thickness=SURFACE, headroom=200.0)
+    return run_chain(
+        _particle_recipe(registry, bury=False),
+        Structure(grid),
+        library=library,
+        recipe_id="s5",
+    )
+
+
+def test_s5_particles_land_on_the_surface_and_not_inside_it(s5) -> None:
+    """Handoff §4's trap 2: a particle placed at a random point means nothing.
+
+    Every particle cell is above the substrate surface, and the particles rest on
+    it rather than hovering — the whole thing is one connected solid, which is
+    what lets a conformal film seal around them.
+    """
+    seeded = s5[1].structure
+    cells = predicates.cells_of(seeded, PARTICLE)
+
+    rows = np.flatnonzero(np.any(cells, axis=1))
+    assert rows.min() >= int(SURFACE)  # nothing buried in the substrate
+    assert seeded.measure(cells) > 0.0
+    # one connected solid: the particles are touching what they landed on
+    _, pieces = occurrences.label_region(seeded.grid, seeded.solid_mask)
+    assert pieces == 1
+
+
+def test_s5_the_clean_leaves_every_buried_particle(s5) -> None:
+    """The scenario: 0 removed, and `material:particle` survives the clean.
+
+    No step is told that the particles are buried. `clean.particles` asks
+    `reachable_occurrences`, gets an empty mask, and removes nothing.
+    """
+    before, after = s5[-2].structure, s5[-1].structure
+
+    assert PARTICLE in after.phi
+    assert "material:particle" in s5[-1].capabilities
+    assert s5[-1].measurements["removed"].value == 0.0
+    assert s5[-1].measurements["micromasked"].value >= 1.0
+    assert after.measure(predicates.cells_of(after, PARTICLE)) == pytest.approx(
+        before.measure(predicates.cells_of(before, PARTICLE))
+    )
+    assert not predicates.is_reachable(before, PARTICLE)
+
+
+def test_s5_control_an_unburied_particle_is_cleaned_off(s5_control, registry) -> None:
+    """One step removed and the mechanism goes away — the same particles, all gone.
+
+    The control matters more here than anywhere else in this file: an assertion
+    that a clean left the particles behind is satisfied just as well by a clean
+    that does nothing at all.
+    """
+    seeded, cleaned = s5_control[-2], s5_control[-1]
+
+    assert predicates.is_reachable(seeded.structure, PARTICLE)
+    assert PARTICLE not in cleaned.structure.phi
+    assert "material:particle" not in cleaned.capabilities
+    assert cleaned.measurements["removed"].value >= 1.0
+    assert cleaned.measurements["micromasked"].value == 0.0
+
+
+def test_s5_the_defect_the_particle_caused_stays(s5, registry, library) -> None:
+    """"...and the defect it caused stays" — the film is not flat where they are.
+
+    The reference film over a bare substrate is flat to the cell. Over a buried
+    particle it bulges, and it still bulges after the clean, because the clean
+    could not reach what is holding it up.
+    """
+    grid = cross_section_grid(width=300.0, thickness=SURFACE, headroom=200.0)
+    reference = run_chain(
+        [
+            (registry["substrate.select"], {"material": SILICON, "surface": SURFACE}),
+            (registry["deposit.conformal_offset"], {"material": ALUMINA, "thickness": 10.0}),
+        ],
+        Structure(grid),
+        library=library,
+    )[-1].structure
+
+    flat = _top_profile(reference)
+    defective = _top_profile(s5[-1].structure)
+
+    assert flat.max() == flat.min()  # a blanket film is flat to the cell
+    assert defective.max() - flat.max() >= 5.0  # a bump, well above one cell
+    raised = defective > flat.max()
+    particles = np.any(predicates.cells_of(s5[-1].structure, PARTICLE), axis=0)
+    assert np.all(raised[particles])  # every surviving particle shows through
+
+
+def test_s5_the_particles_are_a_pure_function_of_the_seed(registry, library) -> None:
+    """Plan §5.2, and the first *registered* step that exercises it.
+
+    Two runs of the same recipe at the same position scatter identical particles;
+    the same recipe at another wafer position scatters different ones. Without the
+    first, ADR-0004's replay materialization is unsound; without the second, a
+    wafer map would show one sample copied nine times.
+    """
+    grid = cross_section_grid(width=300.0, thickness=SURFACE, headroom=200.0)
+    recipe = _particle_recipe(registry, bury=True)[:2]
+
+    def scatter(position):
+        outcomes = run_chain(
+            recipe, Structure(grid), library=library, recipe_id="s5", position=position
+        )
+        return predicates.cells_of(outcomes[-1].structure, PARTICLE)
+
+    centre = scatter((0.0, 0.0))
+    again = scatter((0.0, 0.0))
+    edge = scatter((60.0, 0.0))
+
+    assert np.array_equal(centre, again)
+    assert not np.array_equal(centre, edge)
+
+
+def test_s5_every_step_passes_the_commit_gate(s5, s5_control) -> None:
+    """Handoff §4's trap 5: a disk of a few cells against tolerances tuned on planes.
+
+    It does not fire. The reinitialisation moves a particle's interface by
+    0.0002 nm (0.045 nm^2 of measure) and the conformal film over four of them
+    balances 2.5% off against a 5% tolerance — so nothing was loosened for this
+    scenario, which is the only way the numbers stay worth anything.
+    """
+    assert all(outcome.ok for outcome in s5)
+    assert all(outcome.ok for outcome in s5_control)

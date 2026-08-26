@@ -13,6 +13,7 @@ from __future__ import annotations
 from nanofab_v3.materials.library import (
     ALUMINA,
     METAL,
+    PARTICLE,
     OXIDE,
     RESIST,
     SILICON,
@@ -44,6 +45,7 @@ __all__ = [
     "ION_BEAM",
     "METAL",
     "OXIDE",
+    "PARTICLE",
     "PROCESS_CLASSES",
     "RESIST",
     "SILICON",

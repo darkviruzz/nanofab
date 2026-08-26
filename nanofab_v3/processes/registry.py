@@ -278,12 +278,19 @@ def builtin_registry() -> ProcessRegistry:
     importable without pulling in every process — which is what a plugin host
     needs, and what keeps the import graph a tree.
 
-    What is deliberately absent, with the milestone that owns it: inspection steps
-    (SEM/profilometer/ellipsometer — they need the artifact plumbing of M4),
-    particles and clean, anneal (M5, plan §14). Their absence is a scope statement,
-    not an oversight: every row of §6 that S1-S4 need is here.
+    Complete as of M5: every row of plan §6 is registered here. What M3 left out
+    with a milestone against it — inspection, particles and clean, anneal — is in
+    the last block, and `discover_plugins` is what adds anything else (plan §5.4,
+    §11).
     """
-    from nanofab_v3.processes import deposition, etching, lithography, removal, substrate
+    from nanofab_v3.processes import (
+        contamination,
+        deposition,
+        etching,
+        lithography,
+        removal,
+        substrate,
+    )
 
     registry = ProcessRegistry()
     for step in (
@@ -305,6 +312,8 @@ def builtin_registry() -> ProcessRegistry:
         removal.STRIP_RATE,
         removal.LIFT_OFF,
         removal.REMOVE_UNSUPPORTED,
+        contamination.PARTICLES,
+        contamination.CLEAN,
     ):
         registry.register(step)
     return registry
