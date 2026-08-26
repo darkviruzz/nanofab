@@ -258,6 +258,26 @@ def threshold_dose(
 # -- development --------------------------------------------------------------
 
 
+def developed_tone(library, material: MaterialId) -> str:
+    """Which of exposed/unexposed dissolves, according to the resist itself.
+
+    Roadmap E13's other half, and the twin of `spun_thickness`: the *step* keeps a
+    typed override because "our negative resist behaves like a positive one in
+    this developer" is a legitimate thing to say, but nobody should have to say
+    "this negative resist is negative".
+
+    A library that cannot be asked answers `"positive"` rather than raising. This
+    runs on the common path of every ideal development, and a resist with no
+    `DevelopModel` is the same case E15 already warns about once, at the commit —
+    failing here would report it a second time as a crash.
+    """
+    try:
+        model = library[material].develop if library is not None else None
+    except KeyError:
+        model = None
+    return getattr(model, "tone", None) or "positive"
+
+
 def develop_ideal(
     structure: Structure,
     material: MaterialId,
@@ -497,11 +517,13 @@ def _run_threshold(ctx: StepContext) -> StepResult:
 
 def _run_develop_ideal(ctx: StepContext) -> StepResult:
     material = MaterialId(str(ctx["material"]))
-    structure = develop_ideal(ctx.structure, material, tone=ctx["tone"])
+    typed = str(ctx["tone"])
+    tone, source = (typed, "typed") if typed else (developed_tone(ctx.library, material), "from the resist")
+    structure = develop_ideal(ctx.structure, material, tone=tone)
     return StepResult(
         structure=structure,
         field_specs={EXPOSED.name: EXPOSED},
-        logs=(f"developed {material} ({ctx['tone']} tone, ideal, reachability-gated)",),
+        logs=(f"developed {material} ({tone} tone, {source}; ideal, reachability-gated)",),
     )
 
 
@@ -683,9 +705,9 @@ DEVELOP_IDEAL = FunctionStep(
         ParamSpec(
             "tone",
             str,
-            default="positive",
-            choices=("positive", "negative"),
-            description="Which of exposed/unexposed dissolves",
+            default="",
+            choices=("", "positive", "negative"),
+            description="Which of exposed/unexposed dissolves; empty takes the resist's own",
         ),
     ),
     required=frozenset({capability.of_field(RESIST, EXPOSED.name)}),
@@ -695,9 +717,10 @@ DEVELOP_IDEAL = FunctionStep(
         "Develops the resist in one set operation: every reachable piece of exposed resist — or "
         "unexposed, for a negative tone — is simply gone. No time, no rate."
         "\n\n"
-        "`tone` comes from the resist's own develop model and is shown here so you can see "
-        "where the value came from; typing one overrides it. Reachability still applies: resist "
-        "the developer cannot get to stays, which is why a sealed cavity does not clear."
+        "`tone` comes from the resist's own develop model — leave it empty and the material "
+        "decides, which is the whole of roadmap E13; typing one overrides it for this step and "
+        "the run log says which of the two happened. Reachability still applies: resist the "
+        "developer cannot get to stays, which is why a sealed cavity does not clear."
         "\n\n"
         "The honest description of this tier is `develop.rate` with infinite contrast. Use that "
         "one to see a partially developed profile."

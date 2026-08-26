@@ -63,6 +63,7 @@ from nanofab_v3.processes import (
     removal,
     substrate,
 )
+from nanofab_v3.materials import store as materials_store
 from nanofab_v3.processes.contract import validate_params
 
 # -- fixtures -----------------------------------------------------------------
@@ -1078,3 +1079,63 @@ def test_an_anneal_moves_no_geometry_and_reflow_stays_open(patterned, library) -
 
     assert result.swept is None
     assert result.structure.phi_of(HARD_RESIST) is patterned.phi_of(RESIST)
+
+
+# -- E13: whose tone is it -----------------------------------------------------
+
+
+def test_the_ideal_develop_takes_its_tone_from_the_resist(tmp_path, monkeypatch) -> None:
+    """Roadmap E13: a negative resist is negative without anybody saying so.
+
+    Found while writing the M6-M9 handoff, and it had been wrong in a way the
+    step's own help text denied: `tone` was a plain parameter defaulting to
+    `"positive"`, while the description said the value came from the resist's
+    develop model. A lab that put a negative resist in its own materials
+    directory got it developed as a positive one — 7080 cells left instead of
+    4779 on this fixture — with a log line that said "positive tone" and a
+    description that said the material had decided it.
+
+    The override stays, because "our negative resist behaves like a positive one
+    in this developer" is a legitimate thing to say. What ends is having to say
+    that a negative resist is negative. Same convention as M6's `thickness` and
+    M7's presets: **empty means take it from the model.**
+    """
+    import json
+
+    from nanofab_v3.materials import application_library, invalidate_cache
+
+    source = json.loads((materials_store.builtin_materials_dir() / "resist.json").read_text())
+    source["develop"]["tone"] = "negative"
+    (tmp_path / "resist.json").write_text(json.dumps(source))
+    monkeypatch.setenv(materials_store.MATERIALS_ENV, str(tmp_path))
+    invalidate_cache()
+    library, _ = application_library()
+    assert library["resist"].develop.tone == "negative"
+
+    grid = substrate.cross_section_grid(width=200.0, thickness=40.0, headroom=120.0)
+    coated = lithography.spin_coat(
+        substrate.select_substrate(grid, "silicon", surface=40.0), "resist", thickness=60.0
+    )
+    exposed = lithography.expose_ideal(
+        coated, "resist", lithography.windows(grid, [(60.0, 140.0)])
+    )
+    committed = commit_gate.commit(exposed)
+    step = builtin_registry()["develop.ideal"]
+
+    def _left(params: dict[str, object]) -> tuple[int, str]:
+        outcome = run_step(
+            step,
+            committed.structure,
+            params,
+            library=library,
+            capabilities=committed.capabilities,
+        )
+        return int(outcome.structure.inside("resist").sum()), outcome.logs[0]
+
+    from_material, material_log = _left({"material": "resist"})
+    overridden, typed_log = _left({"material": "resist", "tone": "positive"})
+
+    assert from_material != overridden  # the two tones are genuinely different developments
+    assert "negative tone, from the resist" in material_log
+    assert "positive tone, typed" in typed_log
+    invalidate_cache()
