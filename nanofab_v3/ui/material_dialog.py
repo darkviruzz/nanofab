@@ -17,7 +17,7 @@ form does not have.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Sequence
 
 from PySide6.QtWidgets import (
     QColorDialog,
@@ -133,15 +133,14 @@ class MaterialDialog(QDialog):
         return self.values().build()
 
 
-def ask_about(missing: Mapping[str, MissingMaterial] | tuple[MissingMaterial, ...], parent=None):
+def ask_about(missing: Sequence[MissingMaterial], parent: QWidget | None = None):
     """Run one dialog per unknown material; yield the ones that were described.
 
     A generator so the caller decides what to do with each answer — the session
     saves it and rebinds its library — and so cancelling one material does not
     abandon the rest.
     """
-    entries = missing.values() if isinstance(missing, Mapping) else tuple(missing)
-    for entry in entries:
+    for entry in tuple(missing):
         dialog = MaterialDialog(entry, parent)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             yield dialog.described()

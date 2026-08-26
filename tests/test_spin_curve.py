@@ -32,7 +32,7 @@ from nanofab_v3.materials import (
     didactic_library,
 )
 from nanofab_v3.processes import ParameterError, builtin_registry, run_step
-from nanofab_v3.processes import lithography, substrate
+from nanofab_v3.processes import substrate
 from nanofab_v3.processes.lithography import spun_thickness
 
 MEASURED = ((1000.0, 150.0), (2000.0, 99.8), (3000.0, 82.0), (4000.0, 74.0), (5000.0, 72.0))

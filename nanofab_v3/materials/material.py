@@ -313,14 +313,18 @@ class SpinCurve:
         try:
             points = tuple((float(speed), float(thickness)) for speed, thickness in self.points)
         except (TypeError, ValueError):
-            raise ValueError(f"a spin curve is a sequence of (rpm, nm) pairs, got {self.points!r}") from None
+            raise ValueError(
+                f"a spin curve is a sequence of (rpm, nm) pairs, got {self.points!r}"
+            ) from None
         if len(points) < 2:
             raise ValueError("a spin curve needs at least two measured points")
         for speed, thickness in points:
             if not (math.isfinite(speed) and speed > 0.0):
                 raise ValueError(f"spin speed must be a positive finite number, got {speed}")
             if not (math.isfinite(thickness) and thickness > 0.0):
-                raise ValueError(f"spun thickness must be a positive finite number, got {thickness}")
+                raise ValueError(
+                    f"spun thickness must be a positive finite number, got {thickness}"
+                )
         speeds = [speed for speed, _ in points]
         if speeds != sorted(set(speeds)):
             raise ValueError(f"spin curve speeds must be strictly ascending, got {speeds}")

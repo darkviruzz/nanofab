@@ -31,7 +31,6 @@ import pytest
 from nanofab_v3.kernel import constructors as ctor
 from nanofab_v3.materials import (
     ICP_FLUORINE,
-    RESIST,
     SILICON,
     WET_ETCH,
     MaterialLibrary,

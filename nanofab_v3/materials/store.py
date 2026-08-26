@@ -37,10 +37,13 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Iterable, Mapping, Sequence
 
 from nanofab_v3.materials.material import MaterialId, MaterialType
 from nanofab_v3.materials.schema import MaterialFileError, read_material, write_material
+
+if TYPE_CHECKING:  # `library` imports this module, so the runtime import is local
+    from nanofab_v3.materials.library import MaterialLibrary
 
 MATERIALS_SUBDIR = ("data", "materials")
 """Where the shipped files sit, relative to the `nanofab_v3` package root."""
@@ -128,7 +131,13 @@ class LibraryReport:
         return tuple(lines)
 
 
-def read_root(root: Path) -> tuple[dict[MaterialId, MaterialType], dict[MaterialId, Path], tuple[tuple[Path, str], ...]]:
+RootContents = tuple[
+    dict[MaterialId, MaterialType], dict[MaterialId, Path], tuple[tuple[Path, str], ...]
+]
+"""What one directory yielded: the entries, the file each came from, the failures."""
+
+
+def read_root(root: Path) -> RootContents:
     """Every `*.json` in one directory, as `(entries, files, failures)`.
 
     A missing directory is empty, not an error: the writable root does not exist

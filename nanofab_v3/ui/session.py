@@ -34,7 +34,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from nanofab_v3.io.exchange import load_chain, save_chain
 from nanofab_v3.io.manifest import recipe_from_json, recipe_to_json
-from nanofab_v3.materials import MaterialLibrary, didactic_library
+from nanofab_v3.materials import MaterialLibrary, MaterialType, didactic_library
 from nanofab_v3.materials.unknown import UnknownMaterials, unknown_materials
 from nanofab_v3.model.grid import Grid
 from nanofab_v3.model.structure import Structure
@@ -126,7 +126,7 @@ class Session:
         """
         return unknown_materials(self.library, self.structure.materials)
 
-    def describe_material(self, entry) -> None:
+    def describe_material(self, entry: MaterialType) -> Path:
         """Add a `MaterialType` to this session's library and save it to disk (E15).
 
         Two effects on purpose. The session picks it up now — `self.library` is a

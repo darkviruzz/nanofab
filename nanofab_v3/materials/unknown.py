@@ -30,7 +30,7 @@ had an answer, or was never able to be asked at all.
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
 from nanofab_v3.materials.library import MaterialLibrary
@@ -104,7 +104,6 @@ class UnknownMaterials:
 
     missing: tuple[MissingMaterial, ...] = ()
     seen_in: str = ""
-    _ids: tuple[MaterialId, ...] = field(default=(), repr=False, compare=False)
 
     def __bool__(self) -> bool:
         return bool(self.missing)
