@@ -47,11 +47,21 @@ SCHEMA_ID = "structure.v2"
 
 
 def code_version() -> str:
-    """The version a cache entry is keyed on (plan §8, ADR-0004).
+    """The **coarse** axis of the cache key (plan §8, §21.1, ADR-0004).
 
     Determinism is promised per machine **and code version**; cross-machine float
     drift is accepted and absorbed here. Bumping `nanofab_v3.__version__` retires
-    every cached revision, which is the intended and only mechanism.
+    every cached revision everywhere, which is what this axis is for: it covers
+    the things a recipe cannot name — the kernel, numpy/scipy, the interpreter.
+
+    It deliberately stays coarse and deliberately does **not** try to see a step.
+    M4 wrote that bumping it was "the intended and only mechanism" for retiring a
+    cache, which was honest while this package was the only code that could
+    change. M5 added the second axis where a step belongs: the per-step
+    `implementation_digest` inside the *recipe* hash
+    (`processes.registry.implementation_digest`, `io.store.recipe_hash`), so
+    editing one step retires the recipes that use it rather than everything, and
+    a plugin's step is in the key at all.
     """
     return __version__
 

@@ -32,7 +32,13 @@ from nanofab_v3.io.exchange import (
     save_structure,
 )
 from nanofab_v3.io.manifest import SCHEMA_ID, code_version, content_hash
-from nanofab_v3.io.store import FileRevisionStore, ReplayCache, cache_key, recipe_hash
+from nanofab_v3.io.store import (
+    FileRevisionStore,
+    ReplayCache,
+    cache_key,
+    recipe_hash,
+    replay_cache_for,
+)
 
 __all__ = [
     "CHAIN_MANIFEST",
@@ -46,6 +52,7 @@ __all__ = [
     "load_revision",
     "load_structure",
     "recipe_hash",
+    "replay_cache_for",
     "revision_stem",
     "save_chain",
     "save_revision",

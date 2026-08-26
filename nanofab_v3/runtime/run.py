@@ -143,20 +143,30 @@ class RecipeStep:
             for name, value in self.params.items()
         }
 
-    def fingerprint(self) -> str:
+    def fingerprint(self, digest: str | None = None) -> str:
         """A stable description of step and parameters, for the recipe hash.
 
         Deliberately not `repr(self)`: a `WaferParameter` describes itself, so two
         equal profiles built separately hash the same, and a changed profile
         changes the hash. A cache key that could not see a parameter change would
         serve one recipe's answer for another.
+
+        `digest` is the registered step's `implementation_digest` (plan §21.1),
+        which is what makes the same sentence true of the step's *code* and not
+        only of its parameters. It is an argument rather than something looked up
+        here because a `RecipeStep` names a step by id and knows no registry —
+        which registry resolves that id is the caller's fact, and two callers can
+        legitimately have different ones. Omitting it hashes the recipe by
+        parameters alone, which is M4's behaviour and is what a caller that has
+        no registry to hand gets.
         """
         parts = []
         for name in sorted(self.params):
             value = self.params[name]
             shown = value.fingerprint() if isinstance(value, WaferParameter) else repr(value)
             parts.append(f"{name}={shown}")
-        return f"{self.step_id}({','.join(parts)})"
+        body = f"{self.step_id}({','.join(parts)})"
+        return body if digest is None else f"{body}@{digest}"
 
 
 @dataclass(frozen=True)
@@ -193,10 +203,22 @@ class Recipe:
         """A new recipe with one more step at the end."""
         return Recipe(self.grid, self.steps + (step,), self.recipe_id)
 
-    def fingerprint(self) -> str:
-        """A stable description of the whole recipe, for the cache key."""
+    def fingerprint(self, digests: Mapping[str, str] | None = None) -> str:
+        """A stable description of the whole recipe, for the cache key.
+
+        `digests` is `{step_id: implementation digest}`, normally
+        `ProcessRegistry.digests()`. A step this recipe uses that the mapping
+        does not name is hashed without one rather than raising: a recipe may
+        legitimately be described against a registry that cannot run it (a saved
+        file reopened without a plugin installed), and refusing to hash it there
+        would turn a display problem into a failure.
+        """
         grid = f"{self.grid.origin}{self.grid.spacing}{self.grid.shape}{self.grid.axes}"
-        return "|".join([self.recipe_id, grid] + [step.fingerprint() for step in self.steps])
+        found = dict(digests or {})
+        return "|".join(
+            [self.recipe_id, grid]
+            + [step.fingerprint(found.get(step.step_id)) for step in self.steps]
+        )
 
     def initial(self) -> Structure:
         """The empty `Structure` a chain starts from — the domain before anything."""

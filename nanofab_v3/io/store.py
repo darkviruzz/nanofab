@@ -63,7 +63,7 @@ class FileRevisionStore:
         return f"FileRevisionStore({str(self.directory)!r})"
 
 
-def recipe_hash(steps: Any) -> str:
+def recipe_hash(steps: Any, *, registry: Any = None) -> str:
     """A stable digest of a recipe's steps and their unresolved parameters.
 
     Part of the cache key of plan §8 and ADR-0004, and it has to change whenever
@@ -71,10 +71,22 @@ def recipe_hash(steps: Any) -> str:
     parameter, a different order. It must **not** change when the same recipe is
     described by an object built a second time, which is why it digests the
     steps' own `fingerprint()` text rather than anything with an address in it.
+
+    **Pass the `registry`.** With it, each step is hashed together with its
+    `implementation_digest` — the second axis of the cache key decided in M5
+    (plan §21.1). Without it a step's *code* is not in the key at all, and a
+    plugin that changes its rate model, or a builtin wrapper edited during
+    development, is then served out of a warm cache as if it were current
+    (`code_version()` does not move for either). It is an argument rather than
+    a lookup because a recipe names steps by id and which registry resolves
+    those ids is the caller's fact; it defaults to `None` so that hashing a
+    recipe for something *other* than a cache — comparing two recipes, labelling
+    a file — does not need one.
     """
+    digests = registry.digests() if registry is not None else {}
     digest = hashlib.blake2b(digest_size=16)
     for step in steps:
-        digest.update(step.fingerprint().encode())
+        digest.update(step.fingerprint(digests.get(step.step_id)).encode())
         digest.update(b"\x00")
     return digest.hexdigest()
 
@@ -89,6 +101,21 @@ def cache_key(recipe: str, position: tuple[float, float], index: int) -> str:
     """
     material = f"{recipe}|{position[0]!r}|{position[1]!r}|{index}|{code_version()}"
     return hashlib.blake2b(material.encode(), digest_size=16).hexdigest()
+
+
+def replay_cache_for(
+    directory: Any, recipe: Any, *, registry: Any = None, verify: bool = True
+) -> "ReplayCache":
+    """The `ReplayCache` for one recipe, keyed the way M5 decided (plan §21.1).
+
+    One call so that "which hash does this cache go under" is answered in one
+    place rather than at every call site that wants a cache. Pass the registry
+    the run will use: it is what puts each step's implementation in the key, and
+    the whole point of the two-axis decision is that it not be optional in
+    practice while remaining optional in the API for the callers that hash a
+    recipe for other reasons.
+    """
+    return ReplayCache(directory, recipe_hash(recipe, registry=registry), verify=verify)
 
 
 class ReplayCache:

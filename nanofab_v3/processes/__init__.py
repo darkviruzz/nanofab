@@ -43,6 +43,7 @@ from nanofab_v3.processes.registry import (
     ProcessRegistry,
     RegistrationError,
     builtin_registry,
+    implementation_digest,
 )
 
 __all__ = [
@@ -61,6 +62,7 @@ __all__ = [
     "StepOutcome",
     "StepResult",
     "builtin_registry",
+    "implementation_digest",
     "run_chain",
     "run_step",
     "step_seed",

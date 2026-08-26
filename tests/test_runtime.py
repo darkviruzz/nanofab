@@ -11,20 +11,33 @@ would have had, because ADR-0004 rejected eager fan-out on the strength of it.
 
 from __future__ import annotations
 
+import inspect
+from dataclasses import replace
+from unittest import mock
+
 import numpy as np
 import pytest
 
 from nanofab_v3 import FieldKey, Grid, Structure
-from nanofab_v3.io import FileRevisionStore, ReplayCache, cache_key, recipe_hash
+from nanofab_v3.io import (
+    FileRevisionStore,
+    ReplayCache,
+    cache_key,
+    recipe_hash,
+    replay_cache_for,
+)
 from nanofab_v3.materials import METAL, RESIST, SILICON, didactic_library
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.processes import (
     IDEAL,
+    PHYSICAL,
     FunctionStep,
+    ParamSpec,
     ProcessRegistry,
     StepContext,
     StepResult,
     builtin_registry,
+    implementation_digest,
     run_chain,
     step_seed,
 )
@@ -410,6 +423,124 @@ def test_the_cache_key_separates_positions_steps_and_code_versions() -> None:
     assert cache_key("r", CENTER, 3) != cache_key("r", CENTER, 4)
     assert cache_key("r", CENTER, 3) != cache_key("r", EDGE, 3)
     assert cache_key("r", CENTER, 3) != cache_key("s", CENTER, 3)
+
+
+# -- 3b. the second axis: the implementation digest (M5, plan §21.1) ----------
+
+
+def test_the_implementation_digest_is_stable_and_specific(registry) -> None:
+    """The same step digests the same; two different steps do not."""
+    evaporate = registry["deposit.evaporate"]
+
+    assert implementation_digest(evaporate) == implementation_digest(evaporate)
+    assert implementation_digest(evaporate) != implementation_digest(registry["deposit.sputter"])
+    assert registry.digest("deposit.evaporate") == implementation_digest(evaporate)
+
+
+def test_the_digest_moves_when_the_contract_moves(registry) -> None:
+    """A changed schema, fidelity or capability contract is a changed step.
+
+    None of these is executable, and all of them change what the step means to a
+    recipe — a parameter that gained a default, a bound that got tighter, a
+    promise the step no longer makes.
+    """
+    original = registry["deposit.evaporate"]
+    base = implementation_digest(original)
+
+    retuned = replace(
+        original,
+        schema=original.schema[:-1]
+        + (ParamSpec("divergence", float, unit="deg", default=0.0, maximum=60.0),),
+    )
+    repromised = replace(original, provided=frozenset({"metal.deposited"}))
+    redeclared = replace(original, fidelity=PHYSICAL)
+
+    assert implementation_digest(retuned) != base
+    assert implementation_digest(repromised) != base
+    assert implementation_digest(redeclared) != base
+
+
+def test_the_digest_moves_when_the_wrapper_moves(registry) -> None:
+    """The point of the whole decision: an edited step retires its own cache."""
+    original = registry["deposit.evaporate"]
+
+    def _run_evaporate_but_slower(ctx):  # pragma: no cover - never run
+        return original.run_function(ctx)
+
+    edited = replace(original, run_function=_run_evaporate_but_slower)
+
+    assert implementation_digest(edited) != implementation_digest(original)
+
+
+def test_a_source_less_step_falls_back_and_says_so() -> None:
+    """A frozen build has no `getsource`, and its digest is marked `nosrc:`.
+
+    The fallback is the contract alone, which is defensible for an exe whose
+    plugin set is fixed at build time. What is *not* defensible is a frozen build
+    and a source install trading cache entries under a key that claims they are
+    the same code, so the marker is part of the digest.
+    """
+    step = FunctionStep(
+        step_id="test.sourceless",
+        display_name="Sourceless",
+        fidelity=IDEAL,
+        schema=(),
+        required=frozenset(),
+        provided=frozenset(),
+        run_function=lambda ctx: StepResult(ctx.structure),
+    )
+    with_source = implementation_digest(step)
+    assert with_source.startswith("src:")
+
+    with mock.patch.object(inspect, "getsource", side_effect=OSError("frozen")):
+        without = implementation_digest(step)
+    assert without.startswith("nosrc:")
+    assert without != with_source
+
+
+def test_the_recipe_hash_sees_an_edited_step_only_with_a_registry(litho, registry) -> None:
+    """The hole M5 closed: `code_version()` does not move when a step is edited.
+
+    Two registries differing in one step's implementation must hash a recipe
+    that *uses* that step differently — and a recipe that does not use it
+    identically, which is what keeps an unused plugin from retiring anything.
+    """
+    edited = ProcessRegistry()
+    for step in registry:
+        if step.step_id == "resist.spin_coat":
+
+            def _thicker(ctx, _original=step.run_function):  # pragma: no cover
+                return _original(ctx)
+
+            step = replace(step, run_function=_thicker)
+        edited.register(step)
+
+    substrate_only = Recipe(litho.grid, litho.steps[:1], litho.recipe_id)
+
+    assert recipe_hash(litho, registry=registry) != recipe_hash(litho, registry=edited)
+    assert recipe_hash(substrate_only, registry=registry) == recipe_hash(
+        substrate_only, registry=edited
+    )
+    # And without a registry the change is invisible — which is exactly why the
+    # cache seam passes one (`replay_cache_for`).
+    assert recipe_hash(litho) == recipe_hash(litho)
+    assert recipe_hash(litho) != recipe_hash(litho, registry=registry)
+
+
+def test_replay_cache_for_keys_on_the_digest(litho, registry, tmp_path) -> None:
+    """The one call a cache site makes, and it carries the registry."""
+    cache = replay_cache_for(tmp_path / "cache", litho, registry=registry)
+
+    assert cache.recipe == recipe_hash(litho, registry=registry)
+    assert cache.recipe != recipe_hash(litho)
+
+
+def test_a_recipe_naming_an_unregistered_step_still_hashes(litho, registry) -> None:
+    """A saved file reopened without its plugin is a display problem, not a failure."""
+    unknown = litho.with_step(RecipeStep("plugin.absent", {"dose": 1.0}))
+
+    assert recipe_hash(unknown, registry=registry)
+    assert recipe_hash(unknown, registry=registry) != recipe_hash(litho, registry=registry)
 
 
 # -- 4. replay: the property ADR-0004 rejected eager fan-out for --------------
