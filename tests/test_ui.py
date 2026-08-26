@@ -275,15 +275,21 @@ def test_the_index_map_is_the_partition_the_canvas_rasterises(lift_off, library)
 
 
 def test_a_session_gates_on_capabilities_with_the_sentence(registry, library) -> None:
-    """v1 could say "step 4 has not run"; v2 says what is missing about the sample."""
+    """v1 could say "step 4 has not run"; v2 says what is missing about the sample.
+
+    Two sentences, in the order an operator meets them: before anything exists,
+    E4's — there is no domain, select a substrate — and after that, the
+    capability the step actually wants.
+    """
     session = Session(registry=registry, library=library)
 
     assert session.capabilities == frozenset()
-    assert "resist.exposed" in (session.blocked_reason("develop.ideal") or "")
-    assert "develop.ideal" not in session.runnable_steps()
-    assert "substrate.select" in session.runnable_steps()
+    assert "substrate" in (session.blocked_reason("develop.ideal") or "")
+    assert session.runnable_steps() == ("substrate.select",)
 
     session.run("substrate.select", {"material": SILICON, "surface": 40.0})
+    assert "resist.exposed" in (session.blocked_reason("develop.ideal") or "")
+    assert "develop.ideal" not in session.runnable_steps()
     session.run("resist.spin_coat", {"material": RESIST, "thickness": 90.0})
 
     assert session.blocked_reason("develop.ideal") is not None

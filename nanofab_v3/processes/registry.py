@@ -214,7 +214,10 @@ class ProcessRegistry:
         """The steps whose `requires` the given capabilities satisfy (plan §5.3)."""
         available = set(capabilities)
         return tuple(
-            step for step in self.steps.values() if not capability.unmet(step.requires(), available)
+            step
+            for step in self.steps.values()
+            if self._domain_reason(step, available) is None
+            and not capability.unmet(step.requires(), available)
         )
 
     def blocked_reason(self, step_id: str, capabilities: Iterable[str]) -> str | None:
@@ -224,10 +227,33 @@ class ProcessRegistry:
         has not run yet"; this says what is missing about the *sample*, which is
         the thing the operator can act on.
         """
-        missing = capability.unmet(self[step_id].requires(), set(capabilities))
+        step = self[step_id]
+        available = set(capabilities)
+        domain = self._domain_reason(step, available)
+        if domain is not None:
+            return domain
+        missing = capability.unmet(step.requires(), available)
         if not missing:
             return None
         return f"{step_id} needs {', '.join(missing)}, which this revision does not provide"
+
+    @staticmethod
+    def _domain_reason(step: ProcessStep, available: set[str]) -> str | None:
+        """Roadmap E4: nothing but a domain-making step may be the first one.
+
+        Deliberately here and not in the engine. Before the first step there is no
+        `Grid` and no geometry, so an etch would run on nothing and *succeed*,
+        producing an empty revision — a silent no-op where somebody wanted a
+        result. E4 asks for that to be a greyed-out entry with a sentence rather
+        than a new rule inside the solver, and this is where the step list reads
+        its sentences from.
+        """
+        if capability.DOMAIN in available or capability.DOMAIN in step.provides():
+            return None
+        return (
+            f"{step.step_id} needs a domain to work in, and there is none yet — "
+            "selecting a substrate is always the first step"
+        )
 
     def digest(self, step_id: str) -> str:
         """This step's `implementation_digest`, computed once per registry.

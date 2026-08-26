@@ -50,12 +50,18 @@ It stays deterministic, which ADR-0004 requires of everything here: the resize i
 a pure function of the input structure and the policy, the retry is a pure
 function of the outcome, and the RNG is re-seeded identically from (recipe,
 position, index) on every attempt.
+
+**And a seventh: the substrate can be etched through** (roadmap E7). That check
+reads `Structure.metadata`, which is a `processes`-layer convention — the kernel
+gate knows about geometry and invariants and has no business knowing what
+`substrate.thickness` means. So the verdict is added to the gate's report here,
+by the same argument the other two use: one place, every step, plugins included.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -76,6 +82,7 @@ from nanofab_v3.processes.contract import (
     StepContext,
     validate_params,
 )
+from nanofab_v3.processes.substrate import through_etched
 from nanofab_v3.model import capability
 
 
@@ -213,17 +220,21 @@ def run_step(
         library, outcome.structure.materials, seen_in=step.step_id
     )
     unknown.warn()
+    report = outcome.report
+    breach = through_etched(outcome.structure)
+    if breach is not None:
+        report = dataclass_replace(report, failures=report.failures + (breach,))
     return StepOutcome(
         step_id=step.step_id,
         structure=outcome.structure,
-        report=outcome.report,
+        report=report,
         lineage=outcome.lineage,
         capabilities=outcome.capabilities,
         measurements=result.measurements,
         artifacts=tuple(result.artifacts),
         logs=(
             tuple(result.logs)
-            + outcome.report.describe()
+            + report.describe()
             + unknown.describe()
             + change.describe(outcome.structure.grid)
         ),

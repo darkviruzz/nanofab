@@ -209,16 +209,47 @@ def test_a_free_form_capability_is_carried_through_and_can_be_retired(
 
 
 def test_the_registry_gates_on_capabilities_with_a_reason(library: MaterialLibrary) -> None:
-    """Plan §5.3: "exactly like today's gating UI, with better reasons"."""
-    registry = builtin_registry()
+    """Plan §5.3: "exactly like today's gating UI, with better reasons".
 
-    reason = registry.blocked_reason("develop.ideal", {capability.of_material(RESIST)})
+    The capability sets here are synthetic, so they have to include `domain` —
+    which in a real chain is derived from the structure and is present the moment
+    anything has geometry (roadmap E4). Without it the answer would be E4's
+    sentence rather than this one, which the test below asserts on its own.
+    """
+    registry = builtin_registry()
+    on_a_sample = {capability.DOMAIN, capability.of_material(RESIST)}
+
+    reason = registry.blocked_reason("develop.ideal", on_a_sample)
 
     assert reason is not None and "resist.exposed" in reason
-    assert registry.blocked_reason("develop.ideal", {capability.of_field(RESIST, "exposed")}) is None
-    runnable = {step.step_id for step in registry.runnable({capability.of_material(RESIST)})}
+    assert (
+        registry.blocked_reason(
+            "develop.ideal", {capability.DOMAIN, capability.of_field(RESIST, "exposed")}
+        )
+        is None
+    )
+    runnable = {step.step_id for step in registry.runnable(on_a_sample)}
     assert "develop.ideal" not in runnable
     assert "deposit.evaporate" in runnable
+
+
+def test_nothing_but_the_substrate_may_be_the_first_step(library: MaterialLibrary) -> None:
+    """Roadmap E4, and the reason it is a *registry* rule rather than a solver one.
+
+    Before the first step there is no `Grid` and no geometry, so an etch would run
+    on nothing and **succeed** — an empty revision where somebody wanted a result.
+    Being told is the whole feature; the solver gains no new rule.
+    """
+    registry = builtin_registry()
+
+    runnable = {step.step_id for step in registry.runnable(frozenset())}
+
+    assert runnable == {"substrate.select"}
+    reason = registry.blocked_reason("etch.wet", frozenset())
+    assert reason is not None and "substrate" in reason
+    assert registry.blocked_reason("substrate.select", frozenset()) is None
+    # ... and one material is enough to lift it, whatever put it there.
+    assert registry.blocked_reason("etch.wet", {capability.DOMAIN}) is None
 
 
 def test_the_two_development_tiers_gate_on_different_fields() -> None:
@@ -377,7 +408,10 @@ def test_a_chain_threads_capabilities_from_step_to_step(library: MaterialLibrary
         library=library,
     )
 
-    assert outcomes[0].capabilities == {capability.of_material(SILICON)}
+    # `domain` joins the structural set from M7 on: a structure with geometry in
+    # it *has* a domain, so it is derived like `material:<id>` rather than
+    # declared (roadmap E4).
+    assert outcomes[0].capabilities == {capability.of_material(SILICON), capability.DOMAIN}
     assert capability.of_material(RESIST) in outcomes[1].capabilities
     assert capability.of_field(RESIST, "exposed") in outcomes[2].capabilities
     assert registry.blocked_reason("develop.ideal", outcomes[2].capabilities) is None

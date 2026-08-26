@@ -8,12 +8,13 @@ capabilities*, so two lithography tiers that write different fields
 (`resist.exposed` vs `resist.dose`) gate their matching development without
 either knowing the other exists.
 
-Two of the three forms a capability name can take are **structural**: they are
+Three of the four forms a capability name can take are **structural**: they are
 statements about the `Structure` itself, and can therefore be checked rather
 than trusted.
 
 - `material:<id>` — that material is present.
 - `<material_id>.<field>` — that material-scoped `Field` is present.
+- `domain` — there is geometry at all (M7, roadmap E4).
 - anything else — a free-form promise the structure cannot back or refute
   (`"chamber_pumped"`, `"stage_aligned"`). Carried through untouched.
 
@@ -48,6 +49,23 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance, typing only
 MATERIAL_PREFIX = "material:"
 """Prefix marking a capability that asserts a material's presence."""
 
+DOMAIN = "domain"
+"""There is a domain with geometry in it — roadmap E4's "substrate first", as a promise.
+
+The third structural form, and the only one that is a single reserved word. It is
+structural rather than free-form because the structure can answer it: a
+`Structure` with any material in it *has* a domain, and one with none does not,
+so it appears and disappears by the same mechanism `material:<id>` does rather
+than by a step remembering to say so.
+
+What it buys is a sentence. Before the first step there is no `Grid` and no
+geometry, so an etch would run on nothing and produce nothing — a silent no-op
+where an operator wanted a result. `ProcessRegistry.blocked_reason` reads this
+and says "select a substrate first" instead, which is E4's *"Registry-/UI-
+Validierung, kein Kernel-Verhalten"*: the step list greys out, the solver is not
+given a new rule to enforce.
+"""
+
 
 def of_material(material: MaterialId) -> str:
     """The capability `"material:<id>"` — that material exists in the structure."""
@@ -67,11 +85,13 @@ def of_field(material: MaterialId, name: str) -> str:
 def is_structural(capability: str) -> bool:
     """Whether the structure itself can decide this capability.
 
-    True for `material:<id>` and for any dotted name, which is read as
-    `<material>.<field>` — see the module docstring: the dot is reserved, so a
-    free-form promise must not contain one.
+    True for `material:<id>`, for `DOMAIN`, and for any dotted name, which is
+    read as `<material>.<field>` — see the module docstring: the dot is reserved,
+    so a free-form promise must not contain one.
     """
-    return capability.startswith(MATERIAL_PREFIX) or "." in capability
+    return (
+        capability == DOMAIN or capability.startswith(MATERIAL_PREFIX) or "." in capability
+    )
 
 
 def backed_by(structure: "Structure", capability: str) -> bool:
@@ -103,6 +123,8 @@ def derived(structure: "Structure") -> frozenset[str]:
         for key in structure.fields
         if key.material is not None
     }
+    if structure.phi:
+        found.add(DOMAIN)
     return frozenset(found)
 
 
