@@ -226,6 +226,17 @@ def _clipped(
     material's surface is nearer than m's own, the union's distance understates
     `phi_m`; that is a value the commit gate's reinitialisation repairs, and the
     sign — which is what makes this a correct set operation — is right either way.
+
+    **M9 tried to narrow this to the cells the union emptied and put it back**
+    (plan §25.3). The narrowing looks obviously right — "no material may stick
+    out of the new union" is a statement about the boundary — and it is wrong,
+    measurably: `max` is also what keeps a material's field *continuous* as the
+    front approaches. Clipping only the emptied cells leaves the cell behind the
+    front at its old value and the cell in front at the union's, and the jump
+    between them is a gradient of five. What made the understatement harmful was
+    never this line; it was that the union itself was not a distance function
+    (§25.2). With a union that is one, what this writes is understated and valid,
+    and understated is what the gate's per-material reinitialisation is for.
     """
     return {material: np.maximum(values, solid) for material, values in originals.items()}
 
@@ -282,7 +293,7 @@ def _assign_deposit(
 def union_front(
     structure: Structure, policy: reinit.ReinitPolicy = reinit.ReinitPolicy()
 ) -> np.ndarray:
-    """The field the front is advected on: `min_m phi[m]`, with seams repaired.
+    """The field the front is advected on: a real distance to the solid's surface.
 
     Where two materials touch, `min_m phi[m]` is exactly zero *along their shared
     interface* — the price of a per-material representation, because each field
@@ -291,16 +302,99 @@ def union_front(
     along a perfectly continuous interface, and the balance check's front
     integral would count it.
 
-    The repair is the reinitialisation the plan already mandates: with a cell at
-    the zero level counting as inside (`stencil.has_opposite_sign_neighbour`),
-    only the real solid/empty interface is held fixed, and the seam relaxes to
-    the distance it should have had. It is run only when a seam is actually
-    there — a single material, or materials that do not touch, need nothing.
+    **The seam is not the whole of it, and that is M9's finding** (plan §25.2).
+    `min_m phi[m]` is not a distance function anywhere *below* such a seam
+    either: it reproduces the lower material's own depth, so a cell 30 nm inside
+    a stack can read −5 because a buried interface passes 5 nm away. Until M9
+    the repair was a narrow-band reinitialisation, which is a five-cell tool
+    pointed at a domain-wide defect: it cannot reach, the kink survives, and
+    every mid-motion reinitialisation marches it a few cells further into the
+    volume. Nineteen passes make a 45-degree wedge — measured, in a real project.
+
+    So the field is **built** rather than repaired, in one pass over the domain:
+
+    1. the cells straddling the true solid/empty interface keep `min_m phi[m]`,
+       which is the sub-cell-exact distance exactly there and nowhere else;
+    2. every other cell takes the Euclidean distance to the nearest such cell,
+       **plus that cell's own sub-cell offset**, signed by which side it is on.
+
+    `distance_transform_edt(..., return_indices=True)` gives both in one call, so
+    the correction costs nothing beyond the transform. The result is a distance
+    function over the whole domain that is *bit-identical to `min_m phi[m]` on the
+    interface itself* — the sub-cell accuracy every measurement in this package
+    depends on is not spent to buy the volume.
+
+    **Only the inside is rebuilt**, and that is not a shortcut — it is where the
+    defect is, exactly. Outside the solid, `min_m phi[m]` is *already* the union
+    distance: every point of a material's boundary is either on the union's
+    surface or strictly inside the solid, and the straight segment from an
+    outside cell to a strictly-inside point has to cross the union surface, so
+    there is always a nearer union point. Rebuilding it anyway costs accuracy
+    rather than buying it — the offset of the nearest interface cell is a
+    first-order approximation, and in a cavity two neighbouring cells can take
+    their offsets from opposite walls. Measured, when M9 first rebuilt the whole
+    domain: `|grad phi| − 1` in the band went from 0.024 to 0.339, an ALD that
+    used to seal a void left ten spurious pockets in it, and the etch-stop demo
+    failed the gate at 0.436. Inside the solid there is nothing to lose — that
+    half of `min_m phi[m]` is wrong to begin with.
+
+    Measured on the reproduction case of plan §25: 30 s of development goes from
+    a gate failure at `band |grad(phi)| − 1 = 0.353` to a pass at 0.117, the
+    error stops tracking the number of reinitialisation passes, and the interface
+    is unmoved to the last bit.
     """
-    solid = structure.solid_phi.copy()
+    solid = np.asarray(structure.solid_phi)
     if len(structure.materials) < 2 or not _has_buried_seam(structure.grid, solid):
-        return solid
-    return reinit.reinitialise(structure.grid, solid, policy).phi
+        return solid.copy()
+    inside = structure.solid_mask
+    return np.where(inside, seeded_distance(structure.grid, solid, inside), solid)
+
+
+def seeded_distance(grid: Grid, phi: np.ndarray, solid: np.ndarray) -> np.ndarray:
+    """A signed distance over the whole domain, seeded from a sub-cell interface.
+
+    `regions.signed_distance_of` answers the same question from a *mask* and is
+    therefore cell-quantised — half a cell of error at the surface, which is
+    exactly where this package refuses to lose accuracy (§17.2, §20.4). This one
+    takes the offset the field already carries at the interface and propagates it
+    with the transform, so the surface keeps its sub-cell position and the volume
+    gets a valid distance.
+
+    The approximation, stated because it is one: the offset of the *nearest*
+    interface cell is used, which is exact where the surface is locally planar and
+    within a fraction of a cell where it curves. That is the same assumption every
+    reinitialisation makes, arrived at in one pass instead of by relaxation.
+    """
+    front = interface_cells(np.asarray(solid, dtype=bool))
+    if not front.any():
+        return np.asarray(phi).copy()
+    distance, indices = ndimage.distance_transform_edt(
+        ~front, sampling=grid.spacing, return_indices=True
+    )
+    offset = np.asarray(phi)[tuple(indices)]
+    signed = np.where(solid, -distance, distance)
+    return (signed + offset).astype(PHI_DTYPE)
+
+
+def interface_cells(solid: np.ndarray) -> np.ndarray:
+    """The cells straddling the solid/empty interface — both sides of it.
+
+    A face neighbourhood, so a diagonal touch is not an interface; both sides,
+    because the seed of a signed distance has to carry the sign.
+
+    **A domain face is not an interface** (plan §25.4). `border_value=1` in each
+    erosion says "outside this face, the array continues as it is here", so solid
+    cut by a wall is not flagged and neither is empty space running off the edge.
+    That is the same statement `predicates.open_faces` makes about reachability —
+    a wall is where the model stops, not where the material does — and making it
+    here is what M9 needed instead of the ghost cells the roadmap proposed for
+    `kernel.stencil`. Without it, a speck of contamination against the left wall
+    grows a surface it does not have, and the front field then advects it.
+    """
+    face = ndimage.generate_binary_structure(solid.ndim, 1)
+    return (solid & ~ndimage.binary_erosion(solid, face, border_value=1)) | (
+        ~solid & ~ndimage.binary_erosion(~solid, face, border_value=1)
+    )
 
 
 def _has_buried_seam(grid: Grid, solid: np.ndarray) -> bool:
