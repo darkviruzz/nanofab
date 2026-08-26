@@ -18,16 +18,35 @@ reads what is here.
 ## The numbers are didactic, not calibrated
 
 Plan §1's fidelity tier (a), and backlog B7 spells out what would have to happen
-for that to change. The eight entries this directory started with were chosen so
-an acceptance scenario shows its mechanism at a readable scale: what carries the
-physics is their *ratios* — a mask that does not etch, a resist that dissolves
-and a metal that does not, an oxide a wet etchant attacks and silicon it does
-not.
+for that to change. Two provenances live side by side here, and every entry says
+per rate which one a number has:
+
+- **the student process table** (roadmap §3, converted from nm/min to nm/s) —
+  everything under `sputter_etch`, `icp_fluorine`, `rie_chlorine`, `rie_oxygen`,
+  `wet_etch_cr`, `wet_etch_oxide` and `sputter_deposit`;
+- **chosen so an acceptance scenario shows its mechanism at a readable scale** —
+  everything under the older `wet_etch`, `dry_etch`, `ion_beam` and `deposit`
+  classes, and every develop and dissolve model. What carries the physics there
+  is the *ratios*: a mask that does not etch, a resist that dissolves and a metal
+  that does not, an oxide a wet etchant attacks and silicon it does not.
+
+The two never mix under one key. That is why the table's sputter-etch row is
+`sputter_etch` and not `ion_beam`: the didactic `ion_beam` numbers are what S1-S5
+are tuned to, and overwriting them with the table's would have changed what every
+existing scenario means. Same technique, two rate sets, two keys.
+
+`notes` says what an entry as a whole is; `rate_notes` says it per process class,
+and is where an **assumption** is recorded. The table names "silicon oxide" for
+sputter etching and "fused silica" for the plasma chemistries, and both are
+carried here as separate materials; where it is silent about one, that one takes
+the other's value and the note begins with `Assumed` (roadmap §3.1).
 
 A rate that is *absent* is a rate nobody stated: `MaterialType.rate_for` answers
-0.0, which means "this does not move", and that is a deliberate statement
-everywhere it appears — it is how a hard mask behaves without being modelled as
-one.
+0.0, which means "this does not move", and that is a deliberate statement in the
+didactic classes — it is how a hard mask behaves without being modelled as one.
+Under a chemistry class it means the table has no row for that pair; `titania` has
+none at all, and says so in its `notes` rather than leaving a reader to guess
+whether TiO2 is inert.
 
 ## Adding one
 

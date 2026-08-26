@@ -61,7 +61,79 @@ DEVELOP = "develop"
 DISSOLVE = "dissolve"
 """Removal of a whole material by a solvent — strip, lift-off (see `DissolveModel`)."""
 
-PROCESS_CLASSES = (WET_ETCH, DRY_ETCH, ION_BEAM, DEPOSIT, DEVELOP, DISSOLVE)
+# The classes above are the *character* axis the didactic set of plan §6 is
+# written against, and M6 left every one of their names and numbers alone: S1-S5
+# and the whole test suite hang on them (roadmap §3, "additiv erweitern, nichts
+# umbenennen").
+#
+# What M6 added is a second group, below. These are keyed on a *chemistry* rather
+# than on a character, because that is what the student process table of roadmap
+# §3 measures: the same RIE machine etches chromium 25x faster in chlorine than
+# in fluorine, and one `dry_etch` number per material cannot say that. Their
+# numbers come from that table and nowhere else, which is also why they are
+# separate keys — mixing a measured rate and a didactic one under one name would
+# make the library's own provenance unreadable (see `rate_notes`).
+
+SPUTTER_ETCH = "sputter_etch"
+"""Physical sputter etching at the table's rates (roadmap §3 row 1).
+
+Not a rename of `ION_BEAM` and not a replacement for it: the two are the same
+*technique* at two sets of numbers, which is plan §5.4's "several processes may
+model the same technique" applied to the rate table rather than to the step.
+`ION_BEAM` carries the didactic ratios S1-S5 are tuned to; this carries the
+table's.
+"""
+
+ICP_FLUORINE = "icp_fluorine"
+"""ICP etching in fluorine chemistry — the table's row 2, and *directional*.
+
+The direction is not in this number. The table distinguishes "horizontal =
+vertical" from "vertical", and a rate here is a scalar by construction — "the
+rate at which an open, normal-facing surface moves" (`rate_for` below) — so what
+makes this one vertical is the narrow angular distribution the step gives the
+flux model (plan §4.3), never a second rate.
+"""
+
+RIE_CHLORINE = "rie_chlorine"
+"""RIE in chlorine chemistry — the table's row 3, isotropic (horizontal = vertical)."""
+
+RIE_OXYGEN = "rie_oxygen"
+"""RIE in oxygen — the table's row 4, isotropic. A resist strip: it attacks polymer."""
+
+WET_ETCH_CR = "wet_etch_cr"
+"""Chromium etchant (ceric ammonium nitrate) — the table's row 5, isotropic.
+
+Separate from `WET_ETCH` for the reason the whole second group exists: a bath is
+selective, and "the wet etch rate of chromium" is meaningless without naming the
+bath. The table gives two baths, so there are two keys.
+"""
+
+WET_ETCH_OXIDE = "wet_etch_oxide"
+"""Buffered oxide etch — the table's row 6, isotropic. Attacks SiO2 and, slowly, resist."""
+
+SPUTTER_DEPOSIT = "sputter_deposit"
+"""Sputter deposition at the table's rates — rows 7-9, one per target material.
+
+A deposition rate sits on the material being *deposited* (it is a property of the
+source), where an etch rate sits on the material being attacked. Both are the
+same mapping, which is why the table needed no change to the schema.
+"""
+
+PROCESS_CLASSES = (
+    WET_ETCH,
+    DRY_ETCH,
+    ION_BEAM,
+    DEPOSIT,
+    DEVELOP,
+    DISSOLVE,
+    SPUTTER_ETCH,
+    ICP_FLUORINE,
+    RIE_CHLORINE,
+    RIE_OXYGEN,
+    WET_ETCH_CR,
+    WET_ETCH_OXIDE,
+    SPUTTER_DEPOSIT,
+)
 """Every rate key a `MaterialType` understands, for validation and for the UI."""
 
 
@@ -226,6 +298,19 @@ class MaterialType:
             term needs (plan §6, "Exposure (dose)").
         absorption: Beer-Lambert absorption coefficient in 1/nm for the exposure
             wavelength, when it is known directly rather than through `optical_k`.
+        notes: Where this entry as a whole came from, in one or two sentences —
+            a measured table, a datasheet, or a number chosen so a scenario
+            reads. Free text, never parsed.
+        rate_notes: The same, per process class: `{process_class: why}`. This is
+            where an **assumption** is recorded, and it is a field rather than a
+            comment in the file because a comment is invisible to the program.
+            The student table names "silicon oxide" for sputter etching and
+            "fused silica" for the plasma chemistries, and this library carries
+            both as separate materials; the value each one borrows from the other
+            is marked here, so a UI can say "assumed" next to it and a reader of
+            the file cannot miss it. Keys are validated against
+            `PROCESS_CLASSES`, because a note attached to a misspelt class is a
+            note nobody will ever see.
     """
 
     material_id: MaterialId
@@ -239,6 +324,8 @@ class MaterialType:
     optical_n: float | None = None
     optical_k: float | None = None
     absorption: float = 0.0
+    notes: str = ""
+    rate_notes: Mapping[str, str] = dataclass_field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not str(self.material_id).strip():
@@ -260,6 +347,15 @@ class MaterialType:
                 )
             rates[process_class] = rate
         object.__setattr__(self, "rates", MappingProxyType(rates))
+        notes = {}
+        for process_class, note in dict(self.rate_notes).items():
+            if process_class not in PROCESS_CLASSES:
+                raise ValueError(
+                    f"rate note for unknown process class {process_class!r} on material "
+                    f"{self.material_id!r}; known classes are {PROCESS_CLASSES}"
+                )
+            notes[process_class] = str(note)
+        object.__setattr__(self, "rate_notes", MappingProxyType(notes))
         if not math.isfinite(self.absorption) or self.absorption < 0.0:
             raise ValueError(f"absorption must be non-negative, got {self.absorption}")
 
@@ -270,6 +366,12 @@ class MaterialType:
         if process_class not in PROCESS_CLASSES:
             raise ValueError(f"unknown process class {process_class!r}")
         return float(self.rates.get(process_class, default))
+
+    def rate_note(self, process_class: str) -> str:
+        """Where this material's rate for one class came from; `""` if unrecorded."""
+        if process_class not in PROCESS_CLASSES:
+            raise ValueError(f"unknown process class {process_class!r}")
+        return str(self.rate_notes.get(process_class, ""))
 
     def develop_rate(self, dose: np.ndarray | float) -> np.ndarray:
         """`develop_rate(dose)` in nm/s (plan §3.4), zero without a develop model.

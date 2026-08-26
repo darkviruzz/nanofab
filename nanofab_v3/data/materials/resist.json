@@ -5,8 +5,14 @@
   "display_color": "#e8b84b",
   "rates": {
     "dry_etch": 0.5,
+    "icp_fluorine": 1.0,
     "ion_beam": 1.2,
-    "wet_etch": 0.0
+    "rie_chlorine": 0.1667,
+    "rie_oxygen": 1.6667,
+    "sputter_etch": 0.25,
+    "wet_etch": 0.0,
+    "wet_etch_cr": 0.0,
+    "wet_etch_oxide": 1.6667
   },
   "sputter_response": {
     "rise": 1.5,
@@ -27,5 +33,13 @@
   "density": 1.19,
   "optical_n": 1.51,
   "optical_k": 0.0,
-  "absorption": 0.0015
+  "absorption": 0.0015,
+  "rate_notes": {
+    "icp_fluorine": "Student process table, roadmap §3 row 2 (60 nm/min).",
+    "rie_chlorine": "Student process table, roadmap §3 row 3 (10 nm/min).",
+    "rie_oxygen": "Student process table, roadmap §3 row 4 (100 nm/min).",
+    "sputter_etch": "Student process table, roadmap §3 row 1 (15 nm/min).",
+    "wet_etch_cr": "Student process table, roadmap §3 row 5: this bath attacks chromium only.",
+    "wet_etch_oxide": "Student process table, roadmap §3 row 6 (100 nm/min)."
+  }
 }

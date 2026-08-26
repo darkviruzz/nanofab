@@ -57,7 +57,7 @@ _SUBMODELS: dict[str, Any] = {
 }
 """Fields of `MaterialType` that are themselves dataclasses of scalars."""
 
-_MAPPINGS = ("rates",)
+_MAPPINGS = ("rates", "rate_notes")
 """Fields that are `{key: scalar}` and are written with their keys sorted."""
 
 

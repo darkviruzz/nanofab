@@ -26,17 +26,28 @@ import pytest
 
 from nanofab_v3.materials import (
     ALUMINA,
+    CHROME,
     DEPOSIT,
     DRY_ETCH,
+    FUSED_SILICA,
     HARD_RESIST,
+    ICP_FLUORINE,
     ION_BEAM,
     METAL,
     OXIDE,
     PARTICLE,
+    PROCESS_CLASSES,
     RESIST,
+    RIE_CHLORINE,
+    RIE_OXYGEN,
     SILICON,
+    SPUTTER_DEPOSIT,
+    SPUTTER_ETCH,
+    TITANIA,
     UNDERLAYER,
     WET_ETCH,
+    WET_ETCH_CR,
+    WET_ETCH_OXIDE,
     DevelopModel,
     DissolveModel,
     MaterialFileError,
@@ -149,27 +160,57 @@ _PRE_MIGRATION: tuple[MaterialType, ...] = (
     ),
 )
 
-_M6_ADDITIONS: dict[str, dict] = {}
-"""Every change M6 made to a migrated entry, as `{material: {field: value}}`.
+_M6_RATE_ADDITIONS: dict[str, dict[str, float]] = {
+    "silicon": {
+        SPUTTER_ETCH: 0.2333,
+        ICP_FLUORINE: 0.6667,
+        SPUTTER_DEPOSIT: 0.1667,
+        WET_ETCH_CR: 0.0,
+        WET_ETCH_OXIDE: 0.0,
+    },
+    "oxide": {
+        SPUTTER_ETCH: 0.2,
+        SPUTTER_DEPOSIT: 0.0667,
+        WET_ETCH_OXIDE: 16.6667,
+        WET_ETCH_CR: 0.0,
+        ICP_FLUORINE: 0.8333,
+        RIE_CHLORINE: 0.0,
+        RIE_OXYGEN: 0.0,
+    },
+    "resist": {
+        SPUTTER_ETCH: 0.25,
+        ICP_FLUORINE: 1.0,
+        RIE_CHLORINE: 0.1667,
+        RIE_OXYGEN: 1.6667,
+        WET_ETCH_OXIDE: 1.6667,
+        WET_ETCH_CR: 0.0,
+    },
+}
+"""Every rate M6 added to a *migrated* entry, from the table of roadmap §3.
 
-Empty at the migration commit, by construction: the migration's job was to change
-nothing. Later M6 commits add the student table's rates here as they add them to
-the files, so the diff of this dict is the diff of the library.
+Empty at the migration commit by construction — the migration's job was to change
+nothing — and filled by the commit that entered the student table. So the diff of
+this dict is the diff of the library, and a rate that changes because somebody
+edited a file by hand fails a test naming the material instead of quietly
+changing what a scenario means.
+
+Not the *didactic* classes: no `wet_etch`, `dry_etch`, `ion_beam`, `deposit`,
+`develop` or `dissolve` value moved in M6, which is roadmap §3's "additiv
+erweitern, nichts umbenennen" as an assertion rather than as an intention.
 """
 
 
 def _expected() -> MaterialLibrary:
-    """The eight pre-migration entries, plus exactly the changes M6 declared."""
-    entries = []
-    for entry in _PRE_MIGRATION:
-        changes = _M6_ADDITIONS.get(str(entry.material_id))
-        if changes:
-            merged = dict(changes)
-            if "rates" in merged:
-                merged["rates"] = {**entry.rates, **merged["rates"]}
-            entry = replace(entry, **merged)
-        entries.append(entry)
-    return MaterialLibrary.of(*entries)
+    """The pre-migration entries, plus exactly the rates M6 declared above."""
+    return MaterialLibrary.of(
+        *(
+            replace(
+                entry,
+                rates={**entry.rates, **_M6_RATE_ADDITIONS.get(str(entry.material_id), {})},
+            )
+            for entry in _PRE_MIGRATION
+        )
+    )
 
 
 # -- the migration ------------------------------------------------------------
@@ -187,9 +228,10 @@ def test_the_shipped_library_is_the_pre_migration_one_bit_for_bit() -> None:
     loaded = didactic_library()
     expected = _expected()
 
-    assert sorted(loaded) == sorted(expected)
     for material in expected:
-        assert loaded[material] == expected[material], material
+        # `notes`/`rate_notes` are prose about provenance and are checked by the
+        # tests below; what has to be bit-identical is the model.
+        assert replace(loaded[material], notes="", rate_notes={}) == expected[material], material
 
 
 def test_no_material_is_left_in_the_code() -> None:
@@ -214,7 +256,10 @@ def test_every_id_constant_names_a_material_that_ships() -> None:
     """The one thing that stayed in code is a set of names, so the names are checked."""
     library = didactic_library()
 
-    for material in (SILICON, OXIDE, RESIST, UNDERLAYER, METAL, ALUMINA, PARTICLE, HARD_RESIST):
+    for material in (
+        SILICON, OXIDE, RESIST, UNDERLAYER, METAL, ALUMINA, PARTICLE, HARD_RESIST,
+        CHROME, FUSED_SILICA, TITANIA,
+    ):
         assert material in library, material
 
 
@@ -337,3 +382,152 @@ def test_the_application_library_reads_the_operators_directory_too(
         assert "tungsten" not in didactic_library()  # the shipped set is not affected
     finally:
         store.invalidate_cache()
+
+
+# -- the student process table (roadmap §3) -----------------------------------
+
+_TABLE_CLASSES = (
+    SPUTTER_ETCH,
+    ICP_FLUORINE,
+    RIE_CHLORINE,
+    RIE_OXYGEN,
+    WET_ETCH_CR,
+    WET_ETCH_OXIDE,
+    SPUTTER_DEPOSIT,
+)
+"""The classes M6 added. Every rate under one of these came from the table."""
+
+
+def test_the_table_rows_are_in_the_library_as_the_table_gives_them() -> None:
+    """Roadmap §3, converted from nm/min to nm/s. The numbers, verbatim.
+
+    One assertion per cell the table fills, because the alternative — trusting
+    that a file says what a table says — is exactly the transcription error a
+    didactic tool cannot notice: every rate here is plausible, and a wrong one
+    produces a picture that looks right.
+    """
+    library = didactic_library()
+    expected = {
+        SPUTTER_ETCH: {CHROME: 0.1667, OXIDE: 0.2, SILICON: 0.2333, RESIST: 0.25},
+        ICP_FLUORINE: {CHROME: 0.0333, FUSED_SILICA: 0.8333, SILICON: 0.6667, RESIST: 1.0},
+        RIE_CHLORINE: {CHROME: 0.8333, FUSED_SILICA: 0.0, RESIST: 0.1667},
+        RIE_OXYGEN: {CHROME: 0.0, FUSED_SILICA: 0.0, RESIST: 1.6667},
+        WET_ETCH_CR: {CHROME: 16.6667, OXIDE: 0.0, SILICON: 0.0, RESIST: 0.0},
+        WET_ETCH_OXIDE: {OXIDE: 16.6667, RESIST: 1.6667, CHROME: 0.0, SILICON: 0.0},
+        SPUTTER_DEPOSIT: {OXIDE: 0.0667, SILICON: 0.1667, CHROME: 0.0833},
+    }
+
+    for process_class, rates in expected.items():
+        for material, rate in rates.items():
+            assert library[material].rate_for(process_class) == rate, (material, process_class)
+
+
+def test_a_rate_the_table_did_not_measure_says_so_where_a_reader_will_see_it() -> None:
+    """Roadmap §3.1's instruction: mark the SiO2 cross-assumption, do not take it silently.
+
+    The table names "silicon oxide" for sputter etching and "fused silica" for the
+    plasma chemistries, and this library carries both. Each borrows the other's
+    value where the table is silent — and says so in `rate_notes`, which is a
+    field rather than a comment precisely so the program can repeat it.
+    """
+    library = didactic_library()
+
+    assumed = {
+        (OXIDE, ICP_FLUORINE), (OXIDE, RIE_CHLORINE), (OXIDE, RIE_OXYGEN),
+        (FUSED_SILICA, SPUTTER_ETCH), (FUSED_SILICA, WET_ETCH_OXIDE),
+    }
+    for material, process_class in assumed:
+        note = library[material].rate_note(process_class)
+        assert note.startswith("Assumed"), (material, process_class, note)
+        assert "not measured" in note
+
+    # ... and a rate the table *does* give is not marked as an assumption.
+    assert not library[FUSED_SILICA].rate_note(ICP_FLUORINE).startswith("Assumed")
+    assert not library[OXIDE].rate_note(WET_ETCH_OXIDE).startswith("Assumed")
+
+
+def test_no_rate_in_the_shipped_library_is_without_a_stated_provenance() -> None:
+    """Every number on a chemistry class says where it came from.
+
+    E15's rule one level up: the failure this milestone is about is a value
+    nobody can trace. A rate under one of M6's classes is either the table's, or
+    the table's other SiO2 value, or it should not be there.
+    """
+    library = didactic_library()
+
+    for material in library:
+        entry = library[material]
+        for process_class in _TABLE_CLASSES:
+            if process_class in entry.rates:
+                assert entry.rate_note(process_class), (material, process_class)
+
+
+def test_the_didactic_classes_kept_every_name_and_every_number() -> None:
+    """"Additiv erweitern, nichts umbenennen" (roadmap §3), as a check.
+
+    S1-S5 and the rest of the suite hang on these six keys. The new chemistry
+    classes sit beside them; `ion_beam` in particular is *not* the table's
+    sputter-etch row, which is why `sputter_etch` exists as a thirteenth class.
+    """
+    assert PROCESS_CLASSES[:6] == (WET_ETCH, DRY_ETCH, ION_BEAM, DEPOSIT, "develop", "dissolve")
+
+    library = didactic_library()
+    assert library[SILICON].rate_for(ION_BEAM) == 1.0  # didactic, not the table's 0.2333
+    assert library[SILICON].rate_for(SPUTTER_ETCH) == 0.2333
+    assert library[OXIDE].rate_for(WET_ETCH) == 1.0  # didactic BOE, not the table's 16.6667
+    assert library[OXIDE].rate_for(WET_ETCH_OXIDE) == 16.6667
+
+
+def test_titania_carries_no_table_rate_and_says_that_a_zero_is_not_an_inertness() -> None:
+    """E16 puts TiO2 in the library; the table has no TiO2 row, so nothing is invented.
+
+    Backlog B11's rule about spin curves, applied to rates: a plausible made-up
+    number is worse than an absent one, because only the absent one can be
+    noticed. What keeps it from being a silent zero is the note.
+    """
+    titania = didactic_library()[TITANIA]
+
+    assert not any(process_class in titania.rates for process_class in _TABLE_CLASSES)
+    assert titania.rate_for(ICP_FLUORINE) == 0.0
+    assert "no table-derived rate" in titania.notes and "B12" in titania.notes
+
+
+def test_chromium_is_the_material_the_table_exercises_everywhere() -> None:
+    """The contrasts the table is actually about, as ratios rather than numbers.
+
+    Chromium is the reason the rate table had to be keyed on chemistry at all: one
+    `dry_etch` number per material cannot say that the same machine takes it 25x
+    faster in chlorine than in fluorine.
+    """
+    library = didactic_library()
+    chrome = library[CHROME]
+
+    # `rel` rather than exact: the table is nm/min and the library is nm/s rounded
+    # to four decimals, so 50/2 comes back as 25.02. That rounding is the reason
+    # every ratio here is asserted loosely and every *rate* above is asserted
+    # exactly — the stored number is the fact, the ratio is the reading.
+    assert chrome.rate_for(RIE_CHLORINE) / chrome.rate_for(ICP_FLUORINE) == pytest.approx(
+        25.0, rel=2e-3
+    )
+    assert chrome.rate_for(RIE_OXYGEN) == 0.0  # an oxygen plasma does not touch it
+    # The wet etchant takes chromium exactly 100x faster than the ion beam does —
+    # 1000 against 10 nm/min. That is the didactic contrast of row 5.
+    assert chrome.rate_for(WET_ETCH_CR) / chrome.rate_for(SPUTTER_ETCH) == pytest.approx(
+        100.0, rel=2e-3
+    )
+    # ... and the chromium etchant attacks nothing else the table names.
+    for material in (OXIDE, SILICON, RESIST, FUSED_SILICA):
+        assert library[material].rate_for(WET_ETCH_CR) == 0.0
+
+
+def test_the_oxygen_plasma_is_a_resist_strip_and_the_fluorine_one_is_not() -> None:
+    """The selectivity a student is meant to read off the table, as one assertion."""
+    library = didactic_library()
+
+    assert library[RESIST].rate_for(RIE_OXYGEN) == 1.6667
+    for material in (CHROME, FUSED_SILICA, OXIDE):
+        assert library[material].rate_for(RIE_OXYGEN) == 0.0
+    # Fluorine takes the resist faster than chromium by a factor of 30 — which is
+    # why an ICP etch through a chromium hard mask works and one through resist
+    # does not.
+    assert library[RESIST].rate_for(ICP_FLUORINE) / library[CHROME].rate_for(ICP_FLUORINE) > 25.0

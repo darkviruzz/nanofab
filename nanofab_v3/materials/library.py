@@ -47,8 +47,15 @@ from nanofab_v3.materials.material import (
     DEVELOP,
     DISSOLVE,
     DRY_ETCH,
+    ICP_FLUORINE,
     ION_BEAM,
+    RIE_CHLORINE,
+    RIE_OXYGEN,
+    SPUTTER_DEPOSIT,
+    SPUTTER_ETCH,
     WET_ETCH,
+    WET_ETCH_CR,
+    WET_ETCH_OXIDE,
     MaterialId,
     MaterialType,
 )
@@ -60,6 +67,9 @@ from nanofab_v3.materials.store import (
 )
 
 SILICON = MaterialId("silicon")
+CHROME = MaterialId("chrome")
+FUSED_SILICA = MaterialId("fused_silica")
+TITANIA = MaterialId("titania")
 OXIDE = MaterialId("oxide")
 RESIST = MaterialId("resist")
 UNDERLAYER = MaterialId("underlayer")
@@ -185,6 +195,9 @@ def application_library() -> tuple[MaterialLibrary, LibraryReport]:
 
 __all__ = [
     "ALUMINA",
+    "CHROME",
+    "FUSED_SILICA",
+    "TITANIA",
     "HARD_RESIST",
     "PARTICLE",
     "METAL",
@@ -200,6 +213,13 @@ __all__ = [
     "DEVELOP",
     "DISSOLVE",
     "DRY_ETCH",
+    "ICP_FLUORINE",
     "ION_BEAM",
+    "RIE_CHLORINE",
+    "RIE_OXYGEN",
+    "SPUTTER_DEPOSIT",
+    "SPUTTER_ETCH",
     "WET_ETCH",
+    "WET_ETCH_CR",
+    "WET_ETCH_OXIDE",
 ]

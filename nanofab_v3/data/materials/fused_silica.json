@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "material_id": "fused_silica",
+  "name": "Fused silica",
+  "display_color": "#e6eef5",
+  "rates": {
+    "dry_etch": 1.5,
+    "icp_fluorine": 0.8333,
+    "ion_beam": 0.8,
+    "rie_chlorine": 0.0,
+    "rie_oxygen": 0.0,
+    "sputter_etch": 0.2,
+    "wet_etch": 1.0,
+    "wet_etch_cr": 0.0,
+    "wet_etch_oxide": 16.6667
+  },
+  "sputter_response": {
+    "rise": 1.8,
+    "fall": 1.0
+  },
+  "density": 2.2,
+  "optical_n": 1.46,
+  "optical_k": 0.0,
+  "notes": "Quartz-glass substrate, and a second SiO2 entry on purpose: the student table names 'fused silica' for the plasma chemistries and 'silicon oxide' for sputter etching, so the two are carried separately and each borrows the other's value only where the table is silent (see rate_notes). It has no sputter_deposit rate because sputter-deposited SiO2 is the `oxide` entry — a substrate is not a film. Roadmap E16, §3.1.",
+  "rate_notes": {
+    "dry_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
+    "icp_fluorine": "Student process table, roadmap §3 row 2 (50 nm/min).",
+    "ion_beam": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
+    "rie_chlorine": "Student process table, roadmap §3 row 3 (0 nm/min).",
+    "rie_oxygen": "Student process table, roadmap §3 row 4 (0 nm/min).",
+    "sputter_etch": "Assumed, not measured. The table names silicon oxide for this row and fused silica for the plasma chemistries (roadmap §3.1); this quartz-glass entry takes the silicon-oxide value of row 1.",
+    "wet_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
+    "wet_etch_cr": "Student process table, roadmap §3 row 5: this bath attacks chromium only.",
+    "wet_etch_oxide": "Assumed, not measured. The table names silicon oxide for this row and fused silica for the plasma chemistries (roadmap §3.1); this quartz-glass entry takes the silicon-oxide value of row 6. Row 6's 'everything else zero' is read as covering the materials it names, not as a statement that a buffered oxide etch leaves quartz glass alone."
+  }
+}
