@@ -287,6 +287,7 @@ def builtin_registry() -> ProcessRegistry:
         contamination,
         deposition,
         etching,
+        inspection,
         lithography,
         removal,
         substrate,
@@ -314,6 +315,9 @@ def builtin_registry() -> ProcessRegistry:
         removal.REMOVE_UNSUPPORTED,
         contamination.PARTICLES,
         contamination.CLEAN,
+        inspection.SEM,
+        inspection.PROFILOMETER,
+        inspection.ELLIPSOMETER,
     ):
         registry.register(step)
     return registry

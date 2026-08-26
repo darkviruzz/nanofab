@@ -23,7 +23,10 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+import numpy as np
+
 from nanofab_v3.io.exchange import load_revision, save_revision
+from nanofab_v3.model.artifact import ArtifactRef
 from nanofab_v3.io.manifest import code_version
 from nanofab_v3.runtime.revision import Revision
 
@@ -190,3 +193,72 @@ class _PositionView:
 
     def get(self, index: int) -> Revision | None:
         return self._cache.get(self._position, index)
+
+
+class DirectoryArtifactSink:
+    """An `ArtifactSink` that writes payloads into one directory as `.npy`.
+
+    The filesystem half of `model.artifact`: a step hands over an array, this
+    writes it and hands back the `ArtifactRef` that names it. The `uri` is
+    **relative** to `root`, which is what `ArtifactRef`'s own contract says ("a
+    relative path is relative to the save file") — an absolute path baked into a
+    revision would stop being true the moment the session was moved or reopened
+    somewhere else.
+
+    `.npy` rather than PNG or CSV, deliberately: the payloads the inspection
+    steps produce are arrays (a profilometer trace, a material index map), and
+    `numpy.save` is lossless, self-describing and already a dependency.
+    Rendering one as a picture is a consumer's job, exactly as plan §10 has it
+    for every other array in the model.
+
+    Writing is **idempotent by name**: a replay of the same step at the same
+    position writes the same bytes over the same file, which is what keeps a
+    re-materialized position pointing at something true rather than accumulating
+    a directory of near-duplicates.
+
+    Attributes:
+        root: Where payloads go. Created on first write.
+        prefix: A relative sub-path prepended to every name — normally the
+            position or the chain a sink belongs to, so one directory can serve
+            a whole wafer fan without two positions overwriting each other.
+    """
+
+    SUFFIX = ".npy"
+
+    def __init__(self, root: str | os.PathLike[str], *, prefix: str = "") -> None:
+        self.root = Path(root)
+        self.prefix = prefix.strip("/")
+
+    def path(self, name: str) -> Path:
+        """Where the payload called `name` is (or would be) written."""
+        return self.root / self.relative(name)
+
+    def relative(self, name: str) -> str:
+        """The `uri` a ref to `name` carries — relative to `root`, POSIX-separated."""
+        stem = f"{name}{self.SUFFIX}"
+        return f"{self.prefix}/{stem}" if self.prefix else stem
+
+    def put(
+        self,
+        name: str,
+        payload: np.ndarray,
+        *,
+        kind: str = "table",
+        label: str = "",
+    ) -> ArtifactRef:
+        target = self.path(name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        np.save(target, np.asarray(payload))
+        return ArtifactRef(
+            kind=kind,
+            uri=self.relative(name),
+            label=label or name,
+            media_type="application/x-npy",
+        )
+
+    def read(self, ref: ArtifactRef) -> np.ndarray:
+        """Load back what `ref` points at — the reader a viewer needs."""
+        return np.load(self.root / ref.uri)
+
+    def __repr__(self) -> str:  # pragma: no cover - debug convenience
+        return f"DirectoryArtifactSink({str(self.root)!r}, prefix={self.prefix!r})"

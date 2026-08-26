@@ -34,6 +34,7 @@ import numpy as np
 from nanofab_v3.kernel import gate as commit_gate
 from nanofab_v3.kernel import reinit
 from nanofab_v3.materials import MaterialLibrary, didactic_library
+from nanofab_v3.model.artifact import ArtifactRef, ArtifactSink
 from nanofab_v3.model.occurrence import LineageReport
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.reports import ValidationReport
@@ -70,6 +71,8 @@ class StepOutcome:
         lineage: What happened to each occurrence (plan §3.5).
         capabilities: What the new revision promises (plan §5.3).
         measurements: What the step measured, as `Quantity`.
+        artifacts: What it wrote, as references (docs §4.2.2). Empty unless the
+            caller gave the step somewhere to put one.
         logs: The step's own log lines, followed by the gate's.
     """
 
@@ -79,6 +82,7 @@ class StepOutcome:
     lineage: LineageReport
     capabilities: frozenset[str]
     measurements: Mapping[str, Quantity] = field(default_factory=dict)
+    artifacts: tuple[ArtifactRef, ...] = ()
     logs: tuple[str, ...] = ()
 
     @property
@@ -97,6 +101,7 @@ def run_step(
     recipe_id: str = "recipe",
     position: tuple[float, float] = (0.0, 0.0),
     index: int = 0,
+    artifacts: ArtifactSink | None = None,
     policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
     tolerances: commit_gate.GateTolerances = commit_gate.GateTolerances(),
 ) -> StepOutcome:
@@ -123,6 +128,7 @@ def run_step(
         capabilities=available,
         rng=np.random.default_rng(step_seed(recipe_id, position, index)),
         position=position,
+        artifacts=artifacts,
     )
     result = step.run(context)
     outcome = commit_gate.commit(
@@ -143,6 +149,7 @@ def run_step(
         lineage=outcome.lineage,
         capabilities=outcome.capabilities,
         measurements=result.measurements,
+        artifacts=tuple(result.artifacts),
         logs=tuple(result.logs) + outcome.report.describe(),
     )
 

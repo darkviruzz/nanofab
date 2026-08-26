@@ -20,13 +20,17 @@ import pytest
 
 from nanofab_v3 import FieldKey, Grid, Structure
 from nanofab_v3.io import (
+    DirectoryArtifactSink,
     FileRevisionStore,
     ReplayCache,
     cache_key,
+    load_revision,
     recipe_hash,
     replay_cache_for,
+    save_revision,
 )
 from nanofab_v3.materials import METAL, RESIST, SILICON, didactic_library
+from nanofab_v3.model.artifact import MemoryArtifactSink
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.processes import (
     IDEAL,
@@ -736,3 +740,160 @@ def test_a_run_spills_into_the_cache_it_already_writes(
             run_recipe(graded, registry=registry, library=library)[0].structure.phi_of(SILICON)
         ),
     )
+
+
+# -- 6. the artifact wire (plan §5.1, milestone M5) ---------------------------
+
+
+def test_what_a_step_produced_lands_on_the_revision_that_produced_it(
+    grid, registry, library
+) -> None:
+    """The wire M4 left open on purpose (memory.md 2026-08-26, risk 3).
+
+    `apply_step` took `artifacts` as an argument and no registered step supplied
+    any, so `StepResult.artifacts` reached nothing. The inspection steps are the
+    first producers, and this is the wire closed: sink -> `StepResult` ->
+    `StepOutcome` -> `Revision.artifacts`.
+    """
+    sink = MemoryArtifactSink()
+    wafer = apply_step(
+        registry["substrate.select"],
+        Structure(grid),
+        {"material": SILICON, "surface": 40.0},
+        index=0,
+        parent=None,
+        library=library,
+    )
+
+    looked = apply_step(
+        registry["inspect.sem"],
+        wafer.structure,
+        {"tag": "rev-1"},
+        index=1,
+        parent=0,
+        capabilities=wafer.capabilities,
+        library=library,
+        sink=sink,
+    )
+
+    assert wafer.artifacts == ()
+    (ref,) = looked.artifacts
+    assert ref.uri == "memory:sem-rev-1"
+    assert ref.kind == "image"
+    assert "sem-rev-1" in sink
+    assert looked.measurements["features"].value > 0.0
+
+
+def test_a_caller_can_add_an_artifact_of_its_own_alongside_the_step_s(
+    grid, registry, library
+) -> None:
+    """The pre-M5 argument still works, and the two do not displace each other."""
+    sink = MemoryArtifactSink()
+    external = ArtifactRef("log", "run.log", "Run log")
+    wafer = apply_step(
+        registry["substrate.select"],
+        Structure(grid),
+        {"material": SILICON, "surface": 40.0},
+        index=0,
+        parent=None,
+        library=library,
+    )
+
+    looked = apply_step(
+        registry["inspect.profilometer"],
+        wafer.structure,
+        {},
+        index=1,
+        parent=0,
+        capabilities=wafer.capabilities,
+        library=library,
+        sink=sink,
+        artifacts=[external],
+    )
+
+    assert len(looked.artifacts) == 2
+    assert external in looked.artifacts
+
+
+def test_an_inspection_shares_every_array_with_its_parent(grid, registry, library) -> None:
+    """Plan §20.2's rule doing what an inspection needs it to do.
+
+    An inspection returns the input structure itself, so the gate hands back the
+    parent's arrays for every material and the revision costs nothing but its
+    own record. Measured on a developed stack: 25 ms for the whole commit, and no
+    array copied.
+    """
+    wafer = apply_step(
+        registry["substrate.select"],
+        Structure(grid),
+        {"material": SILICON, "surface": 40.0},
+        index=0,
+        parent=None,
+        library=library,
+    )
+
+    looked = apply_step(
+        registry["inspect.ellipsometer"],
+        wafer.structure,
+        {},
+        index=1,
+        parent=0,
+        capabilities=wafer.capabilities,
+        library=library,
+    )
+
+    assert looked.validation.shared_with_parent == wafer.structure.materials
+    for material in wafer.structure.materials:
+        assert looked.structure.phi_of(material) is wafer.structure.phi_of(material)
+
+
+def test_a_run_hands_its_sink_to_every_position(grid, registry, library, tmp_path) -> None:
+    """A wafer fan writes each position's artifacts where that position's are.
+
+    The sink is per `Run`, and `DirectoryArtifactSink`'s prefix is what keeps two
+    positions from overwriting each other's trace under the same name.
+    """
+    recipe = Recipe(
+        grid,
+        (
+            RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
+            RecipeStep("inspect.profilometer", {"tag": "final"}),
+        ),
+        "inspected",
+    )
+    sink = DirectoryArtifactSink(tmp_path / "artifacts", prefix="centre")
+    run = Run(recipe, registry=registry, library=library, sink=sink)
+
+    chain = run.chain(CENTER)
+    ref = chain[1].artifacts[0]
+
+    assert ref.uri == "centre/profile-final.npy"
+    assert (tmp_path / "artifacts" / ref.uri).exists()
+    assert sink.read(ref).shape[0] == 2  # x and height
+
+
+def test_an_artifact_reference_survives_the_save_load_round_trip(
+    grid, registry, library, tmp_path
+) -> None:
+    """A revision carries where its artifact is, never the artifact (docs §4.2.2)."""
+    sink = DirectoryArtifactSink(tmp_path / "artifacts")
+    recipe = Recipe(
+        grid,
+        (
+            RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
+            RecipeStep("inspect.sem", {"tag": "final"}),
+        ),
+        "inspected",
+    )
+    chain = run_recipe(recipe, registry=registry, library=library, sink=sink)
+    original = chain[1]
+
+    stem = tmp_path / "rev"
+    save_revision(stem, original)
+    loaded = load_revision(stem)
+
+    assert loaded.artifacts == original.artifacts
+    assert loaded.measurements.keys() == original.measurements.keys()
+    # the payload is on disk, not in the file the revision was written to
+    assert (tmp_path / "artifacts" / original.artifacts[0].uri).exists()
+    assert stem.with_suffix(".json").stat().st_size < 8000

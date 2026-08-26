@@ -37,6 +37,7 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from nanofab_v3.materials import MaterialLibrary, didactic_library
+from nanofab_v3.model.artifact import ArtifactSink
 from nanofab_v3.model.structure import Structure
 from nanofab_v3.processes.contract import ProcessStep
 from nanofab_v3.processes.engine import StepOutcome, run_step
@@ -71,6 +72,7 @@ def apply_step(
     library: MaterialLibrary | None = None,
     recipe_id: str = "recipe",
     position: Position = CENTER,
+    sink: ArtifactSink | None = None,
     artifacts: Sequence[ArtifactRef] = (),
     **kwargs: Any,
 ) -> Revision:
@@ -79,6 +81,13 @@ def apply_step(
     `params` must already be resolved for this position (`effective_params`) —
     this function is downstream of plan §8's seam and passes them straight to the
     solver.
+
+    `sink` is where a step may put a heavy output; whatever it produced lands on
+    the revision, joined by anything the caller passed as `artifacts` (an
+    externally produced picture of this revision, say). Until M5 no registered
+    step produced any, so this wire had nothing to carry — see `memory.md`
+    2026-08-26, risk 3, for why it was left until the inspection steps existed to
+    exercise it.
     """
     watch = Stopwatch()
     outcome: StepOutcome = run_step(
@@ -90,6 +99,7 @@ def apply_step(
         recipe_id=recipe_id,
         position=position,
         index=index,
+        artifacts=sink,
         **kwargs,
     )
     history = HistoryEntry(
@@ -106,7 +116,11 @@ def apply_step(
         duration_s=watch.elapsed,
     )
     return Revision.of(
-        outcome, index=index, parent=parent, history=history, artifacts=artifacts
+        outcome,
+        index=index,
+        parent=parent,
+        history=history,
+        artifacts=tuple(outcome.artifacts) + tuple(artifacts),
     )
 
 
@@ -125,6 +139,7 @@ def run_recipe(
     library: MaterialLibrary | None = None,
     position: Position = CENTER,
     store: RevisionStore | None = None,
+    sink: ArtifactSink | None = None,
     resident: int = 3,
     strict: bool = True,
     progress: Progress | None = None,
@@ -143,6 +158,7 @@ def run_recipe(
         library=library or didactic_library(),
         cache=None,
         store=store,
+        sink=sink,
         resident=resident,
         strict=strict,
         progress=progress,
@@ -157,6 +173,7 @@ def materialize(
     library: MaterialLibrary | None = None,
     cache: ReplayStore | None = None,
     store: RevisionStore | None = None,
+    sink: ArtifactSink | None = None,
     resident: int = 3,
     strict: bool = True,
     progress: Progress | None = None,
@@ -175,6 +192,7 @@ def materialize(
         library=library or didactic_library(),
         cache=cache,
         store=store,
+        sink=sink,
         resident=resident,
         strict=strict,
         progress=progress,
@@ -189,6 +207,7 @@ def _materialize(
     library: MaterialLibrary,
     cache: ReplayStore | None,
     store: RevisionStore | None,
+    sink: ArtifactSink | None,
     resident: int,
     strict: bool,
     progress: Progress | None,
@@ -223,6 +242,7 @@ def _materialize(
             library=library,
             recipe_id=recipe.recipe_id,
             position=position,
+            sink=sink,
         )
         if strict and not revision.ok:
             raise StepFailed(
@@ -252,6 +272,7 @@ class Run:
         registry: Where step ids are looked up.
         library: The `MaterialType` library the steps read.
         cache: The persistent replay cache, or `None` to recompute every time.
+        sink: Where a step may put a heavy output, or `None` for nowhere.
         resident: How many revisions each chain keeps in RAM.
     """
 
@@ -262,6 +283,7 @@ class Run:
         registry: ProcessRegistry | None = None,
         library: MaterialLibrary | None = None,
         cache: ReplayStore | None = None,
+        sink: ArtifactSink | None = None,
         positions: Iterable[Sequence[float]] | None = None,
         resident: int = 3,
         strict: bool = True,
@@ -270,6 +292,7 @@ class Run:
         self.registry = registry or builtin_registry()
         self.library = library or didactic_library()
         self.cache = cache
+        self.sink = sink
         self.resident = resident
         self.strict = strict
         self._chains: dict[Position, RevisionChain] = {}
@@ -306,6 +329,7 @@ class Run:
             library=self.library,
             cache=self.cache,
             store=None if self.cache is None else self.cache.for_position(point),
+            sink=self.sink,
             resident=self.resident,
             strict=self.strict,
             progress=progress,

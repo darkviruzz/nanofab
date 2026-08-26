@@ -36,6 +36,7 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 import numpy as np
 
 from nanofab_v3.materials import MaterialLibrary
+from nanofab_v3.model.artifact import ArtifactRef, ArtifactSink
 from nanofab_v3.model.field import FieldSpec
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
@@ -188,6 +189,10 @@ class StepContext:
             makes replay materialization sound (ADR-0004, §5.2).
         position: The wafer position this chain belongs to, in mm; `(0.0, 0.0)`
             is the default "center" of interview decision I2.
+        artifacts: Where a step may put a heavy output, or `None` when there is
+            nowhere (`model.artifact`). A step with no sink emits no
+            `ArtifactRef` and still measures everything it measured — a ref to
+            a file nobody wrote is worse than no ref.
     """
 
     structure: Structure
@@ -198,6 +203,7 @@ class StepContext:
         default_factory=lambda: np.random.default_rng(0)
     )
     position: tuple[float, float] = (0.0, 0.0)
+    artifacts: ArtifactSink | None = None
 
     def __getitem__(self, name: str) -> Any:
         """Shorthand for a validated parameter."""
@@ -229,7 +235,10 @@ class StepResult:
             scoping rule (plan §3.3). Without this a `dose` field reset would
             fall back to 0.0 with a note in the report.
         measurements: What the step measured, as `Quantity` — the API boundary.
-        artifacts: URI references to heavy outputs (docs §4.2.2, unchanged).
+        artifacts: References to heavy outputs (docs §4.2.2, unchanged), normally
+            obtained from `StepContext.artifacts`. `engine.run_step` carries them
+            onto the `StepOutcome` and `runtime.apply_step` onto the `Revision`,
+            so what a step produced is on the revision that produced it.
         logs: Lines for the run log.
     """
 
@@ -239,7 +248,7 @@ class StepResult:
     retires: frozenset[str] = dataclass_field(default_factory=frozenset)
     field_specs: Mapping[str, FieldSpec] = dataclass_field(default_factory=dict)
     measurements: Mapping[str, Quantity] = dataclass_field(default_factory=dict)
-    artifacts: tuple[str, ...] = ()
+    artifacts: tuple[ArtifactRef, ...] = ()
     logs: tuple[str, ...] = ()
 
 

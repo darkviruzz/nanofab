@@ -26,6 +26,7 @@ from nanofab_v3.kernel import occurrences, predicates
 from nanofab_v3.materials import (
     ALUMINA,
     METAL,
+    OXIDE,
     PARTICLE,
     RESIST,
     SILICON,
@@ -34,6 +35,7 @@ from nanofab_v3.materials import (
     didactic_library,
 )
 from nanofab_v3.model import capability
+from nanofab_v3.model.artifact import MemoryArtifactSink
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.processes import (
     IDEAL,
@@ -53,6 +55,7 @@ from nanofab_v3.processes import (
 from nanofab_v3.processes import (
     contamination,
     deposition,
+    inspection,
     lithography,
     removal,
     substrate,
@@ -755,3 +758,137 @@ def test_clean_takes_a_whole_occurrence_and_not_the_cells_it_touched(wafer) -> N
     assert before >= 1
     assert (removed, left) == (before, 0)
     assert PARTICLE not in cleaned.phi
+
+
+# -- 5. inspection (plan §6 row 18, §5.1, milestone M5) -----------------------
+
+
+def test_an_inspection_returns_the_very_same_structure(patterned, library) -> None:
+    """Plan §5.1: "return the input structure unchanged".
+
+    The same object, not an equal one — which is what lets §20.2's sharing rule
+    hand the whole revision its parent's arrays, so an inspection costs no memory
+    and moves no interface. `swept=None` keeps it out of the balance check too,
+    which is the honest answer for a step that swept no front.
+    """
+    for step in (inspection.SEM, inspection.PROFILOMETER, inspection.ELLIPSOMETER):
+        result = step.run(StepContext(structure=patterned, params={
+            spec.name: spec.default for spec in step.parameter_schema()
+        }, library=library))
+        assert result.structure is patterned
+        assert result.swept is None
+        assert result.provides == frozenset()
+
+    outcome = run_step(inspection.SEM, patterned, {}, library=library)
+    assert outcome.ok
+    assert outcome.report.shared_with_parent == patterned.materials
+    for material in patterned.materials:
+        assert outcome.structure.phi_of(material) is patterned.phi_of(material)
+
+
+def test_a_blunt_stylus_under_reports_a_narrow_trench(patterned, library) -> None:
+    """The profilometer's characteristic error, and the reason it is a parameter.
+
+    A tip cannot enter a feature narrower than itself. On an 80 nm window in
+    80 nm of resist an ideal point stylus reads the full step; a 60 nm tip rolls
+    across the mouth and reads a fraction of it. Both are the same surface.
+    """
+    def step_height(radius):
+        outcome = run_step(
+            inspection.PROFILOMETER, patterned, {"stylus_radius": radius}, library=library
+        )
+        return outcome.measurements["step_height"].value
+
+    ideal = step_height(0.0)
+    blunt = step_height(60.0)
+
+    assert ideal == pytest.approx(80.0, abs=1.0)
+    assert blunt < 0.6 * ideal
+    assert blunt > 0.0  # it still sees a dimple
+
+
+def test_the_ellipsometer_reports_the_topmost_film_when_none_is_named(
+    patterned, library
+) -> None:
+    """The one step whose answer comes from the library rather than the geometry."""
+    outcome = run_step(inspection.ELLIPSOMETER, patterned, {}, library=library)
+
+    assert outcome.measurements["thickness"].value == pytest.approx(80.0, abs=1.0)
+    assert outcome.measurements["thickness"].unit == "nm"
+    assert outcome.measurements["n"].value == pytest.approx(1.51)
+    assert 0.0 < outcome.measurements["coverage"].value < 1.0
+
+
+def test_an_ellipsometer_on_a_material_that_is_not_there_measures_zero(
+    wafer, library
+) -> None:
+    """A missing film is a reading of nothing, not an exception."""
+    outcome = run_step(
+        inspection.ELLIPSOMETER, wafer, {"material": str(METAL)}, library=library
+    )
+
+    assert outcome.measurements["thickness"].value == 0.0
+    assert outcome.artifacts == ()
+
+
+def test_the_sem_counts_the_pieces_of_what_it_is_pointed_at(patterned, library) -> None:
+    """A developed window splits the resist in two, and the SEM says two."""
+    resist = run_step(inspection.SEM, patterned, {"material": str(RESIST)}, library=library)
+    stack = run_step(inspection.SEM, patterned, {}, library=library)
+
+    assert resist.measurements["features"].value == 2.0
+    assert stack.measurements["features"].value == 1.0  # the substrate joins them
+
+
+def test_an_inspection_with_no_sink_still_measures_everything(patterned, library) -> None:
+    """`model.artifact`'s honest default: no reference beats a reference to nothing."""
+    outcome = run_step(inspection.PROFILOMETER, patterned, {}, library=library)
+
+    assert outcome.artifacts == ()
+    assert outcome.measurements["step_height"].value > 0.0
+
+
+def test_an_inspection_with_a_sink_produces_a_reference_to_what_it_stored(
+    patterned, library
+) -> None:
+    sink = MemoryArtifactSink()
+
+    outcome = run_step(
+        inspection.SEM, patterned, {"tag": "after-develop"}, library=library, artifacts=sink
+    )
+
+    (ref,) = outcome.artifacts
+    assert ref.kind == "image"
+    assert "sem-after-develop" in sink
+    assert np.array_equal(sink.payloads["sem-after-develop"], patterned.material_index)
+
+
+def test_etch_inspect_etch_inspect_is_four_plain_steps(wafer, library) -> None:
+    """Interview Q6, which the chain has been able to express since M4.
+
+    Two etches with an inspection after each, and the two inspections disagree —
+    which is the whole reason inspection is a step rather than a panel: what was
+    measured is pinned to the revision it was measured on.
+    """
+    registry = builtin_registry()
+    sink = MemoryArtifactSink()
+    coated = deposition.conformal_offset(wafer, OXIDE, thickness=40.0).structure
+
+    outcomes = run_chain(
+        [
+            (registry["etch.wet"], {"duration": 10.0}),
+            (registry["inspect.profilometer"], {"tag": "first"}),
+            (registry["etch.wet"], {"duration": 10.0}),
+            (registry["inspect.profilometer"], {"tag": "second"}),
+        ],
+        coated,
+        library=library,
+        artifacts=sink,
+    )
+
+    assert [outcome.step_id for outcome in outcomes] == [
+        "etch.wet", "inspect.profilometer", "etch.wet", "inspect.profilometer"
+    ]
+    assert len(sink) == 2
+    first, second = outcomes[1].measurements, outcomes[3].measurements
+    assert second["mean_height"].value < first["mean_height"].value

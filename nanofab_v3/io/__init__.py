@@ -33,6 +33,7 @@ from nanofab_v3.io.exchange import (
 )
 from nanofab_v3.io.manifest import SCHEMA_ID, code_version, content_hash
 from nanofab_v3.io.store import (
+    DirectoryArtifactSink,
     FileRevisionStore,
     ReplayCache,
     cache_key,
@@ -42,9 +43,10 @@ from nanofab_v3.io.store import (
 
 __all__ = [
     "CHAIN_MANIFEST",
+    "SCHEMA_ID",
+    "DirectoryArtifactSink",
     "FileRevisionStore",
     "ReplayCache",
-    "SCHEMA_ID",
     "cache_key",
     "code_version",
     "content_hash",

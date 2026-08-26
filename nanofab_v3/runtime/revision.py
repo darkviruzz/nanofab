@@ -45,6 +45,7 @@ from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
 from typing import Any, Iterator, Mapping, Protocol, Sequence
 
+from nanofab_v3.model.artifact import ArtifactRef
 from nanofab_v3.model.occurrence import LineageReport
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.reports import ValidationReport
@@ -54,27 +55,18 @@ from nanofab_v3.processes.engine import StepOutcome
 CENTER = (0.0, 0.0)
 """The default wafer position of interview decision I2, in mm."""
 
-
-@dataclass(frozen=True)
-class ArtifactRef:
-    """A URI reference to a heavy output (docs §4.2.2, carried over unchanged).
-
-    The concept plan §12 keeps: an artifact is a *file* the revision points at,
-    never a payload inside it. A SEM image, a profilometer trace, a mesh handed
-    to an external solver — all of them stay out of the structure, which is what
-    keeps a revision 40 KB on disk.
-
-    Attributes:
-        kind: What sort of output it is — `"image"`, `"table"`, `"mesh"`, `"log"`.
-        uri: Where it lives. A relative path is relative to the save file.
-        label: What to call it in the UI.
-        media_type: MIME type when it is known; `""` when it is not.
-    """
-
-    kind: str
-    uri: str
-    label: str = ""
-    media_type: str = ""
+__all__ = [
+    "CENTER",
+    "ArtifactRef",
+    "HistoryEntry",
+    "MemoryRevisionStore",
+    "Revision",
+    "RevisionChain",
+    "RevisionStore",
+    "RevisionSummary",
+    "Stopwatch",
+    "now_iso",
+]
 
 
 @dataclass(frozen=True)
