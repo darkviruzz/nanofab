@@ -270,6 +270,95 @@ class DissolveModel:
             raise ValueError(f"dissolve rate must be non-negative, got {self.rate}")
 
 
+@dataclass(frozen=True)
+class SpinCurve:
+    """Film thickness over spin speed, as measured points — not a fitted law.
+
+    Roadmap E17 and §3.1. The fourth submodel a `MaterialType` carries, in the
+    same row as `develop`, `dissolve` and `sputter_response`, and here for the
+    same reason E13 puts tone on the resist: **the thickness a resist spins to is
+    a property of the resist**, at a speed the operator picks. It is not a
+    property of the coating step, and it is not a rate — `rates` is keyed by
+    process class and answers nm/s, and this answers nm at an rpm.
+
+    **Interpolated, never fitted.** The classical `d ~ rpm^-1/2` does not carry
+    the measured points: against the five in §3.1 it is +6.3 % at 2000 rpm and
+    **-6.8 %** at 5000, so the error changes sign, and the effective exponent
+    drifts from 0.588 to 0.456 because the curve flattens toward high speeds. A
+    power law would claim 67 nm where 72 nm was measured. So the points are
+    stored and the space between them is interpolated — **linearly in log-log**,
+    which passes exactly through every measured point and gives each segment its
+    own local exponent, which is the quantity §3.1 computed in the first place.
+
+    **Outside the measured range it clamps rather than extrapolating**, and says
+    so (`clamps`). A resist spun at 8000 rpm is outside what anybody measured;
+    returning the 5000 rpm thickness is a statement the step can report, where an
+    extrapolated number would be a fabrication with a plausible face.
+
+    **There is no time axis, deliberately.** The table parameterises only the
+    speed. That is physically reasonable — above some minimum time the thickness
+    saturates — but it is an assumption, so a spin *time* is a documenting field
+    on the step and does not enter the thickness. Backlog B11 has the rest: this
+    curve is the generic `resist`'s, and named resists need their own.
+
+    Attributes:
+        points: `((rpm, nm), ...)`, strictly ascending in rpm. Pairs rather than
+            two parallel lists so a file cannot drift into pairing a speed with
+            the wrong thickness.
+    """
+
+    points: tuple[tuple[float, float], ...] = ()
+
+    def __post_init__(self) -> None:
+        try:
+            points = tuple((float(speed), float(thickness)) for speed, thickness in self.points)
+        except (TypeError, ValueError):
+            raise ValueError(f"a spin curve is a sequence of (rpm, nm) pairs, got {self.points!r}") from None
+        if len(points) < 2:
+            raise ValueError("a spin curve needs at least two measured points")
+        for speed, thickness in points:
+            if not (math.isfinite(speed) and speed > 0.0):
+                raise ValueError(f"spin speed must be a positive finite number, got {speed}")
+            if not (math.isfinite(thickness) and thickness > 0.0):
+                raise ValueError(f"spun thickness must be a positive finite number, got {thickness}")
+        speeds = [speed for speed, _ in points]
+        if speeds != sorted(set(speeds)):
+            raise ValueError(f"spin curve speeds must be strictly ascending, got {speeds}")
+        object.__setattr__(self, "points", points)
+
+    @property
+    def speed_range(self) -> tuple[float, float]:
+        """`(slowest, fastest)` measured speed, in rpm — where the curve is a measurement."""
+        return self.points[0][0], self.points[-1][0]
+
+    def clamps(self, speed: float) -> bool:
+        """Whether `speed` is outside the measured range, so the answer is a clamp."""
+        low, high = self.speed_range
+        return not (low <= float(speed) <= high)
+
+    def thickness(self, speed: float) -> float:
+        """Film thickness in nm at `speed` rpm; clamped outside the measured range.
+
+        Exact at every measured point — checked before any arithmetic runs, so
+        3000 rpm answers the stored 82.0 and not 82.00000000000001. A didactic
+        tool whose quoted measurement comes back with a float tail invites the
+        reader to wonder what else was computed.
+        """
+        low, high = self.speed_range
+        rpm = min(max(float(speed), low), high)
+        for measured, thickness in self.points:
+            if rpm == measured:
+                return thickness
+        for (left, left_thickness), (right, right_thickness) in zip(self.points, self.points[1:]):
+            if left < rpm < right:
+                weight = (math.log(rpm) - math.log(left)) / (math.log(right) - math.log(left))
+                return math.exp(
+                    math.log(left_thickness)
+                    + weight * (math.log(right_thickness) - math.log(left_thickness))
+                )
+        raise AssertionError(f"unreachable: {rpm} is inside {self.speed_range}")  # pragma: no cover
+
+
 # -- the library entry --------------------------------------------------------
 
 
@@ -292,6 +381,9 @@ class MaterialType:
             `None` means the projected area and nothing else.
         develop: `develop_rate(dose)` — present on resists only.
         dissolve: Which solvent removes it, and how fast; `None` = insoluble.
+        spin_curve: Thickness over spin speed, measured (E17); `None` when nobody
+            measured one, which is what makes `resist.spin_coat` ask for a
+            thickness instead of deriving one.
         density: g/cm^3, for later mass balances. Not read by the kernel.
         optical_n / optical_k: Refractive index and extinction coefficient at the
             exposure wavelength. `optical_k` is what a Beer-Lambert dose depth
@@ -320,6 +412,7 @@ class MaterialType:
     sputter_response: SputterResponse | None = None
     develop: DevelopModel | None = None
     dissolve: DissolveModel | None = None
+    spin_curve: SpinCurve | None = None
     density: float | None = None
     optical_n: float | None = None
     optical_k: float | None = None
@@ -385,6 +478,21 @@ class MaterialType:
         if self.develop is None:
             return np.zeros_like(np.asarray(dose, dtype=np.float64))
         return self.develop.rate(dose)
+
+    def spin_thickness(self, speed: float) -> float:
+        """Thickness in nm this material spins to at `speed` rpm (E17).
+
+        Raises rather than guessing when the material has no curve: "how thick
+        does an unmeasured resist spin" has no defensible answer, and a plausible
+        one is the failure E15 and B11 both exist to prevent. The step catches
+        this and says which file would fix it.
+        """
+        if self.spin_curve is None:
+            raise ValueError(
+                f"material {self.material_id!r} has no spin curve, so a spin speed does "
+                "not determine a thickness for it"
+            )
+        return self.spin_curve.thickness(speed)
 
     def dissolves_in(self, solvent: str) -> bool:
         """Whether this material comes apart in the named bath."""

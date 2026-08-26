@@ -15,6 +15,13 @@ what makes the capability contract of §5.3 do real work: `develop.ideal` requir
 `resist.exposed` and `develop.rate` requires `resist.dose`, so a chain that mixes
 tiers is either complete or not runnable, and never silently wrong.
 
+**Where a resist's numbers live** is settled the same way in both directions
+(roadmap E13, E17): on the *material*. The develop step reads tone and clearing
+dose from the resist's `DevelopModel`, and the spin coat reads its thickness from
+the resist's `SpinCurve` at the speed the operator set. Both keep the typed value
+as an **override** rather than removing it, because "I know this resist spins to
+110 nm on our tool" is a legitimate thing to say — what ends is having to say it.
+
 The **exposure patterns** are constructors (plan §4.1): sampled onto the grid
 once, at exposure time, and then forgotten. `windows` and `grating` below return
 signed-distance fields, so an ideal exposure boundary is exact to the constructor
@@ -377,14 +384,57 @@ _PATTERN_PARAMS = (
 )
 
 
+def spun_thickness(library, material: MaterialId, speed: float) -> tuple[float, bool]:
+    """`(nm, was it clamped)` for one material at one spin speed (E17, §3.1).
+
+    The seam between the step and the material's `SpinCurve`, and the place the
+    two failures a spin coat can have get their sentences: a material the library
+    does not know, and a material nobody measured a curve for. Both end in the
+    same instruction — give it one, or type a thickness — because both are the
+    same thing, which is that nothing on record says how thick this spins.
+    """
+    entry = library.get(material)
+    if entry is None:
+        raise ValueError(
+            f"no MaterialType {material!r} in this library, so a spin speed does not "
+            f"determine a thickness; add data/materials/{material}.json, or give this "
+            "step a thickness"
+        )
+    if entry.spin_curve is None:
+        raise ValueError(
+            f"material {material!r} has no spin curve, so a spin speed does not "
+            f"determine a thickness; measure one into data/materials/{material}.json "
+            "(backlog B11), or give this step a thickness"
+        )
+    return entry.spin_thickness(speed), entry.spin_curve.clamps(speed)
+
+
 def _run_spin_coat(ctx: StepContext) -> StepResult:
     material = MaterialId(str(ctx["material"]))
-    structure = spin_coat(ctx.structure, material, thickness=ctx["thickness"])
+    speed = float(ctx["spin_speed"])
+    override = float(ctx["thickness"])
+    notes: list[str] = []
+    if override > 0.0:
+        thickness = override
+        notes.append(f"thickness {thickness:.1f} nm (typed, overriding the spin curve)")
+    else:
+        thickness, clamped = spun_thickness(ctx.library, material, speed)
+        notes.append(f"{thickness:.1f} nm at {speed:.0f} rpm (from the resist's spin curve)")
+        if clamped:
+            low, high = ctx.library[material].spin_curve.speed_range
+            notes.append(
+                f"{speed:.0f} rpm is outside the measured {low:.0f}-{high:.0f} rpm; the "
+                "curve was clamped, not extrapolated"
+            )
+    structure = spin_coat(ctx.structure, material, thickness=thickness)
     return StepResult(
         structure=structure,
         provides=frozenset({capability.of_material(material)}),
-        measurements={"thickness": Quantity(ctx["thickness"], "nm")},
-        logs=(f"spin-coated {ctx['thickness']:.1f} nm of {material}",),
+        measurements={
+            "thickness": Quantity(thickness, "nm"),
+            "spin_speed": Quantity(speed, "rpm"),
+        },
+        logs=(f"spin-coated {material}: " + "; ".join(notes),),
     )
 
 
@@ -467,12 +517,42 @@ SPIN_COAT = FunctionStep(
     schema=(
         _MATERIAL,
         ParamSpec(
+            "spin_speed",
+            float,
+            unit="rpm",
+            default=3000.0,
+            minimum=1.0,
+            maximum=12000.0,
+            description=(
+                "Spin speed. The thickness follows from the resist's own measured spin "
+                "curve; outside the measured range the curve is clamped rather than "
+                "extrapolated, and the run log says so."
+            ),
+        ),
+        ParamSpec(
             "thickness",
             float,
             unit="nm",
-            default=None,
+            default=0.0,
             minimum=0.0,
-            description="Film thickness above the highest topography",
+            description=(
+                "Override: film thickness above the highest topography. 0 means 'derive "
+                "it from spin_speed', which is the normal case — the thickness belongs to "
+                "the resist, not to this step (roadmap E17)."
+            ),
+        ),
+        ParamSpec(
+            "spin_time",
+            float,
+            unit="s",
+            default=30.0,
+            minimum=0.0,
+            description=(
+                "Documented only: it does NOT enter the thickness. The measured curve "
+                "parameterises speed alone, which is physically reasonable above some "
+                "minimum time but is an assumption — so the time is recorded and not "
+                "used, rather than quietly folded into a number (roadmap §3.1)."
+            ),
         ),
     ),
     required=frozenset(),

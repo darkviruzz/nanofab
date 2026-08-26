@@ -9,7 +9,8 @@ ran under.
 
 That is possible at all because of a property the roadmap measured rather than
 assumed (§0): `MaterialType` and every submodel it carries — `SputterResponse`,
-`DevelopModel`, `DissolveModel` — are frozen dataclasses of **scalars only**. No
+`DevelopModel`, `DissolveModel`, and `SpinCurve` since M6 — are frozen dataclasses
+of **scalars only**. No
 callables, no arrays, no state. So the encoding is mechanical and the decoding is
 the dataclass constructor, which is also the validator: an out-of-range number
 fails in `__post_init__` exactly where it would have failed had a human typed it
@@ -44,6 +45,7 @@ from nanofab_v3.materials.material import (
     DissolveModel,
     MaterialId,
     MaterialType,
+    SpinCurve,
     SputterResponse,
 )
 
@@ -54,8 +56,13 @@ _SUBMODELS: dict[str, Any] = {
     "sputter_response": SputterResponse,
     "develop": DevelopModel,
     "dissolve": DissolveModel,
+    "spin_curve": SpinCurve,
 }
-"""Fields of `MaterialType` that are themselves dataclasses of scalars."""
+"""Fields of `MaterialType` that are themselves dataclasses of scalars.
+
+`SpinCurve` needs no special case even though its one field is a tuple of pairs:
+JSON has arrays, the dataclass normalises them back to tuples of floats in
+`__post_init__`, and the round-trip is therefore exact like every other."""
 
 _MAPPINGS = ("rates", "rate_notes")
 """Fields that are `{key: scalar}` and are written with their keys sorted."""

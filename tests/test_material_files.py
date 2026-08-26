@@ -53,6 +53,7 @@ from nanofab_v3.materials import (
     MaterialFileError,
     MaterialLibrary,
     MaterialType,
+    SpinCurve,
     SputterResponse,
     application_library,
     builtin_materials_dir,
@@ -200,13 +201,25 @@ erweitern, nichts umbenennen" as an assertion rather than as an intention.
 """
 
 
+_M6_MODEL_ADDITIONS: dict[str, dict] = {
+    "resist": {
+        "spin_curve": SpinCurve(
+            points=((1000.0, 150.0), (2000.0, 99.8), (3000.0, 82.0), (4000.0, 74.0),
+                    (5000.0, 72.0))
+        )
+    },
+}
+"""Everything else M6 added to a migrated entry — one spin curve (E17, §3.1)."""
+
+
 def _expected() -> MaterialLibrary:
-    """The pre-migration entries, plus exactly the rates M6 declared above."""
+    """The pre-migration entries, plus exactly the changes M6 declared above."""
     return MaterialLibrary.of(
         *(
             replace(
                 entry,
                 rates={**entry.rates, **_M6_RATE_ADDITIONS.get(str(entry.material_id), {})},
+                **_M6_MODEL_ADDITIONS.get(str(entry.material_id), {}),
             )
             for entry in _PRE_MIGRATION
         )

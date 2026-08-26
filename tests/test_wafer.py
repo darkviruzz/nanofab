@@ -174,9 +174,13 @@ def test_one_position_failing_costs_only_its_own_result(graded, registry, librar
     the harshest version of the case; the default fan uses `strict=False` and a
     broken invariant becomes a marked revision instead.
     """
+    # An out-of-range spin speed rather than a missing thickness: since M6 the
+    # spin coat derives its thickness from the resist's curve, so leaving it out
+    # is the *normal* call and no longer breaks anything (roadmap E17).
     broken = Recipe(
         graded.grid,
-        graded.steps + (RecipeStep("resist.spin_coat", {"material": RESIST}),),
+        graded.steps
+        + (RecipeStep("resist.spin_coat", {"material": RESIST, "spin_speed": -1.0}),),
         "broken",
     )
     fan = WaferFan(

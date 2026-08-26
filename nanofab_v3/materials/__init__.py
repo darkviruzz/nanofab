@@ -51,6 +51,7 @@ from nanofab_v3.materials.material import (
     DissolveModel,
     MaterialId,
     MaterialType,
+    SpinCurve,
     SputterResponse,
 )
 from nanofab_v3.materials.schema import (
@@ -106,6 +107,7 @@ __all__ = [
     "MaterialId",
     "MaterialLibrary",
     "MaterialType",
+    "SpinCurve",
     "SputterResponse",
     "application_library",
     "builtin_materials_dir",
