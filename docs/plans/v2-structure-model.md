@@ -194,7 +194,10 @@ class Revision:
 
 Append-only, exactly like `ProcessEngine.revisions` today. A revision chain belongs
 to one wafer position (§8). The v1 1D layer list is not stored; where the UI wants a
-stack summary, it is **derived** (occurrences ordered by height).
+stack summary, it is **derived** (occurrences ordered by height). *(→ §20.1: this
+`structure` field and §8's lazy replay are two designs, and the one taken is that
+a revision keeps its structure while the **chain** spills what it is not holding;
+→ §20.7: a chain with nowhere to spill to therefore holds everything.)*
 
 ## 4. The kernel
 
@@ -290,7 +293,10 @@ points; → §18.5: what the solver consumes is that array extended into a colla
 
 Every chain step ends in one mandatory pass (the v2 successor of ADR-0001 D8):
 
-1. narrow-band reinitialisation (§4.2) with reported interface displacement,
+1. narrow-band reinitialisation (§4.2) with reported interface displacement
+   (→ §20.2: **per material the step actually moved**; a committed field is not
+   a fixed point of the reinitialisation, so running it on an untouched material
+   inflates it once per step, invisibly),
 2. field-scoping resets on the swept cells (§3.3),
 3. invariants: sign sanity, band `|∇phi| ≈ 1` (→ §18.6), disjoint interiors,
    headroom guard,
@@ -414,7 +420,9 @@ tier c): per revision an `.npz` (the `phi_*` and field arrays, compressed) plus 
 JSON manifest (`schema_id: "structure.v2"`, grid, material ids, capabilities,
 history, content hashes). Artifacts stay URI-referenced files exactly as in docs
 §4.2.2. Forward compatibility via `schema_id` + ignored unknown keys (docs §4.1
-invariant 5 carried over).
+invariant 5 carried over). *(→ §20.3: how well it compresses is a property of
+what is in the arrays — measured, one chain's revisions span 35× to 493×, and a
+`Field` with per-cell entropy does not compress at all.)*
 
 ## 10. Rendering and UI hooks
 
@@ -424,7 +432,12 @@ QImage from the material index map as fast fallback/debug; inspect overlays (nor
 from `∇phi`, front samples, flux/shadow visualisation, predicate highlights) from
 kernel outputs. The `nanofab_manager` shell (step list, gating, params, run log)
 carries over; the cross-section canvas is rewritten against `SceneSnapshot v2`
-(contours + overlays instead of QPainterPaths).
+(contours + overlays instead of QPainterPaths). *(→ §20.4: a blanket layer's
+contour leaves the domain and is not a polygon, so "filled regions from marching
+squares" needs the open pieces stitched to each other along the domain edge; →
+§20.5: the fill rule, not the contour, is where §19.2's phantom zero bites; →
+§20.6: building a scene is 107 ms and painting one is 12, which is where the
+boundary between the two goes.)*
 
 ## 11. Packaging
 
@@ -483,6 +496,9 @@ pytest from M0 (the repo currently has no tests; AGENTS.md validation extends fr
   interactive session usable.
 - **M5 Delivery** — entry-point plugins, PyInstaller monolith, particles/clean,
   anneal, wafer materialization UI (position fan). DoD: packaged exe runs S1–S4.
+  *(The position fan's engine exists as of M4 — `Run` over an extensible position
+  set, `runtime.positions_on_radius`, and a cache keyed per position — so M5's
+  share of it is the view.)*
 
 v1 (`cross_section_general_prototype.py`) stays untouched next to v2 until M3's
 acceptance tests pass, per AGENTS.md §7; then it becomes a `ui_backups/` snapshot.
@@ -498,11 +514,23 @@ saying how to run it and what replaced it. `nanofab_v3/` is now the only activel
 built code base at the repository root, which is the state §10's UI rewrite and
 M4's runtime start from.
 
+**M4 done, 2026-08-26.** `runtime/` and `io/` are no longer placeholders and
+`ui/` is new: `Revision` and the append-only chain (§3.6), the `.npz` + JSON
+exchange format (§9), `Recipe`/`Run` with `effective_params` over wafer positions
+(§8, ADR-0004), replay cached on (recipe hash, position, step, code version), and
+the application — `SceneSnapshot v2`, an interactive `Session`, and the v0.2.0
+shell rewritten with gating on capabilities (§10). **DoD met**: the save / load /
+replay round trip is bit-identical and asserted, and `python -m nanofab_v3.ui`
+runs S1 end to end interactively. 314 tests green; corrections in §20. What M5
+starts from is that plus one deliberate absence — inspection steps, particles,
+clean and anneal are still unregistered (§19's note 11), and they are what the
+artifact plumbing built here exists for.
+
 ## 15. Risks
 
 | Risk | Mitigation |
 |---|---|
-| Reinit drift accumulates over long chains | narrow band + sub-cell fix, displacement reported per commit, balance test in CI |
+| Reinit drift accumulates over long chains | narrow band + sub-cell fix, displacement reported per commit, balance test in CI (→ §20.2: the mitigation had a leak — the gate renormalised materials the step never touched, and the balance check charges that drift to whichever step did move something; the pass is now skipped) |
 | Flux rebuild too slow at fine grids | rebuild-every-K knob, coarse visibility grid; measured fallback path, not a redesign (→ §18.8: measured, the flux is not what dominates) |
 | Corner rounding at ~½ cell disturbs ideal-case didactics | resolution parameter visible + documented; ideal constructors exact for planes; acceptance tolerances set accordingly |
 | Determinism broken by a careless plugin | context-RNG contract + registry lint + cache keyed on code version |
@@ -1027,3 +1055,250 @@ film*, which is exactly why it survives support filtering. The surviving metal i
 that is what the acceptance test asserts (rims ≥ 10 nm above the flat film, at
 both edges), together with the control that shows an evaporation on the same
 stack leaves none.
+
+## 20. Corrections from implementation (M4)
+
+Added 2026-08-26 after M4 was built and measured, in the same form as §17, §18
+and §19: the agreed text above stays as written, and each item here amends one
+statement with the measurement that showed it. Nothing in the *decisions*
+changed — append-only revisions, lazy cached replay, one exchange format,
+capability gating in the UI and a renderer that is a consumer all held. What
+changed is a set of statements about what those objects cost and about what the
+naive version of each one does.
+
+The recurring theme this time: **a number measured on one scene is a statement
+about that scene.** Three of the eight items below are a figure from the M4
+handoff that turned out to be the best case rather than the typical one, and the
+reason is always the same — the object being measured had less variety in it
+than a real revision does. That is the fourth milestone in a row where the
+correction is about *values* rather than about structure, which is the shape
+§17's own summary predicted.
+
+### 20.1 A `Revision` stores its `Structure`; the *chain* is the lazy element
+
+The design decision the M4 handoff (§3) asked to be made first, and the one
+§3.6 and §8 disagree about: §3.6 lists `structure: Structure` as a field, §8
+specifies lazy replay with a cache, and they are not the same design.
+
+Settled as the handoff recommended, and the recommendation survives its own
+numbers being wrong (→ §20.3). A `Revision` holds its `Structure`, exactly as
+§3.6 writes it. `RevisionChain` keeps the recently touched revisions resident,
+spills the rest through a `RevisionStore` and faults them back on demand. The
+expensive thing was never the format — it was holding twenty structures at once,
+and that is a property of the *chain*, so the chain is where the laziness went.
+
+What is always resident is a `RevisionSummary`: index, parent, step id,
+capabilities, whether the gate was happy. A step list, a gating decision and a
+run log read that and never touch a structure, which is what keeps scrubbing a
+long chain cheap. Measured on a six-step chain at the reference grid with
+`resident=1`: building the whole run log and step list faults **zero**
+revisions.
+
+Replay from the substrate stays the fallback for a cache miss and the mechanism
+for a new wafer position, which is what ADR-0004 needs it for.
+
+### 20.2 A committed field is not a fixed point of the reinitialisation
+
+The commit gate reinitialised **every** material on every commit, including the
+ones the step never touched, and handed back a fresh array either way. The
+handoff (§3, second decision) records this as a footprint matter — revisions
+shared no arrays at all. It is also a correctness one, and that half was not
+predicted.
+
+Reinitialising S1's developed resist again and again, at 1 nm: the enclosed
+measure grows by **+0.16, +0.46, +0.79, +1.44, +2.74, +4.49 and +8.00 nm²** over
+1, 2, 3, 5, 10, 20 and 60 passes — monotone, never converging, with the *cell*
+count unchanged throughout and the band gradient error getting worse (0.065 →
+0.245 at 60). A clean half-plane is a bit-exact fixed point and stays one after
+twenty passes; a developed resist is not.
+
+So a chain in which each step moves a different material was quietly inflating
+the ones it did not touch, once per step, and §4.5's balance check could not see
+it: the check compares the solid's measure against the *swept* estimate of the
+step that did move something, so the drift is charged to that step. §15's risk
+row ("reinit drift accumulates over long chains") had a leak its mitigation did
+not cover, because the displacement it reports per commit is attributed to the
+wrong step.
+
+The repair is to skip the pass: `gate.commit` keeps the parent's array for a
+material the step handed back unchanged — identity first, bit-equality second at
+0.011 ms against 3.8 ms for the reinitialisation it replaces — and reports which
+materials on `ValidationReport.shared_with_parent`. `reinit.reinitialise` also
+returns its input array when the sweep was a fixed point, the way the
+no-zero-level path always has.
+
+Measured on S1 at 241×301: consecutive material/revision pairs sharing an object
+**0 → 7 of 9**, distinct `phi` arrays **12 → 5**, `phi` footprint **3.48 →
+1.45 MB**. At the reference grid, **31.19 → 12.99 MB** over six steps, the same
+58 %.
+
+**Sharing is a property of the step, not a promise the gate can make**, and the
+asymmetry is §17.2's clip read in both directions. A deposition grows the union,
+so `max(phi_m, phi_solid_new)` is the identity and every existing material comes
+through untouched. A removal grows the union's *distance*, so the clip raises
+`phi_m` wherever the opened region is now further from any solid than the
+understated value that material carried: measured, a 4 s etch that gives a mask
+a rate of **zero** still changes **1589 of its cells by up to 2.41 nm**. That is
+why the shared set is reported rather than assumed.
+
+### 20.3 The compression ratio belongs to the field's content, not to the format
+
+§9 does not promise a number, but the M4 handoff (§3) does — 5.83 MB raw to
+**0.04 MB** compressed, 137×, on "one revision, 2 materials + 1 field" — and
+uses it to conclude that persistence is a non-issue. The conclusion holds. The
+number is the best case.
+
+`savez_compressed` compresses well because a signed-distance field on a grid is
+piecewise linear and therefore takes very few distinct values. That is a
+property of *signed-distance fields*, and a `Field` is not one. Measured across
+one six-step chain at the reference grid (541×1201 = 649 741 cells):
+
+| revision | raw | on disk | ratio | distinct values |
+|---|---|---|---|---|
+| `substrate.select` | 2.60 MB | **0.005 MB** | 493× | silicon: 541 |
+| `resist.spin_coat` | 5.20 MB | 0.010 MB | 541× | + resist: 321 |
+| `litho.expose_dose` | 7.80 MB | 0.126 MB | 62× | + dose: 9 895 |
+| `develop.ideal` | 8.45 MB | 0.100 MB | 84× | resist: 1 583, dose: 5 113 |
+| `deposit.evaporate` | 11.05 MB | **0.319 MB** | 35× | + metal: 21 162 |
+
+Two things follow. The ratio varies **14×** within one chain, and it tracks the
+number of distinct values rather than the number of arrays: a `dose` field
+written by a real exposure has ~10 000 of them and a `phi` freshly grown by a
+directional deposition has ~21 000, where a clean half-plane has 541. A field
+with per-cell entropy does not compress at all — a synthetic `linspace` dose over
+648 000 cells took the whole revision down to **6×**, which is the honest
+worst case for a format that stores arrays.
+
+The conclusion the handoff drew from its number survives its correction, which is
+why the design above was not revisited: the heaviest *real* revision measured is
+**0.319 MB and 71 ms to save**, against 1.3 s for the cheapest step that produces
+one. Persistence is still a non-issue. What is not safe is quoting 0.04 MB as
+the size of a revision.
+
+### 20.4 A blanket layer's outline is not a polygon
+
+§10 says "filled regions from marching squares over each `phi_m`". Every layer
+that spans the domain — every substrate, every spin coat, every blanket film —
+reaches the lateral faces **by construction**, which is the same sentence §17.5
+uses about the headroom guard. `kernel.contours` says plainly what it does with
+those ("open polylines … do not [repeat their first point]"), and §10 does not
+say what a filler should then do with an open polyline.
+
+Filling each on its own closes it with a straight chord between its own two
+ends. Measured on a silicon/resist stack at 300×240 nm: silicon comes back as
+**one open polyline from (40, 300) to (40, 0)** and the resist as **two**, at 40
+and 130 nm; for a horizontal line the chord makes a polygon of zero area, and
+the substrate and the resist did not appear in the picture at all. Only the
+metal pattern, whose contour is a genuine closed loop, was drawn.
+
+The repair is to stitch the open pieces **to each other** around the domain
+boundary rather than each to itself. Walking counter-clockwise in the drawn frame
+keeps the region on the left, which is the orientation `marching_squares` already
+guarantees, so the boundary run from where one piece leaves the domain to where
+the next comes back is exactly the part of the domain edge that belongs to the
+region; corners passed on the way are inserted. After it, the enclosed areas are
+**12 000 and 27 000 nm²** against cell counts of 12 040 and 26 789 — the contour
+being the sub-cell number and the cell count the quantised one, as §17.1 requires
+for a per-material measure.
+
+`ui.scene.fillable_outlines` is that operation, and it is a **rendering** concern
+rather than a kernel one: it decides how to fill, not where anything is.
+
+### 20.5 The phantom zero reaches a fill rule, not a contour
+
+The M4 handoff's first trap (§4.1) predicts that "`marching_squares` over
+`phi_m` will happily draw a contour along a phantom zero level". Measured, it
+does not, and the reason is worth writing down because it is the one place
+§19.2's defect is harmless: marching squares tests `field < level` **strictly**,
+and a phantom zero is a zero-valued cell with no strictly-inside cell on either
+side, so it produces no sign change and no contour. On the silicon / 60 nm oxide
+/ resist stack — §19.2's own fixture, where `phi_resist` reads exactly 0.0 along
+the buried silicon/oxide interface in **all 301 columns** — the resist still
+contours as 2 loops of 600.0 nm, which is right.
+
+What the trap really is, is a **fill rule** of `phi_m <= 0`: on that same stack
+it claims 301 extra cells for the resist, one full row across the domain, 60 nm
+below its own underside. So regions come from `material_index` — `argmin_m
+phi[m]` masked by the *union's* `solid_mask`, an exclusive partition that cannot
+contain a phantom — and outlines come from the field.
+
+Going the other way, contouring `regions.closed_region`, is correct and
+**cell-quantised by construction** (`regions.signed_distance_of` says so itself),
+and it shows: on S1 after evaporation the metal's outline comes out **687.2 nm**
+against the field's **681.4 nm**. The region path is therefore the fallback, not
+the default.
+
+Both rules are checked rather than trusted, the way the handoff asks: every
+`MaterialShape` carries the occurrence count `kernel.occurrences` derived for the
+same revision, and the test suite asserts that the loop count matches it at every
+revision of S1 — where the resist splits in two, the metal lands in three pieces
+and one survives.
+
+### 20.6 A scene is not a frame; a repaint is
+
+§10 is silent on where the boundary between "build a picture" and "paint it"
+should sit, and the M4 handoff's §5 budget suggests it does not matter much
+(`marching_squares` 21 ms, `material_contours` 28 ms). It does matter, because
+`label_occurrences` is in the same picture and is the expensive half. Measured at
+the reference grid, three materials:
+
+| | |
+|---|---|
+| `SceneSnapshot.build`, no overlays | **107.5 ms** |
+| of which `label_occurrences` | 69.3 ms |
+| of which `marching_squares`, all materials | 41.7 ms |
+| `SceneSnapshot.build`, every overlay | 260.5 ms |
+| canvas repaint from a built scene, 900×600 | **11.9 ms** |
+| the same, index-map path | 12.1 ms |
+
+A scene is built when the revision changes; a repaint happens on every resize,
+every hover and every expose. The 9× separation is what makes that split
+worth having, and it is the reason `CrossSectionCanvas` holds a snapshot rather
+than a `Structure`. Overlays are computed only for the kinds actually asked for,
+which is handoff §4.3's finding applied: a predicate is 3–12 ms, cheap once and
+not cheap per frame.
+
+### 20.7 Eviction without a store is deletion
+
+Found while building, and recorded because the error it produced named the wrong
+thing. `RevisionChain` applied its residency LRU whether or not it had a
+`RevisionStore`, so a four-step run at the default residency of three silently
+dropped revision 0, and asked for it said "this chain has no store to fault it
+from" — which reads as a missing store rather than as a chain that threw a
+revision away.
+
+A residency window is a *memory* policy. A memory policy that loses data is a
+different feature, so a chain without a store now holds everything and ignores
+`resident` entirely.
+
+### 20.8 Measured M4 costs, extending §17.7, §18.8 and §19.6
+
+Reference grid, 540×1200 at 1 nm (the recipe runs at 541×1201).
+
+| | |
+|---|---|
+| save one real revision | 14–71 ms |
+| load one back, content hashes verified | 7.5–34 ms |
+| the same, `verify=False` | 3.0–15 ms |
+| one revision on disk | 0.005–0.319 MB |
+| a six-step chain on disk, whole | **0.50 MB** |
+| a six-step chain's `phi` in RAM, shared | 12.99 MB |
+| the same if nothing were shared | 31.19 MB |
+| S1 solved, six steps | **7.6 s** |
+| the same, replayed from a warm cache | **0.11 s** (68×) |
+| faulting one revision back into a chain | 43 ms |
+| save a six-step session | 200 ms |
+| load it back | 102 ms |
+| `SceneSnapshot.build` / canvas repaint | 107.5 / 11.9 ms |
+
+Verifying content hashes on load costs **2.3–2.5×**, and it is on by default
+anyway: the cache faults structures into a *running* chain, so an unchecked
+corruption becomes a wrong answer rather than an error, and 34 ms against the
+7.6 s solve it replaces is not a trade worth making. §8's "a 20-step replay is
+seconds to ~a minute" holds — six steps solve in 7.6 s, so twenty are ~25 s, and
+a warm replay of the same is under half a second.
+
+**§17.7's conclusion is unchanged through four milestones**: what dominates is
+the upwind stencil over the whole domain, not the flux, not the reachability
+gate, and not persistence. A true narrow-band solver remains the structural fix
+that is deliberately not built.

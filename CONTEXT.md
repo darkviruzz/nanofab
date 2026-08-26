@@ -13,7 +13,7 @@ A snapshot of the physical sample (substrate, layers, artifacts, history) at one
 _Avoid_: "state" alone, "sample" alone (that's `Substrate` — the base material, not the whole snapshot).
 
 **Revision**:
-One version of a `SampleState`, identified by an incrementing `revision` number. Revisions are append-only: a step never mutates its input state, it produces a new one.
+One version of a `SampleState`, identified by an incrementing `revision` number. Revisions are append-only: a step never mutates its input state, it produces a new one. In v2 (`runtime.Revision`) a revision **stores its `Structure`**, and the *chain* is what is lazy — it keeps the recently touched revisions resident and spills the rest. A revision the step left a material alone in shares that material's array with its parent.
 _Avoid_: "version", "update".
 
 **Substrate**:
@@ -31,20 +31,20 @@ _Avoid_: "file", "output" alone.
 ### Process & execution
 
 **Recipe**:
-The ordered sequence of process steps (and their parameter schemas) a run is meant to follow. Currently informal — not a dedicated object, just however the step registry orders the installed `ProcessStepModule`s.
+The ordered sequence of process steps and their parameters a run is meant to follow, over one `Grid`. A dedicated object since M4 (`runtime.Recipe`); a parameter value may be a function over the wafer rather than a number. Its `fingerprint()` is what the replay cache is keyed on, so a changed parameter retires everything downstream of it.
 _Avoid_: "process" alone (too broad), "workflow".
 
 **Run**:
-One execution of a `Recipe` against a concrete sample: the resulting sequence of revisions, artifacts, logs, and outcomes. Currently lives inside `ProcessEngine`, not a standalone `Run` object.
-_Avoid_: "session", "job".
+One `Recipe` over an extensible set of wafer positions, default `{center}`, each position owning an independent revision chain (`runtime.Run`). A position is materialized on first access and adding one later is the ordinary path, not a special case — which is what ADR-0004 rejected eager fan-out to get.
+_Avoid_: "session" (that is one interactive run at one position — `ui.Session`), "job".
 
 **Step** (Process Step):
 One stage of a recipe/run — consumes an input `SampleState`, applies one transformation (e.g. thin-film deposition), and emits an output `SampleState` as a new revision. Implemented as a `ProcessStepModule`.
 _Avoid_: "stage", "operation", "task".
 
 **Gating**:
-The rule that a step stays blocked until its declared prerequisite steps have completed. Implemented via each step's `prerequisites` list plus its status (`Blocked` / `Ready` / ...).
-_Avoid_: "locking", "dependency" alone.
+The rule that a step stays blocked until the sample carries what it needs. v1 gated on step ids (`prerequisites`) and could only say which step had not run; v2 gates on `Capability`, and `registry.blocked_reason` names the missing promise about the sample — the thing an operator can act on.
+_Avoid_: "locking", "dependency" alone, "prerequisites" (v1's step-id form).
 
 **History**:
 The append-only log of `HistoryEntry` records on a `SampleState` — which step, when, with what parameters, produced each revision. Carries the full trail, not just the latest step.
@@ -146,9 +146,13 @@ surface has seen it), "coverage" (that is the deposited result).
 A named promise about sample state that a process requires or provides (e.g. `resist.dose`). Gating runs on capabilities; downgrade adapters may discard information explicitly, upgrades cannot exist. Two name forms are **structural** — `material:<id>` and `<material>.<field>` — and the commit gate re-derives them from the structure itself, so a capability retires when the material or field backing it is gone. The dot is reserved for that second form; a free-form promise must not contain one.
 _Avoid_: "prerequisite" (v1's step-id gating), "dependency".
 
-**Materialization** (ahead of the code until M4):
-Evaluating a Run at one wafer position by deterministic replay with position-resolved parameters; the solver itself stays position-blind.
+**Materialization**:
+Evaluating a Run at one wafer position by deterministic replay with position-resolved parameters; the solver itself stays position-blind. `effective_params(recipe, position, step)` is the seam: a recipe parameter may vary over the wafer up to that call and may not past it, so nothing downstream can tell one position from another. The one place a position legitimately reaches the kernel is the RNG seed, and it arrives as a seed rather than as a coordinate.
 _Avoid_: "sampling" (collides with grid sampling), "instantiation".
+
+**Scene snapshot**:
+Everything a picture of one revision needs — per-material outlines in nm, the material index map, inspect overlays — derived from a `Structure` and holding no Qt. The boundary ADR-0001 exists to draw: anything that decides geometry is on this side of it, and the canvas only maps nm to pixels. Built when the revision changes, not per frame (107 ms against a 12 ms repaint).
+_Avoid_: "scene" alone (that was v1's monolithic `build_scene`), "render state".
 
 **Predicate**:
 A named question asked of one revision's geometry, answered without changing it — reachability, support, enclosed voids, undercut ratio, step coverage. The analysis vocabulary and the didactic payload: the UI renders their results and the acceptance tests assert them. Reachability and support are predicates *and* kernel steps, which is why they are the same functions.
