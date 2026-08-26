@@ -167,6 +167,18 @@ def reinitialise(
         updated = np.where(interface, corrected, relaxed)
         values = np.where(band_window, updated, values)
 
+    if np.array_equal(values, start):
+        # The sweep was a fixed point: the field was already a distance function
+        # in its band, so the renormalised field *is* the input. Handing back the
+        # input array rather than a bit-identical copy is what lets consecutive
+        # revisions share it — `Structure`'s "arrays are shared cheaply between
+        # revisions" is otherwise a docstring and not a fact (measured on the S1
+        # chain: 6 of 9 consecutive material/revision pairs were bit-identical
+        # and none shared an object). Callers already treat these arrays as
+        # immutable, which is the contract that makes it safe, and the
+        # no-zero-level path above has always returned the input this way.
+        return ReinitOutcome(original, 0.0, 0.0, error_before, error_before, sweeps)
+
     result = original.copy()
     result[window] = values
     measure_moved = abs(

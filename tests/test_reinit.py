@@ -23,12 +23,20 @@ def disk_grid() -> Grid:
 
 
 def test_an_exact_field_is_a_fixed_point(disk_grid: Grid) -> None:
-    """Renormalising a field that is already a distance function changes nothing."""
+    """Renormalising a field that is already a distance function changes nothing.
+
+    "Changes nothing" is meant literally, down to the object: a fixed point hands
+    the input array back rather than a bit-identical copy, which is what lets two
+    revisions share the field of a material neither of them moved (plan §3.2's
+    "shared cheaply between revisions"). The no-zero-level path has always
+    returned the input this way; this is the same statement for a field that has
+    an interface and simply does not need moving.
+    """
     plane = ctor.half_space(disk_grid, normal=(0.6, 0.8), point=(0.0, 0.0))
 
     outcome = reinit.reinitialise(disk_grid, plane)
 
-    assert np.array_equal(outcome.phi, plane)
+    assert outcome.phi is plane
     assert outcome.displacement == 0.0
 
 

@@ -59,6 +59,11 @@ class ValidationReport:
             field's default by the scoping rule (plan §3.3).
         capabilities: What the revision promises after the gate's sixth step
             (plan §5.3) — the set the next step's `requires` is gated against.
+        shared_with_parent: Materials whose field this revision took over from
+            its parent unchanged, so the two revisions share the array. Reported
+            rather than inferred: it is what a chain's memory footprint is made
+            of, and "which materials did this step really not touch" is a
+            statement about the step worth reading.
     """
 
     failures: tuple[str, ...] = ()
@@ -71,6 +76,7 @@ class ValidationReport:
     balance: BalanceCheck | None = None
     field_resets: dict[str, int] = field(default_factory=dict)
     capabilities: frozenset[str] = field(default_factory=frozenset)
+    shared_with_parent: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:

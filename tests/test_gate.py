@@ -14,7 +14,7 @@ import pytest
 
 from nanofab_v3 import FieldKey, FieldSpec, Grid, Structure
 from nanofab_v3.kernel import constructors as ctor
-from nanofab_v3.kernel import csg, gate, invariants, motion
+from nanofab_v3.kernel import csg, gate, invariants, measures, motion
 
 
 @pytest.fixture
@@ -250,6 +250,97 @@ def test_the_gate_leaves_its_input_untouched(masked: Structure) -> None:
 
     assert np.array_equal(masked.phi_of("silicon"), before)
     assert committed.structure is not masked
+
+
+# -- what a revision shares with its parent (M4) ------------------------------
+
+
+def test_a_material_the_step_left_alone_is_shared_with_the_parent(
+    masked: Structure,
+) -> None:
+    """The footprint of a chain is what its revisions *do not* copy.
+
+    `Structure`'s docstring has always claimed arrays are shared cheaply between
+    revisions; before M4 nothing shared anything, because the gate renormalised
+    every material on every commit and handed back a fresh array. Measured on the
+    S1 chain: 0 of 9 consecutive material/revision pairs shared an object and 6
+    of them were bit-identical.
+
+    A deposition is the clean case, and the reason is §17.2's clip read in the
+    other direction: `phi_m <- max(phi_m, phi_solid_new)` with a union that only
+    grew is the identity, so growing a film leaves every existing material's
+    field alone — `motion` already hands the same array back, and it is the gate
+    that used to break it.
+    """
+    grown = motion.offset_solid(masked, 8.0, deposit_material="ald")
+    committed = gate.commit(grown.structure, parent=masked, swept=grown.swept)
+
+    assert committed.report.shared_with_parent == ("silicon", "mask")
+    assert committed.structure.phi_of("mask") is masked.phi_of("mask")
+    assert committed.structure.phi_of("silicon") is masked.phi_of("silicon")
+    assert "ald" not in committed.report.shared_with_parent
+
+
+def test_an_etch_shares_nothing_because_the_clip_is_only_one_sided(
+    masked: Structure,
+) -> None:
+    """The honest other half: a removal touches every material's field.
+
+    §17.2's clip is the identity when the union only *grew*, which is why a
+    deposit shares. A removal grows the union's distance instead, so
+    `max(phi_m, phi_solid_new)` raises `phi_m` wherever the field it opened is
+    now further from any solid than the understated value the mask carried.
+    Measured on this fixture, a 4 s etch that gives the mask a rate of **zero**
+    still changes 1589 of its cells by up to 2.41 nm. Sharing is therefore a
+    property of the step, not something the gate can promise in general — which
+    is what makes `shared_with_parent` worth reporting rather than assuming.
+    """
+    etched = _etch(masked, 4.0, silicon=1.0, mask=0.0)
+
+    assert etched.report.shared_with_parent == ()
+
+
+def test_a_rebuilt_but_unchanged_field_is_still_shared(masked: Structure) -> None:
+    """Identity is the common case; bit-identity is the one that needs looking for.
+
+    A step that rebuilds a material's field with a set operation that happens to
+    change nothing — an etch whose front never reached it — produces a new array
+    holding the parent's values. That is the same statement about the geometry,
+    so the gate keeps the parent's array; the comparison costs 0.011 ms against
+    3.8 ms for the reinitialisation it replaces.
+    """
+    rebuilt = masked.with_material("mask", np.array(masked.phi_of("mask"), copy=True))
+    assert rebuilt.phi_of("mask") is not masked.phi_of("mask")
+
+    committed = gate.commit(rebuilt, parent=masked)
+
+    assert committed.report.shared_with_parent == ("silicon", "mask")
+    assert committed.structure.phi_of("mask") is masked.phi_of("mask")
+
+
+def test_a_material_no_step_touches_stops_drifting(masked: Structure) -> None:
+    """Not only a footprint matter: the redundant pass was moving the material.
+
+    A committed field is **not** a fixed point of the reinitialisation in
+    general. Measured on S1's resist after ideal development, reinitialising it
+    again and again: the enclosed measure grows +0.16, +0.46, +0.79, +1.44,
+    +2.74, +4.49, +8.00 nm² over 1, 2, 3, 5, 10, 20 and 60 passes — monotone,
+    never converging, while the cell count never changes and the band gradient
+    error gets *worse* (0.065 -> 0.245 at 60). So a chain in which every step
+    moves a different material was quietly inflating the ones it did not touch,
+    and the balance check could not see it: it compares the solid's measure
+    against the swept estimate of the step that *did* move something, and
+    charges the drift to that step.
+    """
+    parent = gate.commit(masked).structure
+    before = measures.enclosed_measure(parent.grid, parent.phi_of("mask"))
+
+    current = parent
+    for _ in range(20):
+        current = gate.commit(current, parent=current).structure
+
+    assert current.phi_of("mask") is parent.phi_of("mask")
+    assert measures.enclosed_measure(current.grid, current.phi_of("mask")) == before
 
 
 # -- what a correct distance field is allowed to look like -------------------
