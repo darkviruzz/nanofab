@@ -15,6 +15,7 @@ came down to, applied one level up from the canvas.
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -198,6 +199,7 @@ class MainWindow(QMainWindow):
         self.log.append(self.session.log_lines(revision))
         self._refresh_all()
         self._ask_about_unknown_materials()
+        self._offer_to_raise_the_domain_cap(revision)
         if not revision.ok:
             self.statusBar().showMessage(
                 f"#{revision.index} {revision.step_id}: "
@@ -224,6 +226,38 @@ class MainWindow(QMainWindow):
             path = self.session.describe_material(entry)
             self.log.append((f"described {entry.material_id} -> {path}",))
         self._refresh_all()
+
+    def _offer_to_raise_the_domain_cap(self, revision) -> None:
+        """Roadmap E5: at the cap, warn with an estimate and offer to raise it.
+
+        The one place the domain is *not* autonomous, and deliberately: growing
+        and shrinking are decisions the model can make (it knows where the sample
+        is), and spending another gigabyte is a decision only the person paying
+        for it can. So the estimate is shown before the choice, not after — plan
+        §20.3's honest 6x-500x range for disk included, because a single number
+        there would be a fiction.
+        """
+        change = revision.domain
+        if not change.capped:
+            return
+        grid = revision.structure.grid
+        wanted = (grid.shape[0] + change.wanted) * grid.spacing
+        detail = "\n".join(change.describe(grid))
+        answer = QMessageBox.question(
+            self,
+            "The domain is at its cap",
+            f"{detail}\n\nRaise the cap to {wanted / 1000.0:.2f} um for this session?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.session.domain = replace(self.session.domain, cap=wanted)
+        self.log.append(
+            (
+                f"domain cap raised to {wanted / 1000.0:.2f} um — rerun the step to use it",
+            )
+        )
 
     def _on_new(self) -> None:
         self.session.reset()

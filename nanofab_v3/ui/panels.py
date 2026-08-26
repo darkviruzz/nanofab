@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -54,6 +55,7 @@ from PySide6.QtWidgets import (
 )
 
 from nanofab_v3.processes.contract import ParamSpec
+from nanofab_v3.ui import presets
 from nanofab_v3.processes.registry import ProcessRegistry
 from nanofab_v3.runtime.revision import RevisionChain
 
@@ -146,12 +148,28 @@ class StepListPanel(QWidget):
 
 
 class ParameterForm(QWidget):
-    """A typed form generated from a step's `ParamSpec`s (plan §5.1)."""
+    """A typed form generated from a step's `ParamSpec`s (plan §5.1).
+
+    Since M7 it also knows about **presets** (roadmap M7 item 2). A parameter
+    that `ui.presets` has a source for gets a grouped dropdown instead of a text
+    field, and choosing an entry fills in the fields it drives. What makes that
+    bearable rather than annoying is the rule `presets.apply_preset` applies: a
+    field the operator changed **by hand** is theirs and is only overwritten
+    after a question; everything else is filled in silently.
+
+    Which is why this form tracks `touched`. "Differs from the default" is not
+    the same fact — a value that happens to equal what somebody typed is not a
+    value they typed — so every editable widget reports user edits, and
+    programmatic writes are made behind `_applying` so they do not count as one.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._widgets: dict[str, QWidget] = {}
         self._specs: tuple[ParamSpec, ...] = ()
+        self._step_id = ""
+        self._touched: set[str] = set()
+        self._applying = False
         self.title = QLabel("No step selected")
         self.title.setFont(_bold(self.title.font()))
         self.form = QFormLayout()
@@ -166,13 +184,76 @@ class ParameterForm(QWidget):
         """Rebuild the form for one step."""
         self._clear()
         self._specs = tuple(specs)
+        self._step_id = step_id
         self.title.setText(f"{display_name}   ({step_id})")
         for spec in self._specs:
-            widget = _widget_for(spec)
+            options = presets.options_for(step_id, spec.name)
+            widget = _preset_box(options) if options else _widget_for(spec)
             self._widgets[spec.name] = widget
             label = spec.name if not spec.unit else f"{spec.name} [{spec.unit}]"
             widget.setToolTip(spec.description)
             self.form.addRow(QLabel(label), widget)
+            self._watch(spec.name, widget)
+            if options:
+                widget.currentIndexChanged.connect(  # type: ignore[union-attr]
+                    lambda _index, name=spec.name: self._on_preset_chosen(name)
+                )
+
+    # -- presets (roadmap M7 item 2) -----------------------------------------
+
+    def touched(self) -> frozenset[str]:
+        """Parameters the operator edited by hand since this step was selected."""
+        return frozenset(self._touched)
+
+    def _watch(self, name: str, widget: QWidget) -> None:
+        """Mark a parameter touched when a *person* changes it, never a program."""
+
+        def mark(*_args: Any) -> None:
+            if not self._applying:
+                self._touched.add(name)
+
+        if isinstance(widget, QComboBox):
+            widget.activated.connect(mark)  # user-driven; `currentIndexChanged` is not
+        elif isinstance(widget, QCheckBox):
+            widget.clicked.connect(mark)
+        elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            widget.lineEdit().textEdited.connect(mark)
+            widget.valueChanged.connect(mark)
+        elif isinstance(widget, QLineEdit):
+            widget.textEdited.connect(mark)
+
+    def _on_preset_chosen(self, parameter: str) -> None:
+        """Fill in what the chosen preset drives, asking before losing any typing."""
+        widget = self._widgets[parameter]
+        key = widget.currentData()  # type: ignore[union-attr]
+        options = {option.key: option for option in presets.options_for(self._step_id, parameter)}
+        option = options.get(key)
+        if option is None:
+            return
+        plan = presets.apply_preset(option, self.values(), self._touched)
+        agreed: list[str] = []
+        if plan.needs_asking:
+            answer = QMessageBox.question(
+                self,
+                "Overwrite what you changed?",
+                f"{option.label}\n\n"
+                + "\n".join(plan.describe())
+                + "\n\nTake the preset's values for these?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                agreed = list(plan.conflicts)
+        self.apply_values(plan.resolved(agreed))
+
+    def apply_values(self, values: Mapping[str, Any]) -> None:
+        """Write values without marking them as the operator's own typing."""
+        self._applying = True
+        try:
+            self.set_values(values)
+        finally:
+            self._applying = False
+        self._touched -= set(values)
 
     def values(self) -> dict[str, Any]:
         """What the form currently says, ready for `validate_params`.
@@ -185,7 +266,10 @@ class ParameterForm(QWidget):
         for spec in self._specs:
             widget = self._widgets[spec.name]
             if isinstance(widget, QComboBox):
-                collected[spec.name] = widget.currentText()
+                # A preset box carries the key as data and shows the label; a
+                # `choices` box shows the value itself.
+                data = widget.currentData()
+                collected[spec.name] = widget.currentText() if data is None else str(data)
             elif isinstance(widget, QCheckBox):
                 collected[spec.name] = widget.isChecked()
             elif isinstance(widget, QSpinBox):
@@ -203,7 +287,11 @@ class ParameterForm(QWidget):
             if widget is None:
                 continue
             if isinstance(widget, QComboBox):
-                widget.setCurrentText(str(value))
+                index = widget.findData(str(value))
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+                else:
+                    widget.setCurrentText(str(value))
             elif isinstance(widget, QCheckBox):
                 widget.setChecked(bool(value))
             elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
@@ -220,6 +308,7 @@ class ParameterForm(QWidget):
             self.form.removeRow(0)
         self._widgets.clear()
         self._specs = ()
+        self._touched.clear()
 
 
 def _widget_for(spec: ParamSpec) -> QWidget:
@@ -366,3 +455,24 @@ def _monospace(font: QFont) -> QFont:
     mono.setFamily("monospace")
     mono.setPointSizeF(max(8.0, font.pointSizeF() - 1.0))
     return mono
+
+
+def _preset_box(options: Sequence[presets.PresetOption]) -> QComboBox:
+    """A grouped preset dropdown: sections as disabled headings, keys as data.
+
+    E3's "zweigeteilt und sortiert", rendered. The order is not decided here —
+    `presets.options_for` hands them over already sorted, so the dropdown, a
+    recipe file and a test cannot disagree about which entry is first.
+    """
+    box = QComboBox()
+    box.addItem("(none — use the fields below)", "")
+    for section, entries in presets.grouped(options).items():
+        if section:
+            box.insertSeparator(box.count())
+            box.addItem(section, None)
+            item = box.model().item(box.count() - 1)
+            item.setEnabled(False)
+            item.setFont(_bold(box.font()))
+        for option in entries:
+            box.addItem(option.label, option.key)
+    return box

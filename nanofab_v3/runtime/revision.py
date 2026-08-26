@@ -48,6 +48,7 @@ from typing import Any, Iterator, Mapping, Protocol, Sequence
 from nanofab_v3.model.artifact import ArtifactRef
 from nanofab_v3.model.occurrence import LineageReport
 from nanofab_v3.model.quantity import Quantity
+from nanofab_v3.kernel.domain import DomainChange
 from nanofab_v3.model.reports import ValidationReport
 from nanofab_v3.model.structure import Structure
 from nanofab_v3.processes.engine import StepOutcome
@@ -138,6 +139,10 @@ class Revision:
         lineage: What happened to each occurrence (plan §3.5).
         measurements: What the step measured, as `Quantity` — the API boundary.
         logs: The step's log lines, followed by the gate's.
+        domain: What the domain did around this step (roadmap E5). Carried as a
+            value rather than left in the log text, because `capped` is a
+            *question for the operator* — raise the cap or accept a clipped
+            sample — and a shell should not have to read prose to find it.
     """
 
     index: int
@@ -150,6 +155,7 @@ class Revision:
     lineage: LineageReport = dataclass_field(default_factory=LineageReport)
     measurements: Mapping[str, Quantity] = dataclass_field(default_factory=dict)
     logs: tuple[str, ...] = ()
+    domain: DomainChange = dataclass_field(default_factory=DomainChange)
 
     @property
     def step_id(self) -> str:
@@ -183,6 +189,7 @@ class Revision:
             lineage=outcome.lineage,
             measurements=dict(outcome.measurements),
             logs=tuple(outcome.logs),
+            domain=outcome.domain,
         )
 
     def summary(self) -> "RevisionSummary":
