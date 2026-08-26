@@ -162,6 +162,27 @@ der Wert, den das Preset setzt (E2).
 
 ---
 
+## B11 — Schleuderkurven für die benannten Resiste
+
+**Was:** M6 legt `SpinCurve` an (E17) und füllt sie mit der einen vorliegenden
+Kurve für den generischen `resist` (Roadmap §3.1). Die im Brainstorm genannten
+Presets — FEP171, AZ10XT, EN038 — brauchen je eine eigene Kurve, ebenso eigene
+`DevelopModel`-Werte (Tone, Dose to clear, Kontrast).
+
+**Warum zurückgestellt:** Die Daten liegen nicht vor. Eine Kurve zu erfinden wäre
+schlimmer als keine zu haben: ein Preset namens „AZ10XT", das plausible, aber
+ausgedachte Dicken liefert, ist genau die Art von stillem Fehler, gegen die E15
+antritt.
+
+**Auslöser:** Sobald die Datenblätter oder gemessene Kurven vorliegen. Der
+Aufwand ist dann eine JSON-Datei pro Resist — kein Code (E14).
+
+**Zu beachten:** Die vorliegende Kurve hat keine Zeitachse (Roadmap §3.1,
+offener Punkt 2). Wenn echte Resistdaten kommen, ist zu prüfen, ob die
+Schleuderzeit dort eine Rolle spielt; `SpinCurve` müsste dafür erweitert werden.
+
+---
+
 ## B10 — Lokalisierung tatsächlich ausliefern
 
 **Was:** M8 legt die Übersetzungs-Indirektion an (E10), aber es gibt nur eine

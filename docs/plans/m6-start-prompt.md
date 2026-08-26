@@ -18,8 +18,9 @@ Lies zuerst:
 2. CONTEXT.md
 3. `docs/plans/m6-m9-roadmap.md` — dein eigentlicher Bauplan. Besonders §0
    (gemessener Ist-Zustand — mehrere verbreitete Annahmen darüber sind falsch),
-   §2 (die Entscheidungen E14, E15, E16), §3 (die Prozesstabelle und was sie am
-   Schema erzwingt, mit den umgerechneten Raten) und §4 „M6"
+   §2 (die Entscheidungen E14, E15, E16, E17), §3 (die Prozesstabelle und was sie
+   am Schema erzwingt, mit den umgerechneten Raten) und §3.1 (die Schleuderkurve,
+   die in keine Prozessklasse passt) sowie §4 „M6"
 4. `docs/plans/v2-structure-model.md` §3.3/§3.4 (Materialmodelle), §4.3
    (Flussnormierung — der Grund, warum Raten skalar sind), §17–§21 (Korrekturen
    aus M0–M5, verbindlich)
@@ -60,6 +61,22 @@ Aufgabe — Meilenstein M6 in dieser Reihenfolge:
     das im JSON als Annahme** — nicht stillschweigend.
 - **Steps für die Chemien** aus der Tabelle anlegen, jeweils mit der
   Winkelverteilung aus dem vorigen Punkt. Wafer-Reinigung existiert seit M5.
+- **Die Schleuderkurve** (Roadmap §3.1, E17). Sie ist **keine Rate** und passt in
+  keine Prozessklasse — `rates` liefert nm/s, hier steht eine Dicke über einer
+  Drehzahl. Also ein viertes Untermodell `SpinCurve` an `MaterialType`, in
+  derselben Reihe wie `develop`/`dissolve`/`sputter_response`, skalar und damit
+  JSON-fähig. Die fünf Stützstellen (1000→150, 2000→99.8, 3000→82, 4000→74,
+  5000→72 nm) **interpolieren, nicht fitten**: das klassische `d ∝ rpm^-0.5` ist
+  bei 5000 rpm 6.8 % daneben und mit umgekehrtem Vorzeichen, weil die Kurve
+  abflacht — nachgerechnet in §3.1. Außerhalb 1000–5000 rpm klemmen statt
+  extrapolieren, und das sagen. Der Spin-Coat-Step
+  (`processes/lithography.py:463-481`) bekommt `spin_speed` und leitet
+  `thickness` ab; `thickness` bleibt Override (Muster wie E13s `tone`).
+  Zwei Dinge dabei **nicht erfinden** (§3.1): die Kurve gilt für den generischen
+  `resist`, nicht für FEP171/AZ10XT/EN038 (→ Backlog B11), und die Tabelle kennt
+  **keine** Schleuderzeit — eine Zeit darf dokumentierendes Feld sein, geht aber
+  nicht in die Dicke ein, und das gehört in den Hilfetext statt in eine stille
+  Konvention.
 - **Unbekanntes Material warnt und fragt nach** (E15). Der stille Fallback auf
   Rate 0 endet — er hat in einem echten Projekt dazu geführt, dass ein
   Chrom-Partikel überall Rate 0 hatte, ohne dass irgendetwas es gesagt hätte.
@@ -68,7 +85,8 @@ Aufgabe — Meilenstein M6 in dieser Reihenfolge:
   `data/materials/`.
 
 **DoD:** Die Bibliothek kommt vollständig von Platte, kein Material mehr im Code;
-die 394 Tests bleiben grün; die zehn Tabellenprozesse sind als Steps aufrufbar;
+die 394 Tests bleiben grün; die elf Tabellenprozesse sind als Steps aufrufbar;
+ein Spin-Coat bei 3000 rpm liefert 82 nm, ohne dass jemand eine Dicke eintippt;
 ein unbekanntes Material erzeugt eine sichtbare Warnung statt einer stillen Null.
 
 Validierung: pytest grün, `python -m compileall nanofab_v3 tests` (AGENTS.md §4).

@@ -140,6 +140,14 @@ schreibt sie nach `data/materials/`.
 **E16 — Fehlende Standardmaterialien kommen in die Bibliothek**, nicht in die
 Demos. Chrom und Fused Silica sind zu gängig, um demo-spezifisch zu sein.
 
+**E17 — Die Schleuderkurve trägt das Material, nicht der Step.** Ein neues
+Untermodell `SpinCurve` an `MaterialType`, in derselben Reihe wie `develop`,
+`dissolve` und `sputter_response`. Die Schichtdicke ist eine Eigenschaft des
+Resists bei gegebener Drehzahl, nicht des Beschichtungsschritts — dieselbe
+Begründung wie E13. Der `thickness`-Parameter am Spin-Coat-Step bleibt als
+**Override** erhalten und wird im UI read-only angezeigt, solange er aus der
+Kurve kommt (Muster wie E13s `tone`).
+
 ## 3. Die Prozesstabelle und was sie am Schema erzwingt
 
 Die vorgegebenen Studenten-Werte (10 Prozesse) passen **nicht** in die heutigen
@@ -172,6 +180,48 @@ Winkelverteilung des Flussmodells (`kernel/flux.py:160-280`). Also:
 | 6 | Oxid-Nassätzen | `wet_etch_oxide` *(neu)*, isotrop | oxide 16.6667 · resist 1.6667 · alles andere 0.0 |
 | 7–9 | Sputter-Deposition | `sputter_deposit` *(neu)* | oxide 0.0667 · silicon 0.1667 · chrome 0.0833 |
 | 10 | Wafer cleaning | — | existiert seit M5 (`reachable_occurrences`) |
+| 11 | Spin coating photo resist | keine Rate — `SpinCurve` am Material (E17) | siehe §3.1 |
+
+### 3.1 Die Schleuderkurve (Prozess #11)
+
+Vorgegebene Stützstellen für den Photoresist:
+
+| Drehzahl | 1000 rpm | 2000 rpm | 3000 rpm | 4000 rpm | 5000 rpm |
+|---|---|---|---|---|---|
+| Dicke | 150 nm | 99.8 nm | 82 nm | 74 nm | 72 nm |
+
+**Das ist keine Rate und passt in keine Prozessklasse.** `rates` ist nach
+Prozessklasse geschlüsselt und liefert nm/s; hier steht eine Dicke über einer
+Drehzahl. Daher E17: ein eigenes Untermodell `SpinCurve` an `MaterialType`,
+skalar und damit JSON-fähig wie alles andere (E14).
+
+**Stützstellen interpolieren, keine Formel fitten** — nachgerechnet:
+
+| | 1000 | 2000 | 3000 | 4000 | 5000 |
+|---|---|---|---|---|---|
+| gemessen | 150.0 | 99.8 | 82.0 | 74.0 | 72.0 |
+| `d = k·rpm^-0.5` | 150.0 | 106.1 | 86.6 | 75.0 | 67.1 |
+| Abweichung | 0.0 % | +6.3 % | +5.6 % | +1.4 % | **−6.8 %** |
+
+Das klassische Wurzelgesetz trägt die Punkte nicht: die Abweichung wechselt das
+Vorzeichen, und der effektive Exponent driftet von 0.588 (1000→2000) auf 0.456
+(1000→5000) — die Kurve flacht zu hohen Drehzahlen hin ab. Ein Potenzgesetz
+würde bei 5000 rpm 67 nm behaupten, wo 72 nm gemessen sind. Also die fünf Paare
+ablegen und dazwischen interpolieren; außerhalb 1000–5000 rpm nicht
+extrapolieren, sondern klemmen und das sagen.
+
+**Zwei offene Punkte, die nicht erfunden werden dürfen:**
+
+1. **Welcher Resist?** Die Tabelle sagt nur „photo resist". Die Kurve gilt daher
+   für den generischen `resist` der Bibliothek. Die im ursprünglichen Brainstorm
+   genannten Presets (FEP171, AZ10XT, EN038) brauchen **eigene** Kurven, die noch
+   nicht vorliegen → Backlog B11.
+2. **Die Schleuderzeit fehlt.** Die Tabelle parametrisiert nur die Drehzahl. Das
+   ist physikalisch plausibel — oberhalb einer Mindestzeit läuft die Dicke in die
+   Sättigung —, aber es ist eine Annahme. `SpinCurve` bekommt deshalb keine
+   Zeitachse; der Step darf eine Schleuderzeit als dokumentierendes Feld führen,
+   sie geht aber nicht in die Dicke ein, und **das gehört in den Hilfetext**
+   (E10), nicht in eine stille Konvention.
 
 **Annahme, die zu bestätigen ist:** Die Tabelle nennt bei #1 "silicon oxide", bei
 #2–4 "fused silica". Beide werden als *zwei* Materialien geführt (abgeschiedenes/
@@ -203,11 +253,16 @@ Berührt keinen Kernel, entblockt alles andere, sofort nützlich.
    im JSON markieren.
 4. Neue Prozess-Steps für die Chemien aus der Tabelle, jeweils mit der
    Winkelverteilung aus §3 (isotrop vs. gerichtet).
-5. Unbekanntes-Material-Dialog (E15): Warnung statt stillem Rate-0-Fallback,
+5. `SpinCurve` als viertes Untermodell an `MaterialType` (E17), Stützstellen aus
+   §3.1, Interpolation mit Klemmen an den Rändern. Der Spin-Coat-Step
+   (`processes/lithography.py:463-481`) bekommt `spin_speed` als Eingabe und
+   leitet `thickness` daraus ab; `thickness` bleibt Override.
+6. Unbekanntes-Material-Dialog (E15): Warnung statt stillem Rate-0-Fallback,
    Nachfrage der fehlenden Werte, Schreiben nach `data/materials/`.
 
 **DoD:** Bibliothek kommt vollständig von Platte, kein Material mehr im Code;
-394 Tests weiter grün; die 10 Tabellenprozesse sind als Steps aufrufbar; ein
+394 Tests weiter grün; die 11 Tabellenprozesse sind als Steps aufrufbar; ein
+Spin-Coat bei 3000 rpm liefert 82 nm ohne dass jemand eine Dicke eintippt; ein
 unbekanntes Material erzeugt eine sichtbare Warnung statt einer stillen Null.
 
 ### M7 — Substrat & Domain
