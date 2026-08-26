@@ -395,3 +395,87 @@ def test_metadata_takes_scalars_only_so_the_exchange_format_needs_no_encoder() -
         Structure(grid).with_metadata(bad=np.zeros(3))
     with pytest.raises(ValueError, match="non-empty string"):
         Structure(grid, metadata={"  ": 1.0})
+
+
+# -- the resize and the replay (handoff trap 3) -------------------------------
+
+
+def _growing_recipe(grid):
+    """A recipe whose coat does not fit, so the domain has to move to hold it."""
+    from nanofab_v3.runtime.run import Recipe, RecipeStep
+
+    return Recipe(
+        grid=grid,
+        recipe_id="grows",
+        steps=(
+            RecipeStep("substrate.select", {"material": str(SILICON), "surface": 40.0}),
+            RecipeStep("resist.spin_coat", {"spin_speed": 1000.0}),
+        ),
+    )
+
+
+def test_a_chain_that_resized_replays_to_the_same_sample(library, registry) -> None:
+    """Trap 3 of the handoff: a resize has to stay deterministic or the cache rots.
+
+    Replay is the cache's fallback *and* the mechanism for a new wafer position
+    (ADR-0004), so "run it again and get the same thing" is not a nicety here —
+    a chain that grew its domain differently on the second run would hand a
+    position a different sample than its neighbour.
+    """
+    from nanofab_v3.runtime.replay import run_recipe
+
+    recipe = _growing_recipe(cross_section_grid(width=240.0, thickness=40.0, headroom=100.0))
+
+    first = run_recipe(recipe, registry=registry, library=library)
+    second = run_recipe(recipe, registry=registry, library=library)
+
+    assert first[-1].structure.grid.shape[0] > recipe.grid.shape[0]  # it really grew
+    assert first[-1].structure.grid == second[-1].structure.grid
+    for material in first[-1].structure.materials:
+        assert np.array_equal(
+            np.asarray(first[-1].structure.phi_of(material)),
+            np.asarray(second[-1].structure.phi_of(material)),
+        )
+
+
+def test_a_resized_revision_survives_the_exchange_format(library, registry, tmp_path) -> None:
+    """The grid is stored per revision, so revisions of different sizes round-trip.
+
+    Worth pinning because the handoff expected this to be where M7 met
+    resistance: `io/manifest.py` writes a grid into every revision's manifest and
+    reads it back from there, and nothing in the package ever compared one
+    revision's grid to another's. The trap was not there.
+    """
+    from nanofab_v3.io.exchange import load_chain, save_chain
+    from nanofab_v3.runtime.replay import run_recipe
+
+    chain = run_recipe(
+        _growing_recipe(cross_section_grid(width=240.0, thickness=40.0, headroom=100.0)),
+        registry=registry,
+        library=library,
+    )
+    save_chain(tmp_path / "grown", chain)
+    reloaded = load_chain(tmp_path / "grown")
+
+    assert reloaded[0].structure.grid != reloaded[1].structure.grid  # two sizes, one chain
+    assert reloaded[1].structure.grid == chain[1].structure.grid
+    assert reloaded[1].structure.meta(substrate.SURFACE_KEY) == chain[1].structure.meta(
+        substrate.SURFACE_KEY
+    )
+
+
+def test_two_wafer_positions_of_a_growing_recipe_agree(library, registry) -> None:
+    """The domain policy is per `Run`, so one wafer cannot come out in two sizes."""
+    from nanofab_v3.runtime.replay import Run
+
+    run = Run(
+        _growing_recipe(cross_section_grid(width=240.0, thickness=40.0, headroom=100.0)),
+        registry=registry,
+        library=library,
+        positions=[(0.0, 0.0), (30.0, 0.0)],
+    )
+
+    centre = run.chain((0.0, 0.0))
+    edge = run.chain((30.0, 0.0))
+
+    assert centre[-1].structure.grid == edge[-1].structure.grid
