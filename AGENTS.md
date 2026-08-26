@@ -17,12 +17,15 @@ This file defines how the **Coding Assistant** should operate in this repository
 - Project memory and decisions:
   - `memory.md`
 - Structure model v2 — the only actively built code base:
-  - `docs/plans/v2-structure-model.md` (the specification; §17-§19 amend the agreed text with what implementation measured), `docs/adr/*.md`
+  - `docs/plans/v2-structure-model.md` (the specification; §17-§20 amend the agreed text with what implementation measured), `docs/adr/*.md`
   - `nanofab_v3/model/` — `Grid`, `Structure`, fields, capabilities, reports
   - `nanofab_v3/kernel/` — set ops, constructors, motion, reinit, flux, predicates, regions, commit gate
   - `nanofab_v3/materials/` — the `MaterialType` library
   - `nanofab_v3/processes/` — the process contract, registry and didactic step set
-  - `nanofab_v3/runtime/`, `nanofab_v3/io/` — placeholders, milestone M4
+  - `nanofab_v3/runtime/` — revisions, runs, wafer positions, replay + cache
+  - `nanofab_v3/io/` — the `.npz` + JSON exchange format, revision stores, replay cache
+  - `nanofab_v3/ui/` — `SceneSnapshot` v2, the interactive `Session`, the Qt shell
+    (`python -m nanofab_v3.ui`; PySide6 is the `[ui]` extra)
   - `tests/`
 - Product docs:
   - `NanoFab_Process_Manager_Documentation/*.md`
