@@ -1,7 +1,7 @@
 # Plan: Structure Model v2
 
-- Status: Agreed (design interview 2026-08-24/25); implemented through M6.
-  §17–§22 amend the agreed text with what implementation measured
+- Status: Agreed (design interview 2026-08-24/25); implemented through M7.
+  §17 onward amend the agreed text with what implementation measured
 - Inputs: ADR-0001 (v1 autopsy, measured), design interview rounds 1–3, ADR-0002…0004
 - Scope: a new package (working name `nanofab_v3`, successor of `nanofab_modular`) that
   puts the sample's geometry and state on solid ground. No compatibility with v1
@@ -1851,3 +1851,199 @@ machine, a different OS and — decisively — a build with no PySide6 present t
 freeze. §21.5's own first sentence applies: a number measured on one machine is a
 statement about that machine. What the build *does* establish is the packaging
 claim of §22.3, which is a yes/no and travels.
+
+## 23. Corrections from implementation (M7)
+
+M7 is roadmap §4's second milestone. What it corrects is §3.1's "the Grid is the
+sole authority on positions" — still true — and the assumption that sat quietly
+beside it, that a `Structure`'s grid is *fixed*. It is not, from M7 on, and most
+of the section below is about what that touched and what it did not.
+
+### 23.1 The trap that was named first did not exist
+
+The M7 handoff names four traps and calls the second the place "M7 first meets
+resistance": the grid is stored per revision (`io/manifest.py:143`) *and* at the
+recipe (`:404`), and `manifest.py:18` speaks of "the reference grid, checked on
+load", so allowing revisions of different sizes would mean reworking that
+consistency path.
+
+There is no such path. `manifest.py:18` says *"4.4 ms per `phi` at the reference
+grid"* — it is the sentence quoting a **benchmark** grid for a measurement, not a
+stored grid checked against anything. `Grid.check_same_grid` exists and is called
+nowhere in the package (only in `tests/test_grid.py`, on itself);
+`structure_from_json` reads each revision's grid from that revision's own
+manifest; and `Recipe.grid` is the *initial* domain, which is exactly what
+`Recipe.initial()` uses it for.
+
+So a chain whose revisions have different grids saved and loaded on the first
+try, and the test that proves it (`test_a_resized_revision_survives_the_exchange
+_format`) was written expecting to have to fix something first. Recorded because
+the handoff's prediction was reasonable and wrong, and the next person reading it
+should not spend the afternoon that was budgeted for it.
+
+What the resize *did* touch was smaller and less obvious, and it is §23.4.
+
+### 23.2 The two ends of the domain are two different questions
+
+The obvious implementation of "how much room is left" is symmetric: count the
+rows at each end that look like the edge row, since those are where the sample is
+doing nothing. It is wrong at the top, and wrong in the direction that matters.
+
+A resist coat that fills the domain to the ceiling makes **every** upper row
+identical to the top row. A symmetric rule reads that as plenty of room, and it
+is precisely the case the growth exists for — measured, not reasoned: the first
+implementation grew nothing and let the headroom FAIL stand.
+
+So each end is asked what that end of the domain is *for*:
+
+- `headroom` counts consecutive **entirely empty** rows at the top. Headroom is
+  empty space by definition; a solid row is not headroom however uniform.
+- `underroom` counts consecutive **laterally uniform** rows at the bottom that
+  match the bottom row. Below, the domain is a window onto a homogeneous
+  substrate that continues out of sight (roadmap §1), so a quiet row there is a
+  vertical extrusion of the face — and a trench that reaches the floor makes the
+  bottom row non-uniform, which is the signal to grow.
+
+The general form is worth keeping because it is not about domains: **a predicate
+that is symmetric in the code is not automatically symmetric in the physics.**
+The top of a cross-section is where things arrive and the bottom is what they
+arrive on, and no single "is this region interesting" test can serve both.
+
+### 23.3 A margin is a trigger, not a target — and a trigger is not enough
+
+Two decisions that look like one knob.
+
+**The margin is small.** A policy that grew every domain until it had a
+comfortable margin would silently replace the domain somebody chose: 40 nm of
+substrate under 200 nm of headroom — the shape most of this repository's tests
+are written against — would come back 190 nm deep before a single step ran, and
+every measurement taken against it would be taken against a different picture
+than the one asked for. So the trigger is a few cells and the *growth* is
+generous (`chunk`), which also keeps it from re-triggering on the next nanometre.
+Shrinking waits for `slack`, a whole micron, which is what E5's "auch schrumpfen,
+wenn groß und leer" means by empty.
+
+**A margin cannot deliver E5's promise on its own.** "Grows automatically instead
+of failing" is about one step that moves the front further than any margin — a
+150 nm coat into 100 nm of headroom. Nothing checked before the step can know how
+far it will go, and the front that hit the domain face was clipped by it and
+cannot be asked how much further it wanted. So `engine.run_step` runs the step,
+sees the sample used the domain up, grows the **input** and runs it again, up to
+twice with the growth doubling.
+
+That costs an extra solve on the step that needed it and nothing on any other,
+and it stays deterministic — which ADR-0004 requires: the resize is a pure
+function of the input and the policy, the retry is a pure function of the
+outcome, and the RNG is re-seeded identically from (recipe, position, index) on
+every attempt.
+
+### 23.4 The fit goes *before* the step, because the gate's parent shares its grid
+
+The natural place for "fit the domain around the sample" is after the commit,
+where the sample is. It is the wrong place, and the reason is one line in
+`kernel.gate`: `commit(structure, parent=...)` compares the two — `_untouched`
+for array sharing (§20.1) and `occurrences.match_lineage` for occurrence identity
+(§3.5). Both assume one grid. A structure fitted after its commit would be the
+*parent* of the next step at a different shape, and lineage matching between two
+differently shaped label arrays is not a degraded answer, it is an exception.
+
+So the fit runs first, and the fitted input is both what the step runs on and
+what the gate takes as its parent. Grids then differ only *between* revisions,
+never within a commit — which is the one place anything compares two.
+
+The general rule this is an instance of: **a value object shared by two
+consumers can only change shape where neither is mid-comparison.** The revision
+chain tolerates differing grids because it never compares across revisions; the
+gate does not, because comparing is its job.
+
+### 23.5 The substrate's thickness is metadata, and the alternatives each fail differently
+
+Roadmap E7 asks for the thickness to be "a real field from the start" so backlog
+B2 (back-side processes, vias) is a behaviour change rather than a schema change.
+Three places it could have gone, and each is wrong in its own way:
+
+- **A `Field`** is one value per cell. Four bytes times the whole grid to say
+  "1 mm", and a value that a step could accidentally make vary over the sample.
+- **A capability** is set membership. `substrate.thickness` is a number, and the
+  vocabulary of §5.3 has no room for one.
+- **The `Revision`** is where provenance lives, and it is out of reach: §5.1 hands
+  a step a `Structure` and nothing else, and the step that must refuse to etch
+  through the wafer is exactly the one that needs the number.
+
+So `Structure.metadata`: a small mapping of JSON scalars, carried by every
+derivation and by the exchange format, deliberately open rather than a typed
+`SubstrateSpec` field so that the next thing needing it — a chuck temperature, a
+tool id, B2's back-side flag — is not a schema change. Scalars only, so §9's
+format needs no encoder for it and a manifest stays readable by any JSON parser
+(§9's third job).
+
+The through-etch check that reads it lives in `processes`, not in the kernel
+gate: `substrate.thickness` is a convention of the process layer, and a gate that
+knew what that key meant would be a kernel that knows what a wafer is. It is
+added to the gate's report in `engine.run_step` — the same "one place, every
+step, plugins included" argument §22.5 makes for unknown materials.
+
+And it measures the **deepest column**, not the average. A wafer is not breached
+on average.
+
+### 23.6 "Substrate first" cost no step contract, because the domain is derivable
+
+E4 asks that a step other than the first be blocked with a hint rather than a
+runtime physics warning. The obvious implementation — give every other step
+`requires={"domain"}` — would have edited thirty contracts, moved thirty
+implementation digests (§21.1) and retired every cached recipe in existence, to
+express something none of those steps has an opinion about.
+
+Instead `domain` is a **structural** capability like `material:<id>`:
+`capability.derived` adds it whenever the structure has any geometry, so it
+appears and retires by the same mechanism, and the rule lives once in
+`ProcessRegistry` — a step that does not *provide* `domain` is blocked while none
+is available. `substrate.select` is the only step that provides it.
+
+The pay-off beyond the saved churn is that hand-built structures keep working:
+every test that constructs a `Structure` directly has materials in it, so it has
+a domain, and nothing had to be told about the new rule. What changed was three
+tests whose *synthetic* capability sets described samples that did not exist.
+
+### 23.7 Measured M7 costs, extending §17.7, §18.8, §19.6, §20.8, §21.5 and §22.6
+
+The handoff asks for the resize at 1 µm and 5 µm depth, because §17.7's standing
+finding — the upwind stencil over the whole domain dominates — means a growing
+domain gets directly more expensive. Reference cross-section 1200 nm wide at
+1 nm, one material, this machine:
+
+| domain depth | 0.5 µm | 1 µm | 5 µm |
+|---|---|---|---|
+| rows × columns | 501 × 1201 | 1001 × 1201 | 5001 × 1201 |
+| RAM per revision, 5 arrays | 11.5 MB | **22.9 MB** | **114.6 MB** |
+| `resize` by +256 rows | 1.6 ms | 1.8 ms | 12.3 ms |
+| `window` (the fit's own cost, per step) | 0.32 ms | 0.84 ms | 4.4 ms |
+| `label_occurrences`, isolated | — | 95 ms | **642 ms** |
+| `reinitialise` one `phi`, isolated | — | 52 ms | 148 ms |
+
+Three things follow, and the third is a warning rather than a result.
+
+**The fit is free at the scale it runs at.** 4.4 ms per step against the hundreds
+of milliseconds the commit gate spends on the same domain — under 1 %, which is
+what let it go in the common path rather than behind a flag, exactly as §22.6's
+unknown-material check did.
+
+**§17.7's conclusion needs refining rather than repeating.** On a *deeper* domain
+the dominant cost is not the solver at all: it is the **commit gate**, and inside
+it `occurrences.label_occurrences`, which scales worse than linearly (5× the
+cells, 6.8× the time) where reinitialisation scales better than linearly (2.8×).
+The solver's own advection is windowed around the front (§18.5) and barely
+notices. So the thing that would make a 5 µm domain painful is occurrence
+lineage, not the upwind stencil — which is a different optimisation target than
+five milestones of measurement had suggested, and is recorded here rather than
+acted on because M7 is not the place to start it.
+
+**End-to-end step timings on this machine were non-monotonic and are not
+trustworthy.** The same spin-coat took 169 ms at 0.5 µm, 283 ms at 1 µm and
+129 ms at 5 µm, reproducibly, while every component of it measured in isolation
+scaled upward. It could not be reproduced outside `run_step` and no structural
+difference explains it — same occurrence counts, same geometry, same sub-steps.
+§21.5's rule applies at full strength: **a number measured on one machine is a
+statement about that machine**, and this one is a statement about a shared
+virtual one. The per-component numbers above are the ones to trust; the
+end-to-end ones are recorded so that nobody later reads a speed-up into them.

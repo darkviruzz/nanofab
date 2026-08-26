@@ -25,9 +25,13 @@ die zweite Ausbaustufe darauf.
 **Auslöser:** Sobald der 5-µm-Deckel aus E5 in echter Arbeit regelmäßig
 anschlägt.
 
-**Vorarbeit in M7, die das billig macht:** Resize hinter einer Funktion,
-`Grid.origin` bereits als Versatzträger benutzt, Grid-Konsistenzprüfung beim
-Laden (`io/manifest.py:18`) schon aufgeweicht.
+**Vorarbeit in M7, die das billig macht — erledigt:** `kernel.domain.resize` ist
+die eine Funktion, die eine Domain-Form ändert; `Grid.origin` trägt den Versatz
+(nichts rechnet Koordinaten um); und die vermutete Grid-Konsistenzprüfung beim
+Laden gab es nie (Plan §23.1), Revisionen verschiedener Größe speichern und laden
+bereits. Was B1 aus M7 mitnehmen muss, ist §23.4: der Commit-Gate-Parent und sein
+Kind müssen dieselbe Grid haben, also darf eine Teil-Domain ihre Form nur dort
+ändern, wo nichts gerade zwei Revisionen vergleicht.
 
 ---
 

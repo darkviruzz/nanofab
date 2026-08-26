@@ -288,9 +288,23 @@ Source-Baum lädt, erst in der Exe auffällt: das Verzeichnis liegt **im Paket**
 lädt daraus, und die gebaute Exe meldet `materials: 11 from 2 root(s)` und läuft
 7/7 durch. Plan §22.3.
 
-### M7 — Substrat & Domain
+### M7 — Substrat & Domain ✅ *erledigt 2026-08-26*
 
 Der Block mit dem größten Nutzwert.
+
+**Ergebnis:** `kernel/domain.py` (eine Resize-Funktion, `DomainPolicy`,
+Speicherschätzung), `Structure.metadata` als Träger der echten Substratdicke,
+`substrate.select` mit Form-Faktor, 17 Semistandard-Presets und Durchätz-FAIL,
+`capability.DOMAIN` für E4, `ui/presets.py` als generisches Override-Muster.
+485 Tests grün, Exe 7/7. Details in Plan §23 und memory.md 2026-08-26.
+
+**Falle 2 gab es nicht.** `manifest.py:18`s „the reference grid, checked on load"
+ist der Satz zur *Benchmark*-Grid einer Messung, keine Konsistenzprüfung;
+`Grid.check_same_grid` wird nirgends im Paket aufgerufen, und jede Revision liest
+ihre Grid aus ihrem eigenen Manifest. Eine Kette mit verschieden großen Grids
+speichert und lädt auf Anhieb. Was das Resize *wirklich* berührt hat, steht in
+Plan §23.4 — der Commit-Gate-Parent muss dieselbe Grid haben, weshalb der Fit
+**vor** dem Step läuft.
 
 1. Substrat-Step: Form-Faktor-Dropdown (E1), Semistandard-Presets zweigeteilt und
    sortiert (E3), Material, Dimensionen (Durchmesser bzw. x/y), Dicke,
@@ -323,6 +337,14 @@ Der Block mit dem größten Nutzwert.
 ein Ätzschritt, der die Domain unten verlässt, wächst automatisch statt zu
 scheitern; ein sehr tiefer Schritt schlägt am Deckel mit lesbarer Schätzung an;
 Durchätzen sagt "durchgeätzt" statt etwas Falsches zu rechnen.
+
+*Erfüllt*, jeweils als Test in `tests/test_substrate_domain.py`. Ein Punkt ist
+schärfer geworden als geplant: eine kleine Marge allein liefert „wächst statt zu
+scheitern" **nicht** — ein einzelner Step kann die Front weiter bewegen als jede
+Marge, und eine an der Domainwand abgeschnittene Front kann man nicht fragen, wie
+weit sie wollte. Deshalb zusätzlich ein Retry: Step laufen lassen, Platzmangel
+sehen, Eingabe vergrößern, nochmal (höchstens zweimal, Wachstum verdoppelnd).
+Plan §23.3.
 
 ### M8 — UI-Reife
 
