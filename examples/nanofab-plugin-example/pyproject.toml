@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanofab-plugin-example"
+version = "0.1.0"
+description = "An example NanoFab process plugin: spin-on glass, out of tree"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.0"]
+
+# The whole point of this package. `nanofab_v3.processes.plugins` reads this
+# group; each entry point resolves either to a `ProcessStep` or to a callable
+# taking the registry, and this package ships one of each so the discovery
+# mechanism is exercised on both branches by something outside the tree.
+[project.entry-points."nanofab_v3.processes"]
+spin_on_glass = "nanofab_plugin_example:SPIN_ON_GLASS"
+extras = "nanofab_plugin_example:register"
+
+[tool.setuptools.packages.find]
+where = ["src"]

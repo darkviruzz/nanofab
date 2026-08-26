@@ -38,7 +38,9 @@ from nanofab_v3.materials import MaterialLibrary, didactic_library
 from nanofab_v3.model.grid import Grid
 from nanofab_v3.model.structure import Structure
 from nanofab_v3.processes.contract import CapabilityError, ParameterError
-from nanofab_v3.processes.registry import ProcessRegistry, builtin_registry
+from nanofab_v3.model.artifact import ArtifactSink
+from nanofab_v3.processes.plugins import DiscoveryReport, application_registry
+from nanofab_v3.processes.registry import ProcessRegistry
 from nanofab_v3.processes.substrate import cross_section_grid
 from nanofab_v3.runtime.replay import apply_step, materialize
 from nanofab_v3.runtime.revision import CENTER, Revision, RevisionChain, RevisionStore
@@ -56,8 +58,11 @@ class Session:
     Attributes:
         recipe: What has been run so far, in a form that can be replayed.
         chain: The revisions it produced (plan §3.6).
-        registry: Where step ids are resolved.
+        registry: Where step ids are resolved — the builtins plus any plugins,
+            unless the caller supplied one.
         library: The `MaterialType` library the steps and the renderer read.
+        plugins: What entry-point discovery loaded and refused, for the run log.
+        sink: Where an inspection step may put an artifact, or `None`.
     """
 
     def __init__(
@@ -70,9 +75,21 @@ class Session:
         position: Position = CENTER,
         store: RevisionStore | None = None,
         resident: int = 3,
+        sink: ArtifactSink | None = None,
     ) -> None:
-        self.registry = registry or builtin_registry()
+        # The *application* registry: builtins plus whatever entry points bring
+        # (plan §11). A session is what an operator drives, and a plugin that
+        # does not appear in its step list is a plugin that was not delivered.
+        # `plugins.discover_plugins` never raises for a plugin's sake, so a
+        # stale third-party package costs its own steps and nothing else.
+        if registry is None:
+            registry, discovery = application_registry()
+            self.plugins = discovery
+        else:
+            self.plugins = DiscoveryReport()
+        self.registry = registry
         self.library = library or didactic_library()
+        self.sink = sink
         self.recipe = Recipe(
             grid=grid if grid is not None else default_grid(), recipe_id=recipe_id
         )
@@ -131,6 +148,7 @@ class Session:
             library=self.library,
             recipe_id=self.recipe.recipe_id,
             position=self.position,
+            sink=self.sink,
         )
         self.recipe = self.recipe.with_step(entry)
         self.chain.append(revision)

@@ -19,6 +19,7 @@ Layout:
 - `substrate`, `lithography`, `deposition`, `etching`, `removal` — the didactic
   set of plan §6,
 - `registry` — plan §5.4's registry, with §5.2's determinism lint,
+- `plugins` — entry-point discovery through that same `register()` seam (§11),
 - `engine` — validate, gate, run, commit; the runner the acceptance scenarios use
   until M4's revision chain exists.
 """
@@ -39,6 +40,13 @@ from nanofab_v3.processes.contract import (
     StepResult,
 )
 from nanofab_v3.processes.engine import StepOutcome, run_chain, run_step, step_seed
+from nanofab_v3.processes.plugins import (
+    ENTRY_POINT_GROUP,
+    DiscoveryReport,
+    PluginFailure,
+    application_registry,
+    discover_plugins,
+)
 from nanofab_v3.processes.registry import (
     ProcessRegistry,
     RegistrationError,
@@ -48,20 +56,25 @@ from nanofab_v3.processes.registry import (
 
 __all__ = [
     "DIDACTIC",
+    "ENTRY_POINT_GROUP",
     "FIDELITIES",
     "IDEAL",
     "PHYSICAL",
     "CapabilityError",
+    "DiscoveryReport",
     "FunctionStep",
     "ParamSpec",
     "ParameterError",
     "ProcessRegistry",
+    "PluginFailure",
     "ProcessStep",
     "RegistrationError",
     "StepContext",
     "StepOutcome",
     "StepResult",
+    "application_registry",
     "builtin_registry",
+    "discover_plugins",
     "implementation_digest",
     "run_chain",
     "run_step",

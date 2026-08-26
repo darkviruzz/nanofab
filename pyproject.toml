@@ -32,3 +32,8 @@ include = ["nanofab_v3*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+# `slow` marks the tests that build and install `examples/nanofab-plugin-example`
+# into a temp directory (~4 s each). They run by default — a discovery mechanism
+# nobody exercises is the thing they exist to prevent — and `-m "not slow"` is
+# there for a tight edit loop.
+markers = ["slow: builds and installs the example plugin (a few seconds)"]
