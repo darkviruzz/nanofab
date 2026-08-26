@@ -332,6 +332,19 @@ EVAPORATE = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_evaporate,
+    description=(
+        "Deposits `material` from a distant point source. A vertical sidewall is edge-on to it "
+        "and receives nothing, which is exactly what makes a naive lift-off work: the metal on "
+        "the resist and the metal in the window are two disconnected pieces because the wall "
+        "between them was never coated."
+        "\n\n"
+        "`angle` tilts the source; `divergence` turns the point into a small lobe, which is the "
+        "difference between an idealised evaporation and one from a real crucible. `thickness` "
+        "is what an open, normal-facing surface receives — everything else follows from what "
+        "that surface can see."
+        "\n\n"
+        "Needs: something to deposit on."
+    ),
 )
 
 SPUTTER = FunctionStep(
@@ -351,6 +364,18 @@ SPUTTER = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_sputter,
+    description=(
+        "Deposits `material` from a broad cos^n source, with optional surface mobility. The "
+        "broad lobe puts metal on sidewalls an evaporation leaves bare, and that is where lift- "
+        "off fences come from."
+        "\n\n"
+        "`exponent` is the source's directionality — 1 is a thermal cosine law, larger is a "
+        "forward-peaked magnetron. `mobility_length` decides whether the sidewall film is "
+        "continuous or beaded. Try the same stack with `deposit.evaporate` to see how much of a "
+        "lift-off's outcome is the deposit's angular character rather than the resist."
+        "\n\n"
+        "Needs: something to deposit on."
+    ),
 )
 
 CONFORMAL_OFFSET = FunctionStep(
@@ -361,6 +386,18 @@ CONFORMAL_OFFSET = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_conformal,
+    description=(
+        "Grows the whole front by `thickness` in one array operation — the exact geometric "
+        "answer to 'offset this surface', and bit-exact under splitting: one 20 nm step and "
+        "four 5 nm steps agree to the last bit."
+        "\n\n"
+        "It is also the wrong answer to 'deposit from a precursor', and deliberately so: with "
+        "no reachability in it, growth continues inside a cavity it has already sealed until "
+        "the cavity disappears. `deposit.ald` is the same growth with the gate, and the "
+        "difference between the two is one of this model's clearest pictures."
+        "\n\n"
+        "Needs: something to deposit on."
+    ),
 )
 
 ALD = FunctionStep(
@@ -371,6 +408,17 @@ ALD = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_ald,
+    description=(
+        "Conformal growth that only reaches what the precursor can reach: equal thickness on "
+        "every surface, no shadowing, and nothing at all inside a cavity that has closed."
+        "\n\n"
+        "The gate is rebuilt as the front moves, because that is when the answer can change — "
+        "the mouth of a re-entrant profile narrows with every nanometre grown and closes at "
+        "half the opening. From that moment the cavity's own front is handed a speed of zero. "
+        "This is what breaks a lift-off that a directional deposition would have left workable."
+        "\n\n"
+        "Needs: something to deposit on."
+    ),
 )
 
 SPUTTER_RATE = FunctionStep(
@@ -392,4 +440,16 @@ SPUTTER_RATE = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_sputter_rate,
+    description=(
+        "The same sputter deposition, with the arithmetic the other way round: you give it a "
+        "time and it reads the target's own deposition rate out of the material library, so the "
+        "film thickness is an outcome rather than an input."
+        "\n\n"
+        "That is how the process table states rows 7 to 9 — 'run the sputterer for so long' — "
+        "and it is the shape in which a wrong rate is visible: the step reports the thickness "
+        "it derived. A target with no `sputter_deposit` rate refuses rather than depositing "
+        "nothing, because a zero there means nobody stated a rate, not that it does not grow."
+        "\n\n"
+        "Needs: something to deposit on."
+    ),
 )

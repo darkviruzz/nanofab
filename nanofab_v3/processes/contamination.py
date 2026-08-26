@@ -250,6 +250,21 @@ PARTICLES = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_particles,
+    description=(
+        "Scatters airborne debris onto the sample. Each particle lands on whatever is topmost "
+        "in its column, so it rests on the surface rather than inside it — which is the "
+        "difference between a defect and a modelling accident."
+        "\n\n"
+        "`count`, `radius` and `radius_spread` shape the scatter; the draw comes from the run's "
+        "own seeded generator, so the same recipe at the same wafer position always produces "
+        "the same particles, and a neighbouring position produces different ones."
+        "\n\n"
+        "A column with no solid in it gets no particle, and the step reports how many draws it "
+        "skipped: there is no floor below the domain, and inventing one would be inventing "
+        "geometry."
+        "\n\n"
+        "Needs: a sample."
+    ),
     stochastic=True,
 )
 
@@ -261,4 +276,15 @@ CLEAN = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_clean,
+    description=(
+        "Washes off the particles the bath can reach — and only those."
+        "\n\n"
+        "This is micromasking as a reachability finding rather than a chemistry one: a particle "
+        "buried under a later film has no path to the outside, so the clean leaves it and "
+        "whatever it masked stays masked. Nothing here knows what a particle is made of; run it "
+        "before and after a deposition on the same scatter and the difference is the whole "
+        "lesson."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )

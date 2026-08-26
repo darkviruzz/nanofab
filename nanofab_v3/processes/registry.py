@@ -37,6 +37,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator, Mapping
 
+from nanofab_v3 import text
 from nanofab_v3.model import capability
 from nanofab_v3.processes.contract import ProcessStep
 
@@ -174,6 +175,7 @@ class ProcessRegistry:
 
     steps: dict[str, ProcessStep] = field(default_factory=dict)
     _digests: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
+    _haystacks: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
 
     def register(self, step: ProcessStep) -> ProcessStep:
         """Add a step, checking its shape and its determinism contract."""
@@ -191,6 +193,7 @@ class ProcessRegistry:
             )
         self.steps[step.step_id] = step
         self._digests.pop(step.step_id, None)
+        self._haystacks.pop(step.step_id, None)
         return step
 
     def __getitem__(self, step_id: str) -> ProcessStep:
@@ -280,6 +283,63 @@ class ProcessRegistry:
         steps does this recipe use" into "which implementations of them".
         """
         return {step_id: self.digest(step_id) for step_id in self.steps}
+
+    def describe(self, step_id: str) -> str:
+        """A step's long description, translated, falling back to its display name.
+
+        `getattr` rather than a protocol member, and the reason is in
+        `FunctionStep.description`: `ProcessStep` is `runtime_checkable`, so a
+        member added there would refuse registration to every plugin written
+        before it existed. A step with nothing to say gets its own name back,
+        which is a poor description and never a missing one.
+        """
+        step = self[step_id]
+        written = str(getattr(step, "description", "") or "").strip()
+        return text.step_description(step_id, written or step.display_name)
+
+    def display_name(self, step_id: str) -> str:
+        """A step's display name, through the same indirection (E10)."""
+        step = self[step_id]
+        return text.step_name(step_id, step.display_name)
+
+    def matching(
+        self,
+        query: str = "",
+        fidelities: Iterable[str] | None = None,
+        capabilities: Iterable[str] | None = None,
+    ) -> tuple[ProcessStep, ...]:
+        """The steps a search box and a set of fidelity tags select (roadmap E11).
+
+        Full text over id, display name and description — the description being
+        in it is why E10 comes first: a step list you can search for "undercut"
+        or "hard mask" is only possible once the steps say what they do.
+
+        `fidelities` empty or `None` means every tier. `capabilities`, when
+        given, restricts to what the sample can actually run, so a filter and the
+        gate compose rather than contradicting each other.
+        """
+        wanted = {f.strip().lower() for f in (fidelities or ()) if str(f).strip()}
+        needle = query.strip().lower()
+        pool = self.steps.values() if capabilities is None else self.runnable(capabilities)
+        found = []
+        for step in pool:
+            if wanted and step.fidelity.lower() not in wanted:
+                continue
+            if needle and needle not in self._haystack(step.step_id):
+                continue
+            found.append(step)
+        return tuple(found)
+
+    def _haystack(self, step_id: str) -> str:
+        """Everything `matching` searches, lowercased and memoised per registry."""
+        cached = self._haystacks.get(step_id)
+        if cached is None:
+            step = self[step_id]
+            cached = " ".join(
+                (step_id, self.display_name(step_id), self.describe(step_id))
+            ).lower()
+            self._haystacks[step_id] = cached
+        return cached
 
     def by_technique(self) -> dict[str, tuple[ProcessStep, ...]]:
         """Steps grouped by the technique their id names, for the UI's step list.

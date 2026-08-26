@@ -54,7 +54,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nanofab_v3.processes.contract import ParamSpec
+from nanofab_v3.processes.contract import FIDELITIES, ParamSpec
 from nanofab_v3.ui import presets
 from nanofab_v3.processes.registry import ProcessRegistry
 from nanofab_v3.runtime.revision import RevisionChain
@@ -65,6 +65,17 @@ _BLOCKED = QColor("#8a949e")
 
 class StepListPanel(QWidget):
     """Every registered process, grouped by technique, gated on capabilities.
+
+    Since M8 it is also **searchable** (roadmap E11): a text box over id, name and
+    description, plus one checkbox per fidelity tier. The search reaches the
+    descriptions because E10 put them there, which is why the two decisions are
+    one feature — a list you can search for "undercut" or "hard mask" is only
+    possible once the steps say what they do.
+
+    Filtering and gating are different things and stay different: a filtered-out
+    step is *hidden*, a blocked one is **shown in grey with a reason**. Hiding
+    what the sample cannot run would answer "why can I not do this?" by removing
+    the question.
 
     Signals:
         step_chosen: `(step_id)` when the selection changes.
@@ -78,6 +89,22 @@ class StepListPanel(QWidget):
         super().__init__(parent)
         self._registry = registry
         self._capabilities: frozenset[str] = frozenset()
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search steps — name, id or description")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(lambda _text: self.refresh(self._capabilities))
+        self.tags: dict[str, QCheckBox] = {}
+        tag_row = QHBoxLayout()
+        tag_row.setContentsMargins(0, 0, 0, 0)
+        for fidelity in FIDELITIES:
+            box = QCheckBox(fidelity)
+            box.setChecked(True)
+            box.setToolTip(f"Show steps at the {fidelity} fidelity tier")
+            box.toggled.connect(lambda _on: self.refresh(self._capabilities))
+            tag_row.addWidget(box)
+            self.tags[fidelity] = box
+        tag_row.addStretch(1)
 
         self.list = QListWidget()
         self.list.setAlternatingRowColors(True)
@@ -94,24 +121,48 @@ class StepListPanel(QWidget):
         heading = QLabel("Process steps")
         heading.setFont(_bold(heading.font()))
         layout.addWidget(heading)
+        layout.addWidget(self.search)
+        layout.addLayout(tag_row)
         layout.addWidget(self.list, 1)
         layout.addWidget(self.reason)
         layout.addWidget(self.run_button)
         self.refresh(frozenset())
 
+    def selected_fidelities(self) -> tuple[str, ...]:
+        """Which fidelity tags are ticked. All of them is the same as none of them."""
+        return tuple(name for name, box in self.tags.items() if box.isChecked())
+
+    def visible_step_ids(self) -> tuple[str, ...]:
+        """The step ids the filter currently lets through, in list order."""
+        return tuple(
+            self.list.item(row).data(Qt.UserRole)
+            for row in range(self.list.count())
+            if self.list.item(row).data(Qt.UserRole)
+        )
+
     def refresh(self, capabilities: Iterable[str]) -> None:
         """Re-gate every row against what the current revision promises."""
         self._capabilities = frozenset(capabilities)
         selected = self.selected_step_id()
+        matching = {
+            step.step_id
+            for step in self._registry.matching(
+                self.search.text(), self.selected_fidelities()
+            )
+        }
         self.list.clear()
         for technique, steps in self._registry.by_technique().items():
+            shown = [step for step in steps if step.step_id in matching]
+            if not shown:
+                continue
             header = QListWidgetItem(technique)
             header.setFlags(Qt.NoItemFlags)
             header.setFont(_bold(header.font()))
             self.list.addItem(header)
-            for step in steps:
+            for step in shown:
                 reason = self._registry.blocked_reason(step.step_id, self._capabilities)
-                item = QListWidgetItem(f"   {step.display_name}  ·  {step.fidelity}")
+                name = self._registry.display_name(step.step_id)
+                item = QListWidgetItem(f"   {name}  ·  {step.fidelity}")
                 item.setData(Qt.UserRole, step.step_id)
                 item.setForeground(_RUNNABLE if reason is None else _BLOCKED)
                 # The tooltip is the whole difference from v1's gating: it names
@@ -121,6 +172,10 @@ class StepListPanel(QWidget):
                 self.list.addItem(item)
                 if step.step_id == selected:
                     self.list.setCurrentItem(item)
+        if not matching:
+            empty = QListWidgetItem("   nothing matches this search")
+            empty.setFlags(Qt.NoItemFlags)
+            self.list.addItem(empty)
         self._on_selection(self.list.currentItem(), None)
 
     def selected_step_id(self) -> str | None:
@@ -172,20 +227,35 @@ class ParameterForm(QWidget):
         self._applying = False
         self.title = QLabel("No step selected")
         self.title.setFont(_bold(self.title.font()))
+        # Roadmap E10: the step explains itself, here, where somebody is about to
+        # run it — rather than in a manual they would have to know exists.
+        self.description = QLabel("")
+        self.description.setWordWrap(True)
+        self.description.setTextFormat(Qt.MarkdownText)
+        self.description.setStyleSheet("color: #b7c0c9;")
         self.form = QFormLayout()
         self.form.setLabelAlignment(Qt.AlignRight)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.title)
+        layout.addWidget(self.description)
         layout.addLayout(self.form)
         layout.addStretch(1)
 
-    def set_step(self, step_id: str, display_name: str, specs: Sequence[ParamSpec]) -> None:
-        """Rebuild the form for one step."""
+    def set_step(
+        self,
+        step_id: str,
+        display_name: str,
+        specs: Sequence[ParamSpec],
+        description: str = "",
+    ) -> None:
+        """Rebuild the form for one step, with its long description above it."""
         self._clear()
         self._specs = tuple(specs)
         self._step_id = step_id
         self.title.setText(f"{display_name}   ({step_id})")
+        self.description.setText(description)
+        self.description.setVisible(bool(description.strip()))
         for spec in self._specs:
             options = presets.options_for(step_id, spec.name)
             widget = _preset_box(options) if options else _widget_for(spec)
@@ -309,6 +379,7 @@ class ParameterForm(QWidget):
         self._widgets.clear()
         self._specs = ()
         self._touched.clear()
+        self.description.clear()
 
 
 def _widget_for(spec: ParamSpec) -> QWidget:

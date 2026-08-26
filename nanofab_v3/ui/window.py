@@ -180,8 +180,14 @@ class MainWindow(QMainWindow):
         self.canvas.set_scene(self.session.scene(index, overlays=overlays))
 
     def _on_step_chosen(self, step_id: str) -> None:
-        step = self.session.registry[step_id]
-        self.form.set_step(step_id, step.display_name, step.parameter_schema())
+        registry = self.session.registry
+        step = registry[step_id]
+        self.form.set_step(
+            step_id,
+            registry.display_name(step_id),
+            step.parameter_schema(),
+            registry.describe(step_id),
+        )
 
     def _on_revision_chosen(self, index: int) -> None:
         self._refresh_canvas()

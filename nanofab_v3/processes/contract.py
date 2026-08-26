@@ -310,6 +310,17 @@ class FunctionStep:
             function; it is what unpacks `ctx.params` into keyword arguments.
         stochastic: Whether the step draws random numbers. Declared so the
             registry can lint it against §5.2's context-RNG contract.
+        description: What this step does, what its fields mean and what it needs
+            on the sample — roadmap E10's long text, **here** rather than in a
+            UI table, because a second source is a source that goes stale. It
+            reaches a reader through `nanofab_v3.text`, so a language catalog can
+            be laid over it later without the registry changing (E10's other
+            half, and backlog B10's reason for not building the catalog yet).
+
+            Deliberately not on the `ProcessStep` protocol: that is
+            `runtime_checkable`, so adding a member there would make every
+            plugin without one fail `isinstance` and be refused registration.
+            A step with nothing to say falls back to its display name.
     """
 
     step_id: str
@@ -320,6 +331,7 @@ class FunctionStep:
     provided: frozenset[str]
     run_function: Any
     stochastic: bool = False
+    description: str = ""
 
     def __post_init__(self) -> None:
         if self.fidelity not in FIDELITIES:

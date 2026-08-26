@@ -203,6 +203,19 @@ DISSOLVE = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_dissolve,
+    description=(
+        "Removes every *reachable* piece of `material` in one set operation. Reachable is the "
+        "whole content of the step: chemically identical material the solvent cannot get to "
+        "stays, and that is not a special case anywhere — it is the same query that makes a "
+        "sealed cavity stop being fed."
+        "\n\n"
+        "At this tier naming the material IS the statement that the bath attacks it; no rate "
+        "table is consulted. Which also means a recipe that keeps asking for `resist` after a "
+        "hard bake finds none and quietly does nothing, because `anneal.thermal` turned it into "
+        "a different material."
+        "\n\n"
+        "Needs: the material you name."
+    ),
 )
 
 STRIP_RATE = FunctionStep(
@@ -217,6 +230,17 @@ STRIP_RATE = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_strip_rate,
+    description=(
+        "The same bath with a clock: the front recedes at each material's own dissolution rate "
+        "in the named `solvent` for `duration` seconds, behind the same reachability gate."
+        "\n\n"
+        "Unlike the ideal tier this one does consult chemistry, so it is where a hard-baked "
+        "resist visibly survives an acetone strip that takes an unbaked one to nothing in "
+        "seconds. A material with no dissolve model for that solvent has a rate of zero, which "
+        "is a statement about the material rather than about the recipe."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 LIFT_OFF = FunctionStep(
@@ -227,6 +251,20 @@ LIFT_OFF = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_lift_off,
+    description=(
+        "Lift-off: dissolve the sacrificial layer, then remove whatever metal no longer "
+        "connects to the wafer."
+        "\n\n"
+        "'Which metal lifts off' is a connectivity question and never an identity one, which is "
+        "why this is two operations and not a rule. A film that touches the substrate at the "
+        "foot of a sidewall stays — that is a fence, and it is why the same recipe over a "
+        "sputtered film and an evaporated one gives two different results."
+        "\n\n"
+        "If nothing lifts, the usual reason is that the solvent never reached the resist: check "
+        "whether a conformal film sealed it."
+        "\n\n"
+        "Needs: the material you name."
+    ),
 )
 
 REMOVE_UNSUPPORTED = FunctionStep(
@@ -237,4 +275,14 @@ REMOVE_UNSUPPORTED = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_remove_unsupported,
+    description=(
+        "Removes solid that no longer connects to the wafer, without dissolving anything first "
+        "— the second half of a lift-off, on its own."
+        "\n\n"
+        "Useful for seeing what support actually means here: it is topological, so one shared "
+        "cell is enough to keep a piece, and `anchor` lets you ask the question against a "
+        "material other than the substrate."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )

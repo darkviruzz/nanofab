@@ -621,6 +621,23 @@ SELECT_SUBSTRATE = FunctionStep(
     required=frozenset(),
     provided=frozenset({capability.DOMAIN}),
     run_function=_run_select,
+    description=(
+        "Places the wafer and makes the domain. Always the first step of a chain: before it "
+        "there is no grid and no geometry at all, so nothing else has anything to act on."
+        "\n\n"
+        "The substrate and the domain are two different sizes, and this is where they part. "
+        "`preset` picks a semi-standard wafer or mask blank and fills in the rest. "
+        "`form_factor`, `material`, `thickness`, `diameter` and `size_x`/`size_y` are the "
+        "substrate as it really is, in millimetres — kept as metadata rather than drawn, "
+        "because a 525 um wafer at 1 nm per cell would be gigabytes a revision. `surface`, "
+        "`domain_width`, `headroom` and `spacing` are the nanometre-scale cross-section you "
+        "actually see: a window that follows the sample as later steps move it."
+        "\n\n"
+        "`thickness` is what decides when an etch has gone through the wafer. Set `form_factor` "
+        "to `semi_infinite` when the thickness does not matter, and no such check is made."
+        "\n\n"
+        "Needs: nothing. It is what everything else needs."
+    ),
 )
 """Place the wafer and make the domain. Requires nothing — it is where a chain starts.
 

@@ -216,4 +216,21 @@ ANNEAL = FunctionStep(
     required=frozenset(),
     provided=frozenset({ANNEALED}),
     run_function=_run_anneal,
+    description=(
+        "Bakes the sample. Above a material's own transition temperature it becomes a different "
+        "material — resist becomes hard-baked resist — carrying the same geometry into a new "
+        "entry of the library."
+        "\n\n"
+        "That is the whole mechanism, and it is why no step downstream has to be told about "
+        "temperature: every rate follows from what the material now is. The capabilities follow "
+        "too, and one of them is worth watching — a latent image in a hard-baked resist is not "
+        "a latent image, so `resist.exposed` goes with the old material."
+        "\n\n"
+        "The realistic mistake it makes possible: a recipe that hard-bakes a resist and then "
+        "asks lift-off to remove `resist` finds none and does nothing at all."
+        "\n\n"
+        "Reflow geometry is not modelled — the material changes, the shape does not."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )

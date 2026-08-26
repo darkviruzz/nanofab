@@ -329,6 +329,22 @@ WET_ETCH_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_wet,
+    description=(
+        "Isotropic chemical removal in a bath. No flux model at all: an isotropic etchant has "
+        "no line of sight to block, so it undercuts a mask by exactly as much as it etches "
+        "down, and the undercut ratio comes out at 1 without anything in the model knowing what "
+        "an undercut is."
+        "\n\n"
+        "What it does compute is whether the etchant gets there: a sealed cavity is not etched, "
+        "and a bath cannot reach through a mask it does not attack. Which materials it attacks "
+        "is the material library's `wet_etch` column, not a parameter — a mask at rate 0 stalls "
+        "the front, and that is all a hard mask is here."
+        "\n\n"
+        "`duration` is the process time; `scale` is a machine setting as a factor on every "
+        "material's rate."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 RIE_STEP = FunctionStep(
@@ -348,6 +364,18 @@ RIE_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_rie,
+    description=(
+        "A narrow ion lobe plus an orientation-blind chemical floor. The floor is what "
+        "separates RIE from ion milling in every didactic picture: it etches sideways a little, "
+        "so an RIE profile undercuts where an ion beam does not, and it keeps feeding a surface "
+        "the ions cannot see."
+        "\n\n"
+        "`chemical_fraction` is that floor. Turn it to 0 and the walls stand where the mask "
+        "edge is; turn it up and watch the profile open out. `angle` and `divergence` shape the "
+        "ion lobe. Rates come from the library's `dry_etch` column."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 # -- the chemistries of roadmap §3's process table -----------------------------
@@ -482,6 +510,16 @@ SPUTTER_ETCH_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_sputter_etch,
+    description=(
+        "Argon sputter etching at the process table's own rates — the same physics as "
+        "`etch.ibe`, reading a different column of the material library."
+        "\n\n"
+        "Two steps for one technique is deliberate: `etch.ibe` carries the didactic numbers the "
+        "acceptance scenarios are tuned to, and this one carries a measured table. Mixing them "
+        "under one name would make the library's own provenance unreadable."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 ICP_FLUORINE_STEP = FunctionStep(
@@ -505,6 +543,18 @@ ICP_FLUORINE_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_icp_fluorine,
+    description=(
+        "ICP etching in fluorine chemistry, and the table's vertical process: it takes fused "
+        "silica and silicon quickly, resist faster still, and chromium 25 times more slowly — "
+        "which is why a chromium hard mask survives it and a resist mask does not."
+        "\n\n"
+        "The direction is not in the rate. A rate here is the speed of an open, normal-facing "
+        "surface; what makes this one vertical is the narrow angular distribution of the step. "
+        "`chemical_fraction` is 0 by default because the table gives no lateral rate — raise it "
+        "to watch the vertical wall become an undercutting one."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 RIE_CHLORINE_STEP = FunctionStep(
@@ -515,6 +565,17 @@ RIE_CHLORINE_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_rie_chlorine,
+    description=(
+        "RIE in chlorine chemistry: fast on chromium, slow on resist, and nothing at all on "
+        "fused silica. The classic way to pattern a chromium mask with a resist mask over it."
+        "\n\n"
+        "The table gives this one the same rate horizontally and vertically, so the step builds "
+        "no flux model at all — it is isotropic, gated only on whether the plasma can reach the "
+        "surface. Undercut therefore equals depth, which is the honest consequence of what was "
+        "measured."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 RIE_OXYGEN_STEP = FunctionStep(
@@ -525,6 +586,16 @@ RIE_OXYGEN_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_rie_oxygen,
+    description=(
+        "An oxygen plasma: a resist strip and a descum. The table gives chromium and fused "
+        "silica a rate of exactly zero, so it takes the polymer off a patterned mask and leaves "
+        "the pattern."
+        "\n\n"
+        "Isotropic, like the chlorine chemistry, and gated on reachability — resist under a "
+        "sealed film is not stripped, however long you run it."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 WET_CR_STEP = FunctionStep(
@@ -535,6 +606,16 @@ WET_CR_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_wet_cr,
+    description=(
+        "The chromium wet etchant. It attacks chromium at 1000 nm/min and everything else the "
+        "table names at nothing, which makes it the cleanest selectivity in the set."
+        "\n\n"
+        "Isotropic and reachability-gated, so it undercuts a resist mask by as much as it "
+        "etches down, and it leaves chromium the bath cannot get to — under intact resist, or "
+        "inside a sealed void — completely alone."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 WET_OXIDE_STEP = FunctionStep(
@@ -545,6 +626,16 @@ WET_OXIDE_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_wet_oxide,
+    description=(
+        "Buffered oxide etch: fast on silicon dioxide and fused silica, slow on resist, and "
+        "nothing on silicon or chromium. The etch that stops at the wafer surface."
+        "\n\n"
+        "Isotropic and reachability-gated. Compare it against `etch.icp_fluorine` on the same "
+        "oxide: same material removed, same depth, and a completely different profile — one "
+        "eats under the mask and the other does not."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )
 
 IBE_STEP = FunctionStep(
@@ -566,4 +657,16 @@ IBE_STEP = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_ibe,
+    description=(
+        "Purely physical sputtering: a narrow beam, an angle-dependent yield, no chemistry and "
+        "therefore no undercut. The yield peak off normal incidence is what facets a corner, "
+        "and it is the material's own property rather than the beam's."
+        "\n\n"
+        "`redeposition_yield` turns on the one process here that runs the solver twice: once to "
+        "remove material, once to put back what did not leave. `redeposit_as` names the "
+        "material the returned film is recorded as — that is what lines a trench sidewall with "
+        "what came off its floor."
+        "\n\n"
+        "Needs: a sample."
+    ),
 )

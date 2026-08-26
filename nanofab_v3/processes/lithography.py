@@ -558,6 +558,22 @@ SPIN_COAT = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_spin_coat,
+    description=(
+        "Coats the sample with resist. The film is planarising — thick in a trench, thin over a "
+        "bump, and flat on top — which is what lithography depends on and what a spin coat "
+        "really does."
+        "\n\n"
+        "`spin_speed` decides the thickness, through the resist's own measured spin curve: at "
+        "3000 rpm the generic resist gives 82 nm. `thickness` overrides that when you know "
+        "better, and 0 means 'use the curve'. `spin_time` is recorded and does NOT enter the "
+        "thickness — the curve was measured against speed alone, and inventing a time "
+        "dependence would be inventing data."
+        "\n\n"
+        "Outside the measured 1000-5000 rpm the curve is clamped rather than extrapolated, and "
+        "the run log says so."
+        "\n\n"
+        "Needs: something to coat."
+    ),
 )
 
 EXPOSE_IDEAL = FunctionStep(
@@ -568,6 +584,21 @@ EXPOSE_IDEAL = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_expose_ideal,
+    description=(
+        "Exposes the resist through a mask with no optics at all: wherever the pattern is open "
+        "the resist is marked exposed, exactly, to the edge of the pattern rather than to the "
+        "edge of a cell."
+        "\n\n"
+        "`pattern` chooses a single window or a grating; `center` and `width`, or `period`, "
+        "`duty` and `phase`, place it. It writes the `exposed` field, which is what ideal "
+        "development consumes."
+        "\n\n"
+        "This is the ideal tier: no dose, no blur, no depth. Run `litho.expose_dose` on the "
+        "same stack to see what a real aerial image does to an edge — the difference between "
+        "the two pictures is the point of having both."
+        "\n\n"
+        "Needs: a resist to expose."
+    ),
 )
 
 EXPOSE_DOSE = FunctionStep(
@@ -587,6 +618,18 @@ EXPOSE_DOSE = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_expose_dose,
+    description=(
+        "Exposes the resist with a real aerial image: the mask pattern blurred by `blur`, "
+        "scaled to a peak `dose`, and attenuated with depth through the resist's own absorption "
+        "(Beer-Lambert)."
+        "\n\n"
+        "It writes the `dose` field in mJ/cm^2, which `develop.rate` turns into a shape through "
+        "the resist's contrast curve. A large `blur` is a poor aerial image, and the sloped "
+        "resist wall that follows from it is not modelled anywhere — it is what a blurred dose "
+        "develops into."
+        "\n\n"
+        "Needs: a resist to expose."
+    ),
 )
 
 THRESHOLD_DOSE = FunctionStep(
@@ -607,6 +650,17 @@ THRESHOLD_DOSE = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_threshold,
+    description=(
+        "Turns a `dose` field into an `exposed` one by thresholding it — the one downgrade "
+        "adapter in the set."
+        "\n\n"
+        "It exists to make the direction of information explicit. A dose knows more than a "
+        "yes/no, and throwing that away should be a step somebody chose rather than something "
+        "the engine does quietly. There is no adapter the other way, because there is no way to "
+        "invent the dose that produced a binary image."
+        "\n\n"
+        "Needs: a resist with a `dose` field."
+    ),
 )
 
 DEVELOP_IDEAL = FunctionStep(
@@ -626,6 +680,19 @@ DEVELOP_IDEAL = FunctionStep(
     required=frozenset({capability.of_field(RESIST, EXPOSED.name)}),
     provided=frozenset(),
     run_function=_run_develop_ideal,
+    description=(
+        "Develops the resist in one set operation: every reachable piece of exposed resist — or "
+        "unexposed, for a negative tone — is simply gone. No time, no rate."
+        "\n\n"
+        "`tone` comes from the resist's own develop model and is shown here so you can see "
+        "where the value came from; typing one overrides it. Reachability still applies: resist "
+        "the developer cannot get to stays, which is why a sealed cavity does not clear."
+        "\n\n"
+        "The honest description of this tier is `develop.rate` with infinite contrast. Use that "
+        "one to see a partially developed profile."
+        "\n\n"
+        "Needs: a resist with an `exposed` field."
+    ),
 )
 
 DEVELOP_RATE = FunctionStep(
@@ -641,4 +708,15 @@ DEVELOP_RATE = FunctionStep(
     required=frozenset({capability.of_field(RESIST, DOSE.name)}),
     provided=frozenset(),
     run_function=_run_develop_rate,
+    description=(
+        "Develops for `duration` seconds at the rate the resist's contrast curve gives for the "
+        "local dose, so the front moves at a different speed in every cell."
+        "\n\n"
+        "This is where dose contrast becomes a shape: a high-contrast resist gives a vertical "
+        "wall, a low-contrast one a slope, and an under-exposed window never clears. Unexposed "
+        "resist still creeps at the model's dark rate, which is what thins a film during a long "
+        "develop."
+        "\n\n"
+        "Needs: a resist with a `dose` field."
+    ),
 )

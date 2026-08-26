@@ -313,6 +313,18 @@ SEM = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_sem,
+    description=(
+        "A top-down look at the sample: the connected pieces of each material, counted and "
+        "measured, with the material index map saved as an artifact when there is somewhere to "
+        "put one."
+        "\n\n"
+        "It reads the real geometry — nothing here is mocked — but it is a label map rather "
+        "than a simulated electron image: no edge brightness, no material contrast, no tilt. "
+        "What it is honest about is topology, which is what a picture of a lift-off is usually "
+        "being asked about."
+        "\n\n"
+        "Changes nothing on the sample. Needs: a sample."
+    ),
 )
 
 PROFILOMETER = FunctionStep(
@@ -327,6 +339,17 @@ PROFILOMETER = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_profilometer,
+    description=(
+        "Drags a stylus of radius `tip_radius` across the surface and reports the trace, the "
+        "step height and the roughness."
+        "\n\n"
+        "The tip convolution is the didactically valuable part and is really computed: a trench "
+        "narrower than the tip comes back shallower than it is, and a sharp corner comes back "
+        "rounded, exactly as on a real instrument. Compare the trace against the cross-section "
+        "to see how much of a measurement is the instrument."
+        "\n\n"
+        "Changes nothing on the sample. Needs: a sample."
+    ),
 )
 
 ELLIPSOMETER = FunctionStep(
@@ -341,4 +364,14 @@ ELLIPSOMETER = FunctionStep(
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_ellipsometer,
+    description=(
+        "Reports the thickness of each layer in one column of the sample, in the order they are "
+        "stacked, from the geometry itself."
+        "\n\n"
+        "Exact, with no noise, no drift and no calibration error — which for a didactic tool is "
+        "the right choice: you want to see the process, not the instrument. Real measurement "
+        "uncertainty is a model of its own and is deliberately not here."
+        "\n\n"
+        "Changes nothing on the sample. Needs: a sample."
+    ),
 )
