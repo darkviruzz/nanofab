@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from nanofab_v3 import __version__
+from nanofab_v3.io import replay_cache_for
 from nanofab_v3.processes.contract import CapabilityError, ParameterError
 from nanofab_v3.ui.canvas import CrossSectionCanvas
 from nanofab_v3.ui.panels import (
@@ -42,7 +43,10 @@ from nanofab_v3.ui.panels import (
     StepListPanel,
 )
 from nanofab_v3.ui.scene import OVERLAY_KINDS
+from nanofab_v3.ui.scene import build as build_scene
 from nanofab_v3.ui.session import Session, demo_recipe
+from nanofab_v3.ui.wafer import WaferFan, default_cache_dir
+from nanofab_v3.ui.wafer_view import WaferPanel
 
 APP_NAME = "NanoFab Structure Model"
 """The v2 application's name. The v0.2.0 shell it descends from was "NanoFab Manager"."""
@@ -62,6 +66,8 @@ class MainWindow(QMainWindow):
         self.canvas = CrossSectionCanvas()
         self.revisions = RevisionListPanel()
         self.log = RunLogPanel()
+        self.wafer = WaferPanel()
+        self.wafer.setVisible(False)
         self._overlays: dict[str, QCheckBox] = {}
 
         self.setCentralWidget(self._build_layout())
@@ -72,7 +78,9 @@ class MainWindow(QMainWindow):
         self.steps.run_requested.connect(self._on_run)
         self.revisions.revision_chosen.connect(self._on_revision_chosen)
         self.canvas.hovered.connect(self.statusBar().showMessage)
+        self.wafer.position_chosen.connect(self._on_wafer_position)
 
+        self.log.append(self.session.plugins.describe())
         self._refresh_all()
 
     # -- layout --------------------------------------------------------------
@@ -97,8 +105,11 @@ class MainWindow(QMainWindow):
         splitter.addWidget(left)
         splitter.addWidget(middle)
         splitter.addWidget(right)
+        # Hidden until asked for: a wafer fan is not what an operator looks at
+        # while building a recipe, and nine positions is minutes of solver.
+        splitter.addWidget(self.wafer)
         splitter.setStretchFactor(1, 3)
-        splitter.setSizes([320, 640, 320])
+        splitter.setSizes([320, 640, 320, 300])
         return splitter
 
     def _build_view_controls(self) -> QHBoxLayout:
@@ -140,6 +151,20 @@ class MainWindow(QMainWindow):
         demo = QAction("Run the &lift-off demo", self)
         demo.triggered.connect(self._on_demo)
         session_menu.addAction(demo)
+
+        wafer_menu = self.menuBar().addMenu("&Wafer")
+        fan = QAction("&Fan this recipe over the wafer", self)
+        fan.setToolTip(
+            "Replay the current recipe at the centre and four edge positions "
+            "(plan §8): each one is an independent chain, materialized in the "
+            "background and cached per position."
+        )
+        fan.triggered.connect(self._on_fan_out)
+        wafer_menu.addAction(fan)
+        show = QAction("Show the wafer &map", self, checkable=True)
+        show.toggled.connect(self.wafer.setVisible)
+        wafer_menu.addAction(show)
+        self._wafer_visible_action = show
 
     # -- reacting ------------------------------------------------------------
 
@@ -192,6 +217,65 @@ class MainWindow(QMainWindow):
             revision = self.session.run(step.step_id, step.params)
             self.log.append(self.session.log_lines(revision))
         self._refresh_all()
+
+    # -- the wafer fan (plan §8, §14) ----------------------------------------
+
+    def _on_fan_out(self) -> None:
+        """Materialize the current recipe at the centre and four edge positions.
+
+        The engine has been able to do this since M4; what happens here is a
+        `WaferFan` over the session's own recipe, sharing the one cache directory
+        (`ui.wafer.default_cache_dir`) so a position the session already ran is
+        a 0.11 s replay rather than a 7.6 s solve.
+        """
+        if not len(self.session.recipe):
+            QMessageBox.information(
+                self, "Nothing to fan out", "Run at least one step first."
+            )
+            return
+        cache = replay_cache_for(
+            default_cache_dir(), self.session.recipe, registry=self.session.registry
+        )
+        fan = WaferFan.on_radius(
+            self.session.recipe,
+            radius=60.0,
+            count=4,
+            registry=self.session.registry,
+            library=self.session.library,
+            cache=cache,
+            sink=self.session.sink,
+        )
+        self.wafer.set_fan(fan)
+        self.wafer.setVisible(True)
+        self._wafer_visible_action.setChecked(True)
+        self.wafer.start()
+        self.log.append((f"wafer: materializing {len(fan.positions)} positions",))
+
+    def _on_wafer_position(self, position) -> None:
+        """Show one position's sample — one scene built per selection, not per paint.
+
+        Handoff §4, trap 4: a `SceneSnapshot` is 107 ms, so nine of them per
+        frame is a second a frame. This builds exactly one, for the position that
+        was clicked, and a position that is still solving shows the revisions it
+        already has rather than nothing.
+        """
+        if self.wafer.fan is None:
+            return
+        status = self.wafer.fan.status(position)
+        structure = status.structure
+        if structure is None:
+            self.statusBar().showMessage(status.describe(), 5000)
+            return
+        overlays = [kind for kind, box in self._overlays.items() if box.isChecked()]
+        self.canvas.set_scene(
+            build_scene(
+                structure,
+                library=self.session.library,
+                overlays=overlays,
+                caption=status.describe(),
+            )
+        )
+        self.statusBar().showMessage(status.describe(), 5000)
 
     def _on_save(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Save session into…")

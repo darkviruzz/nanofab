@@ -92,18 +92,22 @@ def _signed_area(loop: np.ndarray) -> float:
 
 
 def test_the_render_model_needs_no_qt() -> None:
-    """`scene` and `session` are Qt-free, and that is the whole ADR-0001 answer.
+    """`scene`, `session` and `wafer` are Qt-free — the whole ADR-0001 answer.
 
     Not a portability nicety. If anything that decides geometry lived on the Qt
     side, this import would drag PySide6 in — so this test failing means the
     thing v2 exists to prevent has started happening again.
+
+    `ui.wafer` joined the list in M5. A wafer fan *drives runs*, which is the
+    other half of the same rule: the widget in `ui.wafer_view` paints a circle
+    per position and decides nothing.
     """
     import subprocess
     import sys
 
     probe = (
         "import sys;"
-        "import nanofab_v3.ui.scene, nanofab_v3.ui.session;"
+        "import nanofab_v3.ui.scene, nanofab_v3.ui.session, nanofab_v3.ui.wafer;"
         "print('PySide6' in sys.modules or 'shiboken6' in sys.modules)"
     )
     result = subprocess.run(
