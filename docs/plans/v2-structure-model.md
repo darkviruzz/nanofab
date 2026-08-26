@@ -2202,3 +2202,179 @@ The exe is 116 MB against M5's measured 115 MB, with Qt frozen in both times, an
 its self-test is unchanged at 4.0 s of solver — which is the point of measuring
 it: three milestones of new steps, a new library format, a resize and a rewritten
 shell, and the seven scenarios cost what they cost in M5.
+
+## 25. Corrections from implementation (M9)
+
+M9 is a bug fix and nothing else: roadmap §4's last milestone, deliberately last
+because it blocks none of the others. What it corrects is §4.2 — specifically the
+one sentence that said the union front needed a *repair*.
+
+### 25.1 The bug, and why it took a real project to find
+
+`docs/plans/m6-m9-roadmap.md` §M9 diagnosed it on `structure.v2`: 241×301 at
+1 nm, 40 nm of silicon, 80 nm of resist, a speck of contamination against the
+left wall, and a `develop_at_rate` that ran 200 sub-steps and 19 mid-motion
+reinitialisations. After half a minute of development the resist was in pieces,
+the speck had holes in it, and the commit gate reported
+
+    band |grad(phi)| - 1 is 0.353, above 0.35
+
+`tests/test_domain_edge.py` reproduces it exactly: the same geometry fails at
+30 s (0.353) and 60 s (0.355) and **passes at 4 s and 16 s**. The bug was
+cumulative, which is why no unit test had it. Every test in this repository ran a
+handful of sub-steps; the failure needed a hundred.
+
+### 25.2 `min_m phi[m]` is not a distance function, and the seam was the small half
+
+§17.1 already recorded that the union field reads exactly zero along a buried
+material seam, and `union_front` already repaired that with a narrow-band
+reinitialisation. M9's finding is that the seam is the *visible* symptom of a
+defect that is not local at all:
+
+> `min_m phi[m]` is not a distance function anywhere **below** such a seam
+> either. It reproduces the lower material's own depth, so a cell 30 nm inside a
+> stack reads −5 because a buried interface passes 5 nm away.
+
+Measured on the reproduction case before the fix, the union along the row through
+the speck's centre read a flat **−4.0 across six columns** — the particle's own
+field, verbatim, because the seam with the resist above it reads zero and the
+particle is 8 nm thick there.
+
+A narrow-band reinitialisation is a five-cell tool pointed at a domain-wide
+defect. It cannot reach, so the kink survives the pass; and the relaxation
+`v − dτ·sign·(|grad| − 1)` pushes the correction a few cells further into the
+volume each time it runs. Nineteen passes make a 45° wedge. **That is the whole
+bug**, and links 2–4 of the roadmap's chain are its consequences:
+
+| roadmap link | what it really was |
+| --- | --- |
+| 2. reinit marches the kink deeper | the repair mechanism, doing what it does |
+| 3. at the wall it tips positive | the kink reaching a column with no front in x |
+| 4. `_clipped` punches it into everything | `max(phi_m, solid)`, faithfully |
+
+### 25.3 The defect is strictly inside the solid, and that bounds the fix
+
+This is the sentence the first attempt was missing, and it cost a full test run
+to learn. **Outside the solid, `min_m phi[m]` is already the exact union
+distance.** Every point of a material's boundary is either on the union's surface
+or strictly inside the solid; the straight segment from an outside cell to a
+strictly-inside point must cross the union surface, so there is always a nearer
+union point, and the minimum over materials picks it. Inside the solid the same
+argument runs the other way — `∂(A∪B) ⊆ ∂A ∪ ∂B`, so `|min_m phi|` **understates**
+the depth, which is exactly the observed −4.0.
+
+Rebuilding the outside anyway is not neutral, it is a loss. Measured, when the
+first version of the fix rebuilt the whole domain:
+
+| | `min_m phi` | rebuilt everywhere | rebuilt inside only |
+| --- | --- | --- | --- |
+| band `\|grad(phi)\| − 1`, 99th pct | 0.024 | 0.339 | **0.162** |
+| ALD sealing a T-profile void | sealed | **10 spurious pockets** | sealed |
+| the etch-stop demo's 350 s etch | passed | **FAIL at 0.436** | passed |
+
+Three tests caught it — `test_conformal_growth_seals_the_cavity_at_half_the_opening`,
+`test_a_sealed_void_stops_shrinking_once_the_precursor_cannot_reach_it`, and
+`test_the_alumina_stops_a_deliberately_long_etch` — and they caught it because a
+cavity is where two facing walls seed opposite offsets into the same cell.
+
+### 25.4 Build the field, do not repair it
+
+`union_front` no longer reinitialises. Inside the solid it **constructs** a
+distance function in one pass (`motion.seeded_distance`):
+
+1. the cells straddling the true solid/empty interface keep `min_m phi[m]`,
+   which is the sub-cell-exact distance exactly there and nowhere else;
+2. every other solid cell takes the Euclidean distance to the nearest such cell,
+   **plus that cell's own sub-cell offset**, signed negative.
+
+`ndimage.distance_transform_edt(..., return_indices=True)` returns both in one
+call, so step 2's correction costs nothing beyond the transform. The result is
+**bit-identical to `min_m phi[m]` on the interface**, so none of the sub-cell
+accuracy this package's measurements depend on (§17.2, §20.4) is spent to buy the
+volume; `tests/test_domain_edge.py` asserts that bit-identity directly.
+
+The wall is handled here rather than in the stencil, and in one line:
+`interface_cells` erodes with `border_value=1`, which says *outside this face the
+array continues as it is here*. Solid cut by a wall is not flagged as an
+interface, and neither is empty space running off the edge — the same statement
+`predicates.open_faces` makes about reachability, made once more where the front
+field is built. §M9's intent (a) is satisfied; its proposed mechanism is not what
+satisfies it.
+
+**The approximation, stated as one.** Adding the seed's offset as a scalar along
+a straight ray is exact where the surface is locally planar and wrong by up to a
+cell where it is not. Measured at the one concave corner in the reproduction case
+— where the speck's dome emerges through the resist plane — the field reads
+−1.7 nm one cell in against a true −0.9, so `|grad(phi)|` reads 1.97 across that
+step. It is bounded by a cell, local to concave corners, and it does not move the
+interface. Clamping the result to within half a cell of the plain mask EDT was
+tried: it costs a second full transform (7.9 ms, i.e. double) and takes the corner
+from 0.97 to 0.59. Not bought.
+
+### 25.5 Two fixes the roadmap proposed that the measurements refuted
+
+Both are recorded in code — in `_clipped`'s docstring and in
+`tests/test_domain_edge.py`'s — because the next person to read §M9 will
+otherwise try them again.
+
+**Ghost cells / Neumann conditions in `kernel.stencil`.** Zeroing the one-sided
+differences at a domain face breaks `test_an_exact_field_is_a_fixed_point` and
+`test_advection_reproduces_the_fast_path_on_a_plane`: the stencil's linear
+continuation is load-bearing, and its module docstring already said so. The
+measurement that settled it was a synthetic wall-cut disk driven through 286
+reinitialisation passes. The wall column is **stable on its own** — worst
+`||grad| − 1|` 0.05, solid cell count constant at 853, no sign flip, `phi[40,:9]`
+unchanged — while the band error grows 0.03 → 0.65 with its worst cells at
+`phi ≈ 0` in the domain **interior**. The wall never needed a boundary condition.
+It needed a union field that was already a distance function when the front got
+there.
+
+**Narrowing `motion._clipped` to the cells the union emptied.** This looks
+obviously right — "no material may stick out of the new union" is a statement
+about a boundary — and it is wrong, measurably. `max(phi_m, solid)` is also what
+keeps a material's field *continuous* as the front approaches; clipping only the
+emptied cells leaves the cell behind the front at its old value and the cell in
+front at the union's, and the jump between them is a gradient of five. Every
+duration failed. What made the understatement harmful was never this line.
+
+### 25.6 What it measures
+
+Reproduction case, `develop_at_rate`, gate report:
+
+| | before | after |
+| --- | --- | --- |
+| 30 s: band `\|grad(phi)\| − 1` (tol. 0.35) | **0.353 FAIL** | **0.117 PASS** |
+| 60 s | **0.355 FAIL** | **0.094 PASS** |
+| 16 s / 4 s | 0.181 / 0.207 | 0.110 / 0.209 |
+| mid-motion reinit passes at 30 s | 96 | 119 |
+| union at the wall, row 120, columns 0–7 | flat `−4.0` | `−9.75 −8.76 −7.77 −6.78 …` |
+| `\|front − min_m phi\|` on the 612 interface cells | — | **0.0** |
+| particle cells / connected components | 100 / 1 | 100 / 1 |
+| `union_front`, 241×301 | 14.2 ms | **6.4 ms** |
+| the 30 s develop, end to end | 6.30 s | 6.27 s |
+
+Three of those deserve a sentence.
+
+**The error stops growing.** Before the fix it tracked the number of
+reinitialisation passes — 0.207 at 15 passes, 0.353 at 96. After it, 119 passes
+(0.117) are no worse than 15 (0.209), and 239 passes give the best reading in the
+table. That is the difference between a defect that accumulates and one that is
+not there.
+
+**The reinit count went up, not down** (96 → 119), and that is not a regression.
+The distortion trigger fires on the band gradient error; with a union that is a
+distance function, the sub-step field is measured honestly rather than against a
+kink that made some cells look fine. More passes, each doing less.
+
+**One transform beats a relaxation**: `union_front` is 2.2× faster, because a
+narrow-band reinitialisation iterates and an EDT does not. End to end the develop
+costs the same, because the extra passes spend the saving — which is the right
+trade to have made, and worth knowing it was free.
+
+### 25.7 What M9 did not fix
+
+Nothing in the reproduction case, now: the speck keeps all 100 of its cells as
+one component through 60 s of a development it is not subject to. The §18.5
+velocity-extension collar is still there — it is what made the earlier, broken
+runs erode a thin body from both sides — but with a valid union field it no
+longer bites at this geometry. Backlog, not M9.

@@ -430,6 +430,37 @@ hinterlegt, sie wird nur vom Stencil unterlaufen.
 ohne Overlap-FAIL und ohne Materialaufspaltung durch; ein Regressionstest
 fixiert genau ihn; die 394 Tests bleiben grün.
 
+#### Erledigt — mit zwei Korrekturen an der Diagnose
+
+Die Ursachenanalyse oben stimmt in Punkt 1 und in der Reihenfolge; die beiden
+vorgeschlagenen *Mechanismen* haben die Messungen widerlegt. Plan §25 hält beides
+vollständig fest, hier die Kurzfassung:
+
+- **(a) Ghost-Cells im Stencil waren nicht nötig und nicht richtig.** Die lineare
+  Fortsetzung an Domainflächen ist tragend — sie auf Neumann umzustellen bricht
+  `test_an_exact_field_is_a_fixed_point` und
+  `test_advection_reproduces_the_fast_path_on_a_plane`. An einer synthetischen
+  randgeschnittenen Scheibe über 286 Reinit-Pässe ist die **Randspalte stabil**
+  (`max ||grad|−1| = 0.05`, Zellzahl konstant, kein Vorzeichenwechsel); was wächst,
+  ist der Bandfehler bei `phi ≈ 0` im **Inneren** — also Punkt 1. Die Wand
+  brauchte keine Randbedingung, sondern ein Union-Feld, das schon eine
+  Distanzfunktion ist, wenn die Front dort ankommt. Erledigt wird das eine Zeile
+  weiter oben: `motion.interface_cells` erodiert mit `border_value=1`, wodurch von
+  der Wand geschnittener Festkörper gar nicht erst als Grenzfläche zählt.
+- **(b) Das Union-Feld wird jetzt gebaut statt repariert** — aber **nur innerhalb
+  des Festkörpers**. Außerhalb ist `min_m phi_m` bereits die exakte
+  Union-Distanz (Beweis in §25.3), und es trotzdem neu zu bauen kostete drei
+  Tests: eine ALD, die eine Kaverne zuwachsen lässt, hinterließ zehn
+  Scheinporen. Punkt 4 (`_clipped`) ist keine eigene Baustelle: die Verengung auf
+  die geleerten Zellen wurde versucht und lässt jede Dauer scheitern, weil `max`
+  auch die Stetigkeit des Feldes vor der Front hält.
+
+**Ergebnis:** `tests/test_domain_edge.py` fixiert den Reproduktionsfall bei 4/16/
+30/60 s. Vorher: FAIL bei 30 s (0.353) und 60 s (0.355). Nachher: PASS bei 0.117
+bzw. 0.094, das Partikel behält alle 100 Zellen als *eine* Komponente, und der
+Fehler wächst nicht mehr mit der Zahl der Reinit-Pässe. `union_front` ist dabei
+2,2× schneller (14.2 → 6.4 ms), weil eine Transformation nicht iteriert.
+
 ## 5. Was diese Roadmap bewusst *nicht* umfasst
 
 Siehe `docs/plans/backlog-later.md`.
