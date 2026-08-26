@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "material_id": "alumina",
+  "name": "ALD alumina",
+  "display_color": "#9ccfd8",
+  "rates": {
+    "deposit": 1.0,
+    "dry_etch": 0.6,
+    "ion_beam": 0.7,
+    "wet_etch": 0.2
+  },
+  "density": 3.0,
+  "optical_n": 1.77,
+  "optical_k": 0.0
+}

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "material_id": "silicon",
+  "name": "Silicon",
+  "display_color": "#6b7a8f",
+  "rates": {
+    "dry_etch": 2.0,
+    "ion_beam": 1.0,
+    "wet_etch": 0.0
+  },
+  "sputter_response": {
+    "rise": 2.0,
+    "fall": 1.0
+  },
+  "density": 2.33,
+  "optical_n": 1.57,
+  "optical_k": 3.57
+}

@@ -40,12 +40,24 @@ branch (`AGENTS.md` §7). Four things differ, and each is a decision:
    else's machine. A smaller download is not worth a class of failure that only
    appears there.
 
+5. **`datas` carries `nanofab_v3/data/materials/`.** Since M6 the material
+   library is fourteen JSON files rather than a Python literal (roadmap E14),
+   and PyInstaller collects data only when told to. Without this the exe starts,
+   fails to find a single `MaterialType`, and every scenario dies at the first
+   rate lookup — the same class of build-only failure as note 2, which is why
+   `materials.store.builtin_materials_dir()` checks `importlib.resources` first
+   and the package directory second, and why `--selftest` prints how many
+   materials it loaded.
+
 `excludes` drops the test and packaging machinery: pytest is not part of the
 delivery, and `--selftest` runs the scenarios out of `nanofab_v3.acceptance`
 instead — which is the whole reason that module is in the package.
 """
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+# See note 5: the material library is data files inside the package.
+datas = collect_data_files("nanofab_v3", includes=["data/materials/*.json"])
 
 hiddenimports = [
     # `builtin_registry()` imports these inside the function (see note 2).
@@ -68,7 +80,7 @@ a = Analysis(
     ["nanofab_v3/__main__.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

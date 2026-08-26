@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "material_id": "underlayer",
+  "name": "Lift-off underlayer",
+  "display_color": "#c98a3a",
+  "rates": {
+    "dry_etch": 0.6,
+    "ion_beam": 1.3,
+    "wet_etch": 0.0
+  },
+  "sputter_response": {
+    "rise": 1.5,
+    "fall": 1.0
+  },
+  "develop": {
+    "clearing_dose": 60.0,
+    "clear_rate": 35.0,
+    "dark_rate": 0.4,
+    "contrast": 1.5,
+    "tone": "positive"
+  },
+  "dissolve": {
+    "solvent": "acetone",
+    "rate": 60.0,
+    "swells": true
+  },
+  "density": 1.15,
+  "optical_n": 1.55,
+  "optical_k": 0.0
+}

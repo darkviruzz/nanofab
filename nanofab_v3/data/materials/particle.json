@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "material_id": "particle",
+  "name": "Particle",
+  "display_color": "#8d6e63",
+  "rates": {
+    "dry_etch": 0.3,
+    "ion_beam": 0.6,
+    "wet_etch": 0.0
+  },
+  "sputter_response": {
+    "rise": 1.6,
+    "fall": 1.0
+  },
+  "density": 2.5,
+  "optical_n": 1.6,
+  "optical_k": 0.1
+}

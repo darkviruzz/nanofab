@@ -11,11 +11,28 @@ The library is passed *into* a process (`StepContext.library`), never stored in 
 changed when the library was corrected, and every cached revision would have to
 be replayed to find out.
 
-The numbers in `didactic_library()` are **didactic, not calibrated** (plan §1
-tier a): they are chosen so the four acceptance scenarios show the mechanism at a
-readable scale, and their ratios carry the physics that matters — a mask that
-does not etch, a resist that dissolves and a metal that does not, an oxide that a
-wet etchant attacks and silicon that it does not.
+**Since M6 there is no material in this file.** Roadmap E14 moved the whole
+library to `data/materials/*.json`, one file per material, and `didactic_library()`
+below is a *loader*: `materials.store` decides which directories it reads and
+`materials.schema` decides what one file looks like. The migration's acceptance
+criterion was bit-identity rather than equivalence — `tests/test_material_files.py`
+holds the pre-migration models as literals and compares against them — because a
+library that is only *nearly* what the code held is a library under which a
+cached revision means something slightly different from what it meant when it was
+computed.
+
+What stayed in code is the `MaterialId` constants below, and those are names
+rather than definitions: `RESIST` is the string the resist steps default to, not
+a description of a resist. A constant naming a material nobody ships would be a
+`KeyError` at its first lookup, so the suite checks that each one resolves.
+
+The numbers on disk are **didactic, not calibrated** (plan §1 tier a, backlog
+B7): they are chosen so the acceptance scenarios show the mechanism at a readable
+scale, and their ratios carry the physics that matters — a mask that does not
+etch, a resist that dissolves and a metal that does not, an oxide that a wet
+etchant attacks and silicon that it does not.
+`data/materials/README.md` says which numbers come from the student process table
+of roadmap §3 and which were chosen for a scenario; a file may say so per rate.
 """
 
 from __future__ import annotations
@@ -32,11 +49,14 @@ from nanofab_v3.materials.material import (
     DRY_ETCH,
     ION_BEAM,
     WET_ETCH,
-    DevelopModel,
-    DissolveModel,
     MaterialId,
     MaterialType,
-    SputterResponse,
+)
+from nanofab_v3.materials.store import (
+    LibraryReport,
+    builtin_materials_dir,
+    cached_library,
+    material_roots,
 )
 
 SILICON = MaterialId("silicon")
@@ -127,136 +147,40 @@ class MaterialLibrary:
         return {key: entry.display_color for key, entry in self.entries.items()}
 
 
+# -- the two libraries, and why there are two (plan §21.6's rule, one layer down)
+
+
 def didactic_library() -> MaterialLibrary:
-    """The material set the built-in processes of plan §6 are written against.
+    """The shipped material set, read from `data/materials/*.json` (E14).
 
-    Eight materials, chosen to be exactly what S1-S5 need and no more:
+    The **shipped root only**, deliberately. This is what the process tests, the
+    acceptance scenarios and `--selftest` run against, and plan §21.6 already
+    settled the reason for its registry twin: a check whose numbers depended on
+    what happened to be in somebody's home directory would answer differently on
+    every machine, and the material library is the one input the scenarios are
+    least able to notice a change in. `application_library()` is what an
+    application takes.
 
-    - `silicon` — the substrate. Etched by the dry techniques, untouched by the
-      developer and by the buffered-oxide wet etchant, which is what makes the
-      wet etch of S2 stop at the interface instead of running away.
-    - `oxide` — thermal SiO2, the S2 masking/etched layer: the wet etchant's
-      target, so its undercut is the ratio S2 measures.
-    - `resist` — a positive-tone polymer with a develop model and a solvent. The
-      only material in the set that both develops and dissolves, which is what
-      makes it the resist rather than a naming convention.
-    - `underlayer` — the non-imaging lower half of a bilayer lift-off stack (a
-      real LOR). Lower contrast and a faster developer rate than the imaging
-      resist, which is what makes it clear wider and leave the **undercut**
-      profile S4 needs; it dissolves in the same bath.
-    - `metal` — the evaporated/sputtered film of S1 and S4. No develop model, no
-      solvent: it is what survives lift-off, and it survives because nothing in
-      the bath attacks it.
-    - `alumina` — the conformal ALD film of S3. Its only job is to be deposited
-      over a resist sidewall and seal it, so its rates matter less than its
-      presence.
-    - `resist_hardbaked` — what `resist` becomes above its own bake temperature,
-      and the reason `anneal.thermal` needs no mutable library (plan §21.2). Same
-      geometry, a different entry: the develop model is gone, the solvent no
-      longer attacks it (`dissolve=None`), and it etches half as fast. A resist
-      hard-baked before lift-off is a resist lift-off cannot remove, which is a
-      real mistake with a shape in this model rather than a table of numbers.
-    - `particle` — airborne debris, and the only material in the set that is not
-      *deposited* by anything: it arrives. Inert in every bath (a `WET_ETCH` rate
-      of zero and no `dissolve` model), which is exactly what makes S5's
-      micromasking a **reachability** finding rather than a chemistry one — the
-      particle a clean leaves behind is one it could not reach, never one it
-      could not attack. It erodes slowly under the dry techniques, because a
-      particle that survived an ion beam untouched would be a wall rather than a
-      defect.
+    Strict: a malformed file in the shipped root is a build defect, and the
+    honest failure is an exception rather than a library that is quietly one
+    material short. Memoised on the root path, because
+    `processes.engine.run_step` falls back to it once per step.
     """
-    return MaterialLibrary.of(
-        MaterialType(
-            material_id=SILICON,
-            name="Silicon",
-            display_color="#6b7a8f",
-            rates={DRY_ETCH: 2.0, ION_BEAM: 1.0, WET_ETCH: 0.0},
-            sputter_response=SputterResponse(rise=2.0, fall=1.0),
-            density=2.33,
-            optical_n=1.57,
-            optical_k=3.57,
-        ),
-        MaterialType(
-            material_id=OXIDE,
-            name="Silicon dioxide",
-            display_color="#cfd8dc",
-            rates={WET_ETCH: 1.0, DRY_ETCH: 1.5, ION_BEAM: 0.8},
-            sputter_response=SputterResponse(rise=1.8, fall=1.0),
-            density=2.20,
-            optical_n=1.47,
-            optical_k=0.0,
-        ),
-        MaterialType(
-            material_id=RESIST,
-            name="Positive resist",
-            display_color="#e8b84b",
-            rates={DRY_ETCH: 0.5, ION_BEAM: 1.2, WET_ETCH: 0.0},
-            sputter_response=SputterResponse(rise=1.5, fall=1.0),
-            develop=DevelopModel(
-                clearing_dose=100.0, clear_rate=20.0, dark_rate=0.05, contrast=4.0
-            ),
-            dissolve=DissolveModel(solvent="acetone", rate=40.0, swells=True),
-            density=1.19,
-            optical_n=1.51,
-            optical_k=0.0,
-            absorption=0.0015,
-        ),
-        MaterialType(
-            material_id=HARD_RESIST,
-            name="Hard-baked resist",
-            display_color="#8a6d1f",
-            rates={DRY_ETCH: 0.25, ION_BEAM: 0.9, WET_ETCH: 0.0},
-            sputter_response=SputterResponse(rise=1.5, fall=1.0),
-            density=1.28,
-            optical_n=1.58,
-            optical_k=0.0,
-            absorption=0.0015,
-        ),
-        MaterialType(
-            material_id=UNDERLAYER,
-            name="Lift-off underlayer",
-            display_color="#c98a3a",
-            rates={DRY_ETCH: 0.6, ION_BEAM: 1.3, WET_ETCH: 0.0},
-            sputter_response=SputterResponse(rise=1.5, fall=1.0),
-            develop=DevelopModel(
-                clearing_dose=60.0, clear_rate=35.0, dark_rate=0.4, contrast=1.5
-            ),
-            dissolve=DissolveModel(solvent="acetone", rate=60.0, swells=True),
-            density=1.15,
-            optical_n=1.55,
-            optical_k=0.0,
-            absorption=0.0,
-        ),
-        MaterialType(
-            material_id=METAL,
-            name="Metal",
-            display_color="#d9a441",
-            rates={DEPOSIT: 1.0, ION_BEAM: 1.5, DRY_ETCH: 0.2, WET_ETCH: 0.0},
-            sputter_response=SputterResponse(rise=2.2, fall=1.0),
-            density=19.3,
-            optical_n=0.47,
-            optical_k=2.83,
-        ),
-        MaterialType(
-            material_id=PARTICLE,
-            name="Particle",
-            display_color="#8d6e63",
-            rates={DRY_ETCH: 0.3, ION_BEAM: 0.6, WET_ETCH: 0.0},
-            sputter_response=SputterResponse(rise=1.6, fall=1.0),
-            density=2.5,
-            optical_n=1.60,
-            optical_k=0.10,
-        ),
-        MaterialType(
-            material_id=ALUMINA,
-            name="ALD alumina",
-            display_color="#9ccfd8",
-            rates={DEPOSIT: 1.0, WET_ETCH: 0.2, DRY_ETCH: 0.6, ION_BEAM: 0.7},
-            density=3.0,
-            optical_n=1.77,
-            optical_k=0.0,
-        ),
-    )
+    library, _ = cached_library((builtin_materials_dir(),), strict=True)
+    return library
+
+
+def application_library() -> tuple[MaterialLibrary, LibraryReport]:
+    """The shipped set plus the operator's own directory, and what that found.
+
+    The counterpart of `processes.plugins.application_registry()`: an application
+    reads both roots, a later one shadowing an earlier one, so a material E15's
+    dialog wrote is simply there next time. Lenient — one malformed file in a
+    writable directory costs that material and nothing else, because an
+    application whose material list is empty over a stray comma is worse than one
+    that is missing a material it can be told about again.
+    """
+    return cached_library(material_roots(), strict=False)
 
 
 __all__ = [
@@ -268,7 +192,9 @@ __all__ = [
     "OXIDE",
     "RESIST",
     "SILICON",
+    "LibraryReport",
     "MaterialLibrary",
+    "application_library",
     "didactic_library",
     "DEPOSIT",
     "DEVELOP",

@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "material_id": "resist",
+  "name": "Positive resist",
+  "display_color": "#e8b84b",
+  "rates": {
+    "dry_etch": 0.5,
+    "ion_beam": 1.2,
+    "wet_etch": 0.0
+  },
+  "sputter_response": {
+    "rise": 1.5,
+    "fall": 1.0
+  },
+  "develop": {
+    "clearing_dose": 100.0,
+    "clear_rate": 20.0,
+    "dark_rate": 0.05,
+    "contrast": 4.0,
+    "tone": "positive"
+  },
+  "dissolve": {
+    "solvent": "acetone",
+    "rate": 40.0,
+    "swells": true
+  },
+  "density": 1.19,
+  "optical_n": 1.51,
+  "optical_k": 0.0,
+  "absorption": 0.0015
+}

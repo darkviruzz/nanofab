@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "material_id": "oxide",
+  "name": "Silicon dioxide",
+  "display_color": "#cfd8dc",
+  "rates": {
+    "dry_etch": 1.5,
+    "ion_beam": 0.8,
+    "wet_etch": 1.0
+  },
+  "sputter_response": {
+    "rise": 1.8,
+    "fall": 1.0
+  },
+  "density": 2.2,
+  "optical_n": 1.47,
+  "optical_k": 0.0
+}

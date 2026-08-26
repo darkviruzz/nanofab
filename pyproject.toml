@@ -28,6 +28,14 @@ ui = ["PySide6>=6.6"]
 [tool.setuptools.packages.find]
 include = ["nanofab_v3*"]
 
+# The material library is data, not code (roadmap E14), and it lives *inside* the
+# package so that it travels with a wheel the same way it travels with a
+# checkout. A `data/` beside `nanofab_v3/` would be in git and absent from every
+# install — a library that loads from the source tree and is missing from the
+# distribution only shows up when somebody runs `--selftest` elsewhere.
+[tool.setuptools.package-data]
+nanofab_v3 = ["data/materials/*.json", "data/materials/README.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

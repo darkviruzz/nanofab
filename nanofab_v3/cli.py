@@ -17,12 +17,18 @@ and a display.
 
 ## What `--version` reports, and why it is not just a number
 
-It prints `code_version()`, how many processes are registered, and what
-entry-point discovery loaded or refused. On somebody else's machine those three
-are the first questions — "which build is this", "does it have the steps",
-"did the plugin load" — and a version string alone answers none of them. It is
-also the one place a `DiscoveryReport`'s failures are visible without opening the
-application, which matters because discovery never raises.
+It prints `code_version()`, how many processes are registered, how many
+materials loaded and from where, and what entry-point discovery loaded or
+refused. On somebody else's machine those are the first questions — "which build
+is this", "does it have the steps", "does it have the *materials*", "did the
+plugin load" — and a version string alone answers none of them. It is also the
+one place a `DiscoveryReport`'s or a `LibraryReport`'s failures are visible
+without opening the application, which matters because neither ever raises.
+
+The material count is there because of how its absence fails. The library is data
+files inside the package (roadmap E14) and a build that did not collect them
+starts fine and dies at the first rate lookup; `materials: 0` on the version line
+says so in one word.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ from typing import Sequence
 from nanofab_v3 import __version__
 from nanofab_v3.acceptance import ScenarioResult, run_all, scenarios
 from nanofab_v3.io.manifest import code_version
+from nanofab_v3.materials import application_library
 from nanofab_v3.processes.plugins import application_registry
 
 
@@ -128,6 +135,11 @@ def describe_build(stream=None) -> int:
         sample = registry.digest(sorted(registry.steps)[0])
         mode = "wrapper source" if sample.startswith("src:") else "contract only (no source)"
         print(f"step digests: {mode}", file=out)
+    _, library_report = application_library()
+    for line in library_report.describe():
+        print(line, file=out)
+    for root in library_report.roots:
+        print(f"materials root: {root}", file=out)
     for line in discovery.describe() or ("plugins: none found",):
         print(line, file=out)
     if getattr(sys, "frozen", False):
