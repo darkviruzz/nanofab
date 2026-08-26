@@ -25,18 +25,26 @@ One physical layer of material stacked on the `Substrate` (resist, metal, dielec
 _Avoid_: "film" (unless directly quoting deposition-process terminology).
 
 **Artifact**:
-A persisted output (image, table, mesh, log) referenced from a `SampleState` via an `ArtifactRef`, rather than embedded inline. Keeps heavy data out of the state itself.
-_Avoid_: "file", "output" alone.
+A persisted output (image, table, mesh, log) referenced from a `SampleState` via an `ArtifactRef`, rather than embedded inline. Keeps heavy data out of the state itself. A step is pure and cannot open a file, so one that produces an artifact is handed an **`ArtifactSink`** (`StepContext.artifacts`) and gets the ref back; a step with no sink produces no ref and still measures everything, because a reference to a file nobody wrote is worse than none.
+_Avoid_: "file", "output" alone; "artifact" for the payload (that is what the ref points at).
 
 ### Process & execution
 
 **Recipe**:
-The ordered sequence of process steps and their parameters a run is meant to follow, over one `Grid`. A dedicated object since M4 (`runtime.Recipe`); a parameter value may be a function over the wafer rather than a number. Its `fingerprint()` is what the replay cache is keyed on, so a changed parameter retires everything downstream of it.
+The ordered sequence of process steps and their parameters a run is meant to follow, over one `Grid`. A dedicated object since M4 (`runtime.Recipe`); a parameter value may be a function over the wafer rather than a number. Its `fingerprint()` is what the replay cache is keyed on, so a changed parameter retires everything downstream of it — and since M5 it also carries each step's `Implementation digest`, so a changed *step* does too.
 _Avoid_: "process" alone (too broad), "workflow".
+
+**Implementation digest**:
+What a registered step *is*, as a string that moves when its behaviour could have: its id, fidelity, parameter schema, capability contract and the source of its own wrapper (`processes.registry.implementation_digest`). The finer of the cache key's two axes. `code_version()` is the coarse one and stays `nanofab_v3.__version__` — it covers what a recipe cannot name, the kernel and numpy and the interpreter — so the digest is what puts a *plugin's* code into the key at all. It covers the wrapper and not the kernel behind it: that is the division of labour, and it only works if both are maintained. A source-less build (a frozen exe) falls back to the contract alone and marks itself `nosrc:`, so the two never trade cache entries.
+_Avoid_: "version" for it, "hash" alone (the recipe hash is what contains it).
 
 **Run**:
 One `Recipe` over an extensible set of wafer positions, default `{center}`, each position owning an independent revision chain (`runtime.Run`). A position is materialized on first access and adding one later is the ordinary path, not a special case — which is what ADR-0004 rejected eager fan-out to get.
 _Avoid_: "session" (that is one interactive run at one position — `ui.Session`), "job".
+
+**Wafer fan**:
+A `Run`'s positions materialized in the background, with a status per position that a view can read at any moment (`ui.WaferFan`). Pending, running, done and failed are four values of one field, which is what makes partial results the normal state rather than a mode: the map paints the same way a second after the run started as when it finished. Qt-free, because it drives runs.
+_Avoid_: "wafer map" for the runner (that is the widget), "batch".
 
 **Step** (Process Step):
 One stage of a recipe/run — consumes an input `SampleState`, applies one transformation (e.g. thin-film deposition), and emits an output `SampleState` as a new revision. Implemented as a `ProcessStepModule`.
@@ -95,6 +103,10 @@ The reduction or absence of flux on a surface because another part of the sample
 occludes the line to the source. Only meaningful for a directional process — an
 isotropic one has no line to block.
 _Avoid_: "masking" (that's a deliberate patterning layer), "occlusion" alone.
+
+**Micromasking**:
+A particle or residue that shields what is under it from a process, leaving a defect the process itself cannot explain. In this model it is a **reachability** finding and never a chemistry one: a particle buried under a later film has no path to the outside, so a clean leaves it and whatever it masked stays masked. The same query that makes a sealed cavity stop being fed (`reachable_occurrences`) answers it, with no special case anywhere.
+_Avoid_: "contamination" alone (that is the particle, not what it did), "masking" (that is a deliberate patterning layer).
 
 **Undercut**:
 Material removed laterally beneath a masking layer, so the mask overhangs the feature

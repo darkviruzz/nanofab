@@ -330,7 +330,9 @@ parameters** already resolved for this wafer position (§8), and a seeded RNG.
 measurements (`Quantity`), logs. Inspection steps (SEM, profilometry, ellipsometry)
 return the input structure unchanged plus artifacts/measurements — they are ordinary
 steps in the chain (Q6), which is what makes "etch, inspect, etch, inspect" four
-plain steps.
+plain steps. *(→ §21.7: "unchanged" is the same object, not an equal one, which is
+what makes an inspection cost 25 ms and no memory; and a pure step cannot open a
+file, so producing an artifact needs `StepContext.artifacts`, a sink.)*
 
 ### 5.2 Determinism (invariant, ADR-0004)
 
@@ -340,6 +342,10 @@ defects) draws from the context RNG, which is seeded from (recipe id, position,
 step index). This is what makes replay materialization (§8) and caching sound.
 Registry registration rejects steps that declare stochastic behaviour without using
 the context RNG (best-effort: no direct `np.random` imports in plugin lint).
+*(→ §21.1: "code version" turned out to be two axes once a plugin can change the
+answer — `__version__` stays coarse and each registered step's implementation
+digest goes into the recipe hash; → §21.4: `particle.seed` is the first
+registered step to exercise any of this.)*
 
 ### 5.3 Capabilities
 
@@ -360,7 +366,9 @@ Processes register through a registry fed by entry points (in-tree builtins use 
 same mechanism). Several registered processes may model the same physical technique
 at different fidelity ("Evaporation (ideal)", "Evaporation (with divergence)") and
 share kernel primitives — duplication lives in thin process wrappers, physics lives
-once in the kernel (I7).
+once in the kernel (I7). *(→ §21.6: the registry arrived in M3 and the entry points
+in M5; what an entry point may resolve to, why discovery reports instead of
+raising, and why `builtin_registry()` must stay a fixed set are settled there.)*
 
 ## 6. Built-in didactic process set (target of milestone M3)
 
@@ -380,10 +388,10 @@ once in the kernel (I7).
 | ALD | conformal offset per cycle count (fast path) |
 | Strip / dissolve | material-selective removal, reachability-gated |
 | Lift-off | dissolve resist + remove unsupported components (§4.4) |
-| Anneal / property change | update fields/material models; optional isotropic reflow later |
-| Particles | seeded disk constructors of a particle material |
+| Anneal / property change | update fields/material models; optional isotropic reflow later (→ §21.2: the new rates live in the library as a *second entry* and the geometry is reassigned to it; the library stays immutable) |
+| Particles | seeded disk constructors of a particle material (→ §21.4: resting on the surface, never at a random point in the domain) |
 | Clean | remove particle material where reachable (micromasking = unreachable survivors) |
-| Inspect: SEM/profilometer/ellipsometer | artifact + measurement producers from structure/fields |
+| Inspect: SEM/profilometer/ellipsometer | artifact + measurement producers from structure/fields (→ §21.7: and the first steps to need an `ArtifactSink`) |
 
 ## 7. Predicates
 
@@ -409,6 +417,9 @@ them; the commit gate reuses the cheap ones.
   exactly what it would have been. Lazy, cached per (recipe hash, position, step,
   code version); a 20-step replay is seconds to ~a minute at defaults (budget §13),
   run as a background job (docs §9.2 already requires job management).
+  *(→ §21.1: the recipe hash gained a per-step implementation digest, which is
+  where a plugin's code enters the key at all; → §21.5: the job runner is
+  `ui.wafer.WaferFan`, and its second look at a position is a cache read.)*
 - Determinism boundary stated honestly: bit-identity is guaranteed on one machine +
   code version; cross-machine float drift is accepted and handled by the
   code-version cache key.
@@ -446,6 +457,12 @@ pytest); **ship one PyInstaller exe** with the builtin process set and numpy/sci
 frozen (plugins usable in source installs; frozen app extension = rebuild). Heavy
 external solvers, when they come, run as subprocesses with their own environment and
 talk through §9's exchange format. Explicitly no multi-exe delivery.
+*(→ §21.6: "from day 1" was half true — the registry was, the entry points arrived
+in M5 — and "frozen app extension = rebuild" is literally true, measured: a plugin
+installed for the host Python is invisible to the exe. → §21.5: the exe is 115 MB
+and costs 2.4 s of startup over a source install. The DoD's S1–S5 run through a
+`--selftest` flag against `nanofab_v3.acceptance`, because a checkable claim needs
+an exit code; the reasoning is in that module.)*
 
 ## 12. What v2 deliberately does not carry over
 
@@ -499,6 +516,7 @@ pytest from M0 (the repo currently has no tests; AGENTS.md validation extends fr
   *(The position fan's engine exists as of M4 — `Run` over an extensible position
   set, `runtime.positions_on_radius`, and a cache keyed per position — so M5's
   share of it is the view.)*
+  *(→ §21 for what M5 measured and corrected; the milestone record is below.)*
 
 v1 (`cross_section_general_prototype.py`) stays untouched next to v2 until M3's
 acceptance tests pass, per AGENTS.md §7; then it becomes a `ui_backups/` snapshot.
@@ -525,6 +543,30 @@ runs S1 end to end interactively. 314 tests green; corrections in §20. What M5
 starts from is that plus one deliberate absence — inspection steps, particles,
 clean and anneal are still unregistered (§19's note 11), and they are what the
 artifact plumbing built here exists for.
+
+**M5 done, 2026-08-26. DoD met**: the packaged exe runs the acceptance
+scenarios — `./dist/nanofab_v3 --selftest` reports **7 of 7 passed** in 6.9 s and
+exits 0, on a 115 MB single-file build with the builtins and numpy/scipy frozen
+in. Everything §14 asks for is there: entry-point discovery through the same
+`register()` seam every builtin uses, with an in-tree example plugin in its own
+package that a test really builds and installs; particles and clean, with
+micromasking as a scenario of its own (**S5**, plus its control); the three
+inspection steps, which are what finally closed M4's open artifact wire; anneal
+as fields and material models, reflow left to §16; and the wafer view — a
+Qt-free job runner over `Run`'s positions showing partial results, and a widget
+that paints them and decides nothing.
+
+Two things about the *shape* of the milestone, since it is the last one on this
+list. The scenarios moved into the package (`nanofab_v3.acceptance`) because an
+exe carries no pytest, and `tests/test_scenarios.py` now builds its chains from
+the same recipes and asserts the shipped ones pass — one definition, and the two
+cannot drift without the suite going red. And the self-test is a **flag** rather
+than a menu entry, because the DoD is a checkable claim: a flag has an exit code,
+a menu entry needs a display, a human and their report of what they saw.
+
+**394 tests green** (314 at the end of M4, so 80 are new), `python -m compileall nanofab_v3 tests` clean. Corrections
+and the measured delivery budget in §21; what is deliberately left open past this
+milestone is §21.8.
 
 ## 15. Risks
 
@@ -1302,3 +1344,318 @@ a warm replay of the same is under half a second.
 the upwind stencil over the whole domain, not the flux, not the reachability
 gate, and not persistence. A true narrow-band solver remains the structural fix
 that is deliberately not built.
+
+## 21. Corrections from implementation (M5)
+
+M5 built no model. Every line of it is packaging, a view, or one of the four §6
+rows M3 and M4 deliberately left out — so the failure modes changed again, and
+the handoff predicted where: *"M5 in ways that only appear in the frozen exe on
+somebody else's machine"*. That prediction was half right. The exe did produce
+two findings (§21.1's fallback confirmed, §21.6's plugin boundary), and both were
+already *written down* as expectations rather than discovered; what actually went
+wrong was ordinary Python (§21.3) and a layering assumption in the handoff itself
+(§21.7).
+
+§20's findings were about values and costs. §21's are about **boundaries** — what
+a cache key covers, what a step may reach, what a frozen build is.
+
+### 21.1 The cache key has two axes, and the per-step one belongs in the recipe hash
+
+The decision the M5 handoff (§3) asked to be taken first, taken as recommended.
+
+ADR-0004 keys a cached revision on `(recipe hash, position, step index, code
+version)` and M4 implemented `code_version()` as `nanofab_v3.__version__`,
+writing down that bumping it is "the intended and only mechanism" for retiring a
+cache. That is honest while this package is the only code that can change. It
+stops being honest the moment a plugin ships a step: a third-party
+`deposit.mocvd` can change its rate model without `__version__` moving, and every
+revision cached under the old one is then served as if it were current. Nothing
+errors — the numbers are quietly from the previous version. The same hole is
+already open without plugins, because editing a builtin's own wrapper during
+development does not move `__version__` either.
+
+So: **two axes.**
+
+- `code_version()` stays `__version__` and stays coarse. It covers what a recipe
+  cannot name — the kernel, numpy/scipy, the interpreter — and it is the axis
+  ADR-0004's cross-machine-drift paragraph is about. Bumping it retires
+  everything, everywhere.
+- `processes.registry.implementation_digest(step)` digests the step's `step_id`,
+  `fidelity`, parameter schema, capability contract and the source of its own
+  wrapper. It goes into the **recipe** hash (`RecipeStep.fingerprint(digest)`,
+  `Recipe.fingerprint(digests)`, `io.store.recipe_hash(recipe, registry=...)`),
+  so editing a step retires exactly the recipes that use it and editing an unused
+  plugin retires nothing.
+
+Measured over the 18 builtins as they stood: **3.6 ms per step cold** (64–69 ms
+for all of them; the first `inspect.getsource` on a module pays for reading it
+into `linecache`) against **0.00015 ms** memoised on the registry. A six-step
+recipe therefore pays ~21 ms the first time it is hashed and nothing after —
+which is what makes it affordable for a wafer fan, where the hash is taken once
+per position.
+
+**The limit, stated because it is not obvious: the digest covers the step's
+wrapper, not the kernel it calls.** `deposit.evaporate`'s `run_function` is 16
+lines of parameter unpacking around `kernel.flux`; a change inside
+`kernel/flux.py` does not move it. That is the division of labour — the wrapper
+is what a plugin owns, the kernel is what `__version__` owns — and it only works
+if both are actually maintained.
+
+The digest is an **argument** at every level rather than a lookup, because a
+`RecipeStep` names a step by id and which registry resolves that id is the
+caller's fact. `io.replay_cache_for(directory, recipe, registry=...)` is the one
+call a cache site makes, so "which hash does this cache go under" is answered in
+one place.
+
+A source-less step falls back to the contract alone and **says so**: the digest
+is `nosrc:…` instead of `src:…`. Confirmed on the frozen build, which reports
+`step digests: contract only (no source)` — so an exe and a source install never
+trade cache entries under a key claiming they are the same code. For an exe whose
+plugin set is fixed at build time (§21.6) that fallback is the whole story
+anyway, since nothing can change between two runs of it.
+
+### 21.2 An annealed material's new rates live in the library, as a second entry
+
+The handoff (§6, item 4) asked where they go, given that `StepContext.library` is
+passed in rather than stored. The answer is that they were already there.
+
+Plan §3.4's rule is load-bearing: a `Structure` that carried its own rate table
+would be a `Structure` whose meaning changed when the library was corrected, and
+every cached revision would have to be replayed to find out. So an anneal cannot
+hand back a modified library — there is nowhere to put it, and a cached revision
+would not know which one it ran under.
+
+It does not need to. **An anneal that changes how a material behaves has turned
+it into a different material**, and the library holds both: `resist` and
+`resist_hardbaked` are two `MaterialType`s, and `anneal.thermal` moves the
+geometry from one to the other. The same `phi` array is handed to the new
+material — exact, one dict operation, no reinitialisation — and every rate
+downstream follows without a step being told about temperature.
+
+The capability machinery comes along free, which is the sign the decision fits:
+`material:resist` retires because the resist is gone, `material:resist_hardbaked`
+appears because it is there, and `resist.exposed` goes with the old material,
+which is right — a latent image in a hard-baked resist is not a latent image.
+
+The mechanism lands at the **rate tier**, and that is worth recording because it
+is a limit of the ideal one. `strip.rate` consults `dissolve_rates`, which gives
+a rate of zero to a material the bath does not attack, so acetone takes an
+unbaked 60 nm resist to zero measure in 3 s and leaves a hard-baked one whole.
+The *ideal* tier (`strip.dissolve`, `strip.lift_off`) does not consult chemistry
+at all — it removes the reachable occurrences of whatever material the recipe
+names, which is §19.4's rule and is coherent: at the ideal tier, naming the
+material *is* the statement that the bath attacks it. A recipe that keeps saying
+`strip.lift_off(material="resist")` after a bake finds no `resist` and is a
+silent no-op, which is the honest failure and the realistic mistake.
+
+Reflow geometry stays open (§16). An anneal sweeps no front, so it is outside the
+balance check.
+
+### 21.3 An empty registry is falsy, and `or` silently replaced it
+
+Ordinary Python, found by a test that meant to pass an empty registry and got the
+builtins back.
+
+`ProcessRegistry` and `MaterialLibrary` both define `__len__`, so an empty one is
+**falsy**. Every `registry or builtin_registry()` and `library or
+didactic_library()` therefore swapped a caller's deliberate choice for the
+defaults without a word. In `runtime.replay.Run`, `run_recipe`, `materialize`,
+`ui.Session` and `acceptance.run_all`, a run built against a registry that turned
+out to be empty would have run the builtins and reported success.
+
+`processes.engine.run_step` had it right (`didactic_library() if library is None
+else library`) since M3, which is why nothing had caught it: the one place a test
+passes a deliberate library is the one place the idiom was correct. Every site
+now tests `is None`, and `tests/test_runtime.py` asserts that a `Run` with an
+empty registry raises `KeyError` rather than quietly running something else.
+
+Worth stating as a rule rather than a fix: **a container with `__len__` may not
+be used as a truth value for "was one supplied".** The same shape would bite
+`Recipe` (which has `__len__`) and any future collection.
+
+### 21.4 Two of the handoff's traps did not fire, and where the particle decision went
+
+Handoff §4 named six traps. Two were aimed at particles and neither fired, for
+reasons worth recording so the next milestone does not re-aim them.
+
+**Trap 2 ("a correct set operation can be a useless field") was avoided by
+construction rather than survived.** The trap is that a disk placed at a
+uniformly random point in the domain lands inside the substrate about as often as
+not, `add_material` carves it away, and the step reports a particle count the
+geometry does not match. So `particle.seed` draws only the *lateral* coordinate
+and reads the height off the sample — the topmost solid cell in that column, with
+the disk sunk one cell so it shares a cell with what it landed on before the
+carve. A particle is then always in empty space, always touching what it landed
+on, and always visible. A column with no solid in it gets **no** particle: the
+model has no floor below the domain to invent, and the step says how many draws
+it skipped.
+
+**Trap 5 ("ordinary geometry breaks tolerances tuned on smooth scenes", §18.6)
+did not fire at all.** Measured on a disk of 8 nm at 1 nm/cell: the commit gate's
+reinitialisation moves a particle's interface by **0.0002 nm** (0.045 nm² of
+measure), and a 10 nm conformal film over four of them balances **2.50% off
+against a 5% tolerance**. Nothing was loosened for S5, which is the only way
+those numbers stay worth anything.
+
+What the two traps did produce is S5's shape. Five particles at the seed give
+**four occurrences** — two of them overlap and are one connected piece, which is
+ADR-0003 answering rather than a fixture to fix. Buried under 10 nm of conformal
+alumina the clean removes **0 of 4**, leaves 868 nm² micromasked, and the film
+that is flat to the cell over bare silicon bulges **14 nm** over the particles.
+The control — the identical draw, cleaned before anything covers it — loses all
+four and retires `material:particle`. No step is told the particles are buried;
+`reachable_occurrences` answers, exactly as it does for S3's sealed resist.
+
+### 21.5 Measured M5 costs, extending §17.7, §18.8, §19.6 and §20.8
+
+The new numbers are about **delivery**, and handoff §4's first trap applies to
+every one of them: a number measured on one machine is a statement about that
+machine. These were taken on the build machine, cold, once each.
+
+| | |
+|---|---|
+| the frozen exe | **115 MB** |
+| `pyinstaller nanofab_v3.spec`, cold | 1 min 37 s |
+| exe cold start to argument parsing | **2.6–3.4 s** |
+| the same from a source install | **0.53 s** |
+| exe `--selftest`, all seven scenarios | 6.9 s of solver, **10.7 s wall** |
+| per-step implementation digest, cold / memoised | 3.6 ms / 0.00015 ms |
+| an inspection step through the commit gate | **25 ms**, every array shared |
+| build + install the example plugin | 3.4 s |
+| a five-position fan of a two-step recipe, cold | 0.15 s |
+| the same over a warm cache | **0.01 s** |
+
+Two things follow.
+
+**Freezing costs ~2.4 s of startup, five and a half times a source install.** That
+is the bootloader unpacking 115 MB of numpy, scipy and Qt before a single line of
+this package runs. It is invisible to `--selftest`, where 4 s of overhead sits
+next to 7 s of solver, and it is the first thing a person double-clicking the exe
+notices. Recorded rather than fixed: a one-directory build (`--onedir`) trades it
+for a folder instead of a file, which is a delivery decision and not a model one.
+
+**The scenarios cost the same frozen as unfrozen.** 6.9 s of solver in the exe
+against 6.5–7.0 s from source — the same arithmetic on the same numpy, which is
+what ADR-0004's "determinism per machine + code version" needs to be true of a
+build as well as of a checkout.
+
+**§17.7's conclusion is unchanged through five milestones**: the upwind stencil
+over the whole domain is what dominates, and a true narrow-band solver remains
+the structural fix that is deliberately not built. M5 was the wrong place to
+start it — it would have invalidated every cached revision on the day the exe
+shipped.
+
+### 21.6 "Entry points from day 1" was half true, and a frozen build is a closed set
+
+§11 says *"registry + entry points from day 1"*. Half of it was: the registry
+existed from M3 and every builtin went through `register()`, which already
+refuses a duplicate `step_id` and lints for a process-global RNG. Nothing read
+`importlib.metadata`; `builtin_registry()` was a hard-coded list. That was
+deliberate — a seam exercised by every test beats a discovery mechanism designed
+against nothing — and M5 closed it through the same door rather than a second
+one.
+
+Three things the implementation settled that §5.4 left open.
+
+**An entry point may be a `ProcessStep` or a callable taking the registry.** One
+step per entry point with no boilerplate, or a package that registers several.
+`isinstance(obj, ProcessStep)` tells them apart unambiguously, because the
+protocol is `runtime_checkable` and a plain function has no `step_id`.
+
+**Discovery reports; it never raises.** A plugin whose import fails, whose object
+is the wrong shape, or whose `step_id` collides with a builtin is recorded in a
+`DiscoveryReport` and skipped, and everything else still loads. The failure this
+avoids is the one that matters for a delivered application: one stale
+third-party package, and the process list is empty with a traceback where the
+step list should be.
+
+**`builtin_registry()` stays a fixed set and does no discovery.** The recipe
+hashes and implementation digests the cache is keyed on (§21.1) are computed
+against a registry; a *test* whose registry depended on what happened to be
+installed would answer differently on every machine. So the tests take the
+builtins and the application takes `plugins.application_registry()`. The
+self-test does too: a third-party plugin that failed to load must not be able to
+turn S1 red.
+
+**And a frozen build is a closed set, measured.** §11's "plugins usable in source
+installs; frozen app extension = rebuild" is literally true: the exe reads the
+entry-point metadata frozen into it, and a plugin installed for the *host*
+Python — even on `PYTHONPATH` — is not found. The exe reports `plugins: none
+found` where the same command from source reports the two the example plugin
+brings. That is the intended boundary; it is recorded here because "I installed
+the plugin and the exe cannot see it" is otherwise a bug report.
+
+`examples/nanofab-plugin-example/` is the second implementer this needed: its own
+package, its own material the didactic library has never heard of, one entry
+point of each shape, and a test that really builds and installs it into a temp
+directory (3.4 s) and runs discovery in a subprocess — so a pass proves the
+loader found it through `importlib.metadata` and not through `sys.path` happening
+to contain the source.
+
+### 21.7 The artifact wire was not a one-line change, and a pure step needs a sink
+
+The M5 handoff (§2) called wiring `StepResult.artifacts` through to
+`Revision.artifacts` "a one-line change". Two things were in the way, and both
+are boundaries rather than plumbing.
+
+**`ArtifactRef` was on the wrong side of the layering.** It lived in
+`runtime.revision`, and `processes` may not import `runtime` — the dependency
+runs the other way. It moved to `model/artifact.py`, which is where docs §4.2.2
+puts the concept anyway, and `runtime.revision` re-exports it so nothing else
+changed. `StepResult.artifacts` was `tuple[str, ...]` and is now
+`tuple[ArtifactRef, ...]`, which is what `Revision.artifacts` always was.
+
+**A pure step cannot open a file.** §5.2 makes a step a pure function of (input
+structure, params, position, step index, code version), and an artifact is a
+*file*. So a step that produces one is handed somewhere to put it:
+`StepContext.artifacts`, an `ArtifactSink` (`MemoryArtifactSink` for tests and
+sessions, `io.DirectoryArtifactSink` for files, and a `Run` hands one to every
+position).
+
+The invariant survives, and the reason is worth stating once: what §5.2 makes
+pure is the step's **outcome** — the structure it commits, the capabilities it
+provides, the numbers it measured. An artifact is none of those. It is a record
+of a run, in the same category as `HistoryEntry.started_at`, which replay has
+never reproduced either. Two replays write the same bytes to the same relative
+name, so a re-materialized position points at a file with the same content.
+
+**A step with no sink emits no artifact and still measures everything.** That is
+the honest default rather than a degraded one: `inspect.profilometer` with
+nowhere to write a trace has still measured the step height, and a reference to a
+file nobody wrote would be worse than no reference.
+
+One measured consequence, and it is the one that makes inspection cheap: because
+an inspection returns `ctx.structure` **itself** rather than an equal structure,
+§20.2's sharing rule hands the whole revision its parent's arrays. Measured on a
+developed stack: **25 ms** for the commit, every material's `phi` shared by
+identity, `swept=None` so it is outside the balance check.
+
+### 21.8 What the plan does not carry past M5
+
+Written here rather than left implicit, because §14's milestone list ends and
+§16's "deliberately open" was written before any of it was built.
+
+Still open exactly as §16 has it: the 3D `FluxModel3D`; semi-quantitative rate
+calibration; external-simulator adapters beyond §9's exchange format;
+reflow/anneal *geometry* (§21.2 built the field and material-model half only);
+GDS/CAD pattern import.
+
+Added to that list by M5, each with the reason it was not done rather than
+overlooked:
+
+1. **A narrow-band solver.** §17.7's dominant cost, unchanged through five
+   milestones. Deliberately not built in M5 because it would invalidate every
+   cached revision on the day the exe shipped (§21.5).
+2. **`--onedir` packaging.** 2.4 s of the exe's startup is the bootloader
+   unpacking a 115 MB archive (§21.5). A folder instead of a file trades that
+   away, and it is a delivery decision.
+3. **A recipe encoding open to a plugin's own `WaferParameter`.** M4's note 6:
+   the encoding knows `RadialProfile` and `LinearTilt` and raises on anything
+   else rather than writing a resolved value at some arbitrary position. A
+   plugin's interpolant therefore cannot be *saved* yet, though it runs. Opening
+   it up means a registry of parameter kinds, which is the same shape as §5.4's
+   step registry and should probably reuse it.
+4. **Artifact payloads in the exchange format.** §9 saves a revision's
+   `ArtifactRef`s and not what they point at, which is correct (docs §4.2.2) and
+   means moving a saved session moves the manifest and not the SEM images.
+   Bundling is a packaging question for the format, not a model one.
