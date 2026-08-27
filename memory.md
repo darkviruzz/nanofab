@@ -1674,3 +1674,35 @@ Known risks and what was deliberately left:
 - **`Save build…` uses a save-*file* dialog** although the bigger half of what it writes is a directory. Asking for a folder would make the recipe file's name something this code invented rather than something somebody chose; the cost is a file dialog that appears to be about one file.
 - **The demo format has no `id`-style version negotiation beyond `schema_version`.** A future field means version 2 and a refusal of version 1 files — which is right for four shipped files and would not be for a format people had accumulated.
 - The plugin `examples/` and the wafer cache are untouched; nothing here changes the replay cache key.
+
+## Update 2026-08-27 (Grilling-Session: Roadmap M10-M12, Entscheidungen E19-E40)
+
+- Fünf Runden Grilling über eine Anmerkungsliste aus der Benutzung. Ergebnis: `docs/plans/m10-m12-roadmap.md` (E19-E40, drei Meilensteine, DoD je Meilenstein) und `docs/plans/m10-start-prompt.md`. **Kein Code geändert** — die Session war Entscheidungsfindung, und der Nutzer nimmt die Roadmap ab, bevor gebaut wird.
+
+Why it changed:
+- User: `/grilling` über die Anmerkungsliste plus die Restpunkte aus der M6-M9-Bugfixrunde, danach ausdrücklich „schreibe eine vollständige roadmap und einen prompt".
+
+Sieben Dinge wurden nachgemessen, statt sie zu diskutieren, und **vier haben eine Entscheidung gedreht**:
+1. **Der `adjust`-Bug ist nicht der Filter.** `_on_revision_chosen` schreibt `form.set_values(revision.history.params)` namensbasiert in das sichtbare Formular; nach `rewind(1)` steht dort Revision #0 (`substrate.select`), und `material`/`thickness` kollidieren. Gemessen: gespeichert `resist`/90.0, angezeigt `silicon`/0.0.
+2. **IBE und Sputterätzen sind eine Selektivitätsreihe bei zwei Geschwindigkeiten** — auf Si normiert 0-10.7 % Abweichung, Absolutfaktor 0.208-0.250. `sputter_etch` hat 5 Einträge, `ion_beam` alle 11. Das machte E24 (vereinheitlichen) erst entscheidbar, und die Nacharbeit ist **ein** Szenario (S2c), weil `etch.sputter` von nichts benutzt wird.
+3. **Die Bilanzwarnung des Nutzers ist die Gitterauflösung, nicht Mobility.** Cr bei 1 nm/Zelle: 0.2 nm -> gemessen 0.51 (153 % daneben, **null** Zellen Inneres), 0.5 -> 0.59 (18 %), ab 1.0 exakt; mit und ohne Mobility identisch. Daraus wurde eine Sub-Zell-Warnung in M10 statt einer Mobility-Untersuchung.
+4. **SEM und Profilometer erzeugen heute gar nichts** — sie schreiben nur bei gesetztem `ctx.artifacts`, und `Session.sink` ist `None`. Das machte aus einer Beobachtung die Entscheidung E40.
+5. **`film_thickness` hat drei Nutzer, darunter das Profilometer** — korrigierte meine eigene Option in Q30: das Ellipsometer zu entfernen berührt es nicht.
+6. Belichtung überschreibt (nicht kumulativ); Overlays sind Marching-Squares-Konturen; Light-Preview wird nur in `_refresh_canvas` gebaut.
+7. Rauhigkeit gibt es nur als Etikett (`surface_finish`), keine Geometrie; `SEMI_INFINITE` existiert ohne Preset; kein Icon-Asset im Repo.
+
+Entscheidungen, bei denen die Alternative besser klang als sie war:
+8. **E19 kippt die Onefile-Entscheidung von gestern** — auf Einwand des Nutzers: „Materialien in der Exe *und* daneben" heißt, dass bei Abweichung niemand weiß, welche gelten. Onedir, `bin/`, genau eine Kopie, **kein Fallback**. Folge, die der Nutzer abgenickt hat: `didactic_library()` verliert im Frozen Build seine Isolation, also bekommt `--selftest` einen Bibliotheks-Fingerabdruck (E36) statt einer vorgetäuschten Trennung.
+9. **E21 verwirft Rollen-Tags.** Cr ist Hartmaske *und* Depositionsmaterial *und* Ätzobjekt; Rollen wandern schon durch Capabilities und Raten, ein Rollen-Tag wäre eine zweite Wahrheit über dasselbe. Nur Stoffklassen.
+10. **E24 verwirft `rate_scale` pro Anlage.** Ein Tool, das Cr anders skaliert als Resist, hat keine skalierten Raten, sondern eigene — das ist B7, nicht ein Faktor. Damit fiel `data/tools/` komplett weg und die Inhomogenität wanderte an den Prozess (E34), mit **festem** Bezugsradius 150 mm statt zweier Felder.
+11. **E26 verwirft ein zur Laufzeit erzeugtes Redeposit-Material** (Vorschlag des Nutzers), weil es §3.4 und ADR-0004 bräche — und ersetzt es durch `inherits` im Schema, also denselben Gedanken zur Bauzeit.
+12. **E27: kein Haftkoeffizient.** In diesem Prozesssatz gibt es kein Material mit s ≪ 1; wo es zählt (CVD/ALD), ist der Effekt schon als Konformität drin. Der Koeffizient bleibt als *Erklärung* dafür, nicht als Zahl.
+13. **E29 nimmt die (c)-Skala des Nutzers** (absolut, Pfeile dürfen aus der Domain ragen) gegen meine Empfehlung (normalisiert) — mit dem Argument, dass die Pfeillänge dann die naive Rechnung „Rate × Zeit" ist und damit ein Werkzeug zum Einstellen der Ätzzeit. Die duration-losen Schritte sind kein Sonderfall: vier tragen eine Dicke, der Rest bewegt keine Front.
+14. **E37 schreibt die Provenienz fort statt sie zu löschen** — wer eine Rate ändert, macht aus „Studententabelle Zeile 1" eine falsche Behauptung. Plus `.original/` als einzige zusätzliche (unveränderte) Kopie, damit „zurücksetzen" existiert.
+15. **E38 rettet das Rezept, nicht die Rechnung** — 1 kB gegen 23 MB pro Revision; die Strukturen liegen im Replay-Cache, der 68x schneller ist als Rechnen. Cache-Leiter bekommt `%LOCALAPPDATA%` vor `~/.cache`, weil ein Punkt-Ordner im Windows-Benutzerprofil der Ort ist, an dem niemand sucht.
+
+Offen und bewusst vertagt:
+- **Planarisierung beim Spin-Coat** (E32/E41): der Nutzer klärt die Formelwahl extern. Roadmap §3 sammelt die 13 Randbedingungen, an denen jede Lösung gemessen wird — davon acht aus diesem Modell (Volumenerhaltung wird geprüft; Ergebnis muss Höhenfunktion sein; Erreichbarkeit; Sub-Zell; auf flach bitgleich; kein zweiter Solver; keine unkalibrierbaren Regler; **Benetzung ist eine Paar-Eigenschaft und die Bibliothek hat keinen Ort dafür**) und fünf aus der Physik (die wichtigste: `t/h` hat kein laterales Längenmaß, also ist die naheliegende Formel für ein Gitter grundsätzlich falsch). Gemessen und als Figur gezeigt: bei t = 0.25 h lässt sie 16 nm Lack über dem Steg stehen, wo real längst aufgerissen wäre — unterhalb t ≈ 0.5 h ist sie nicht ungenau, sondern qualitativ falsch.
+- Aus dem M6-M9-Handoff bleiben R2, R3, R5, R10 vertagt, jeweils mit Begründung in Roadmap §5.
+
+Next: der Nutzer nimmt `m10-m12-roadmap.md` ab; dann startet M10 mit `m10-start-prompt.md` in einer frischen Session.
