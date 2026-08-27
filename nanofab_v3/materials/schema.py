@@ -36,6 +36,7 @@ rather than of the parser:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import MISSING, fields as dataclass_fields
 from pathlib import Path
 from typing import Any, Mapping
@@ -186,8 +187,22 @@ def read_material(path: Path) -> MaterialType:
 
 
 def write_material(entry: MaterialType, path: Path) -> Path:
-    """Write one material to `path`, creating the directory if it is missing."""
+    """Write one material to `path`, creating the directory if it is missing.
+
+    **Atomically**, via `os.replace` (roadmap E37): the library window edits the
+    same files the running application reads, so a half-written `chrome.json` is
+    a library that is one material short until somebody notices. `os.replace` is
+    atomic on all three platforms, so the file is either the old one or the new
+    one and never a prefix of either.
+
+    Canonical, because `to_json` is: a `MaterialType` round-trips to the same
+    bytes whatever wrote it, which is what keeps an edit to one rate from
+    reformatting the eleven fields nobody touched. `tests/test_material_files.py`
+    pins that encoding byte for byte.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(to_json(entry), encoding="utf-8")
+    scratch = path.with_name(path.name + ".part")
+    scratch.write_text(to_json(entry), encoding="utf-8")
+    os.replace(scratch, path)
     return path

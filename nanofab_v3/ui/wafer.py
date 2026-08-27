@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 import tempfile
 import threading
 from dataclasses import dataclass, field, replace
@@ -55,6 +56,37 @@ from nanofab_v3.runtime.revision import CENTER, RevisionChain
 from nanofab_v3.runtime.run import Position, Recipe, ReplayStore, positions_on_radius
 
 
+def cache_root() -> "Path":
+    """Where this program keeps everything it can afford to lose (roadmap E38).
+
+    The ladder, in order: `$NANOFAB_CACHE`, then **`%LOCALAPPDATA%` on Windows**,
+    then `$XDG_CACHE_HOME`, then `~/.cache`. The Windows rung is E38's addition
+    and it fixes a real thing: the cache was landing in `C:\\Users\\<name>\\.cache\\`,
+    a Unix convention in a place where a Windows user has no reason to look — and
+    "where did my session go" is a question somebody will ask.
+
+    The system temp directory is deliberately **not** on this ladder. Windows
+    empties it, and E38's session file is the one thing here whose whole purpose
+    is to survive a crash. Temp is the last-resort fallback only, for the case
+    where nothing else is writable.
+    """
+    override = os.environ.get("NANOFAB_CACHE")
+    if override:
+        return Path(override)
+    local = os.environ.get("LOCALAPPDATA") if sys.platform == "win32" else None
+    base = local or os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "nanofab_v3"
+
+
+def _cache_subdir(name: str, fallback: str) -> "Path":
+    root = cache_root() / name
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:  # pragma: no cover - depends on the machine
+        return Path(tempfile.gettempdir()) / fallback
+    return root
+
+
 def default_cache_dir() -> "Path":
     """The one directory a fan and a session both put replay cache entries in.
 
@@ -63,22 +95,20 @@ def default_cache_dir() -> "Path":
     — which means **one** directory rather than one each. This is where it is
     decided, in the Qt-free module, so a headless self-test and the application
     agree without either knowing about the other.
-
-    `$NANOFAB_CACHE` overrides it; otherwise `$XDG_CACHE_HOME` or `~/.cache`, and
-    a temp directory when neither is writable (a frozen exe on a locked-down
-    machine, which is exactly the case handoff §4 says to expect to be wrong
-    about).
     """
-    override = os.environ.get("NANOFAB_CACHE")
-    if override:
-        return Path(override)
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    candidate = Path(base) / "nanofab_v3" / "replay"
-    try:
-        candidate.mkdir(parents=True, exist_ok=True)
-    except OSError:  # pragma: no cover - depends on the machine
-        return Path(tempfile.gettempdir()) / "nanofab_v3-replay"
-    return candidate
+    return _cache_subdir("replay", "nanofab_v3-replay")
+
+
+def session_cache_dir() -> "Path":
+    """Where the autosaved recipe goes — a *sibling* of the replay cache (E38).
+
+    Separate subdirectories rather than one, because the two have different
+    lifetimes: "clear the cache" is a thing somebody does to reclaim gigabytes of
+    replayed structures, and it must not take the recipe they were working on
+    with it. One directory would make emptying the expensive thing destroy the
+    cheap irreplaceable one.
+    """
+    return _cache_subdir("session", "nanofab_v3-session")
 
 
 PENDING = "pending"

@@ -81,6 +81,8 @@ from nanofab_v3.materials.store import (
 )
 from nanofab_v3.materials.unknown import (
     MissingMaterial,
+    declared_materials,
+    missing_before_running,
     UnknownMaterials,
     UnknownMaterialWarning,
     unknown_materials,
@@ -127,6 +129,7 @@ __all__ = [
     "UnknownMaterials",
     "application_library",
     "builtin_materials_dir",
+    "declared_materials",
     "delivered_materials_dir",
     "delivered_only",
     "didactic_library",
@@ -137,6 +140,7 @@ __all__ = [
     "library_fingerprint",
     "load_library",
     "material_roots",
+    "missing_before_running",
     "missing_library_reason",
     "read_material",
     "save_material",

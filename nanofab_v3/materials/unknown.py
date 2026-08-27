@@ -161,3 +161,57 @@ def unknown_materials(
         ),
         seen_in=seen_in,
     )
+
+
+def declared_materials(step: object, params: Mapping[str, object]) -> tuple[MaterialId, ...]:
+    """Every material a step's parameters *name*, in schema order (roadmap E31).
+
+    Read off the schema rather than guessed from parameter names: since E22 a
+    material parameter says so (`ParamSpec.material`), and a step whose
+    `material` means something else — or whose material lives under another name
+    entirely — is answered correctly for free.
+
+    `anneal.thermal` is the case that made this necessary. It swaps a resist for
+    `resist_hardbaked` and nothing checked that the target exists, so a typo in
+    `becomes` produced a sample made of a material the library cannot answer for,
+    silently, one step before the strip that then did nothing.
+    """
+    schema = getattr(step, "parameter_schema", None)
+    if schema is None:
+        return ()
+    named: list[MaterialId] = []
+    for spec in schema():
+        if getattr(spec, "material", None) is None and spec.name not in _MATERIAL_NAMES:
+            continue
+        value = str(params.get(spec.name, "") or "").strip()
+        if value and MaterialId(value) not in named:
+            named.append(MaterialId(value))
+    return tuple(named)
+
+
+_MATERIAL_NAMES = ("becomes",)
+"""Parameter names that hold a material without being *chosen* from a list.
+
+`anneal.thermal`'s `becomes` is the only one: it names what a material turns
+into, which is not a selection (E22's filters are about what a dropdown offers)
+but is very much a material the library has to know about.
+"""
+
+
+def missing_before_running(
+    step: object, params: Mapping[str, object], library: "MaterialLibrary"
+) -> tuple[MissingMaterial, ...]:
+    """The materials this step names that the library cannot answer for (E31).
+
+    **Before** the step, which is the whole of E31 and reverses E15's ordering:
+    E15 asks after a step, because a material can arrive without any step naming
+    it — a scattered particle, a plugin's own film — and that case is real and
+    stays. But a material the recipe *typed* is knowable in advance, and asking
+    afterwards means the step has already run at rate zero.
+    """
+    step_id = str(getattr(step, "step_id", ""))
+    return tuple(
+        MissingMaterial(material, seen_in=step_id)
+        for material in declared_materials(step, params)
+        if material not in library
+    )

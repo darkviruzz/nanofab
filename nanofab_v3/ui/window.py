@@ -15,6 +15,7 @@ came down to, applied one level up from the canvas.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -51,7 +52,7 @@ from nanofab_v3.ui.panels import (
 from nanofab_v3.ui.scene import ALWAYS_ON, OVERLAY_KINDS, light_preview
 from nanofab_v3.ui.scene import build as build_scene
 from nanofab_v3.ui.demos import demo, demos as all_demos
-from nanofab_v3.ui.session import Session
+from nanofab_v3.ui.session import Session, autosaved_recipe_path
 from nanofab_v3.ui.wafer import WaferFan, default_cache_dir
 from nanofab_v3.ui.wafer_view import WaferPanel
 
@@ -70,7 +71,15 @@ class MainWindow(QMainWindow):
         # never from a constant in here — and never goes back, so a box ticked
         # while the program runs stays ticked only until it closes.
         self.settings = settings if settings is not None else app_settings.application_settings()
-        self.session = session or Session()
+        if session is None:
+            session = Session(
+                autosave=(
+                    autosaved_recipe_path()
+                    if self.settings.get("session.autosave", True)
+                    else None
+                )
+            )
+        self.session = session
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         # Roadmap E20: the program has had no mark of its own until now, and a
         # window with a generic icon is the one thing every screenshot shows.
@@ -103,6 +112,11 @@ class MainWindow(QMainWindow):
         self.wafer.position_chosen.connect(self._on_wafer_position)
 
         self.log.append(self.session.plugins.describe())
+        # Handoff R6: `application_library()` reads a directory no test can see,
+        # so the first bug report of the form "my chromium etches wrong" is a
+        # question about which files were read. Two lines at startup mean a
+        # screenshot of a wrong result carries its own provenance.
+        self.log.append(self._provenance())
         self._refresh_all()
 
     # -- layout --------------------------------------------------------------
@@ -281,6 +295,15 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _checked, key=entry.key: self._on_demo(key))
             demo_menu.addAction(action)
 
+        library_action = QAction("&Library and demos…", self)
+        library_action.setToolTip(
+            "What is loaded and from where — every field of every material "
+            "including where its numbers came from, the demo files beside them, "
+            "and the files that did not parse (roadmap E37)"
+        )
+        library_action.triggered.connect(self._on_library_window)
+        self.menuBar().addMenu("&Library").addAction(library_action)
+
         wafer_menu = self.menuBar().addMenu("&Wafer")
         fan = QAction("&Fan this recipe over the wafer", self)
         fan.setToolTip(
@@ -294,6 +317,64 @@ class MainWindow(QMainWindow):
         show.toggled.connect(self.wafer.setVisible)
         wafer_menu.addAction(show)
         self._wafer_visible_action = show
+
+    def _provenance(self) -> tuple[str, ...]:
+        """Which library and which settings this window is running on (R6)."""
+        from nanofab_v3.materials import application_library
+
+        _library, report = application_library()
+        lines = [f"materials: {len(report.loaded)} loaded, fingerprint {report.fingerprint}"]
+        lines += [f"  root: {root}" for root in report.roots]
+        lines += [f"  skipped {path.name}: {reason}" for path, reason in report.failures]
+        lines += list(self.settings.describe())
+        return tuple(lines)
+
+    def offer_the_last_session(self) -> bool:
+        """After a crash, ask — and **load** the recipe rather than running it (E38).
+
+        The load is the whole of the offer. Recomputing what was there would make
+        starting the program a commitment measured in seconds (the etch-stop demo
+        is 25 s of solver), and worse: a recipe whose replay crashes would then be
+        a recipe that prevents the program from starting at all. So the steps are
+        listed, the revision panel is empty, and `Session -> Run the loaded
+        recipe` is a separate act somebody chooses.
+
+        Called by `run()` after the window is on screen, and deliberately **not**
+        from `__init__`. A constructor that opens a modal dialog is a constructor
+        no headless test can call: the suite hung on this, silently, because the
+        dialog was waiting for an answer nobody could give. The rule it costs is
+        worth stating — a widget's constructor builds, and asking is something a
+        caller decides to do.
+        """
+        if not self.settings.get("session.restore_prompt", True):
+            return False
+        path = autosaved_recipe_path()
+        if not path.is_file() or len(self.session.recipe):
+            return False
+        try:
+            steps = len(self.session.peek_recipe(path))
+        except (OSError, ValueError, KeyError):
+            return False
+        if not steps:
+            return False
+        answer = QMessageBox.question(
+            self,
+            "Restore the last session?",
+            f"{steps} step(s) were autosaved after the last step that ran.\n\n"
+            "Opening them computes nothing — the recipe is loaded and "
+            "Session -> Run the loaded recipe is a separate step.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        loaded = self.session.load_recipe(path)
+        self.log.append(
+            (f"restored the last session: {len(loaded)} steps, not run yet",)
+            + tuple(f"  {i + 1}. {step.step_id}" for i, step in enumerate(loaded))
+        )
+        self._refresh_all()
+        return True
 
     # -- reacting ------------------------------------------------------------
 
@@ -346,6 +427,7 @@ class MainWindow(QMainWindow):
     def _on_step_chosen(self, step_id: str) -> None:
         registry = self.session.registry
         step = registry[step_id]
+        self.form.set_domain(self.session.structure.grid)
         self.form.set_step(
             step_id,
             registry.display_name(step_id),
@@ -381,7 +463,52 @@ class MainWindow(QMainWindow):
         # The engine's verdict is shown rather than second-guessed: the UI has no
         # separate idea of what a legal recipe is (see `panels`). `_run_and_show`
         # is where that happens, shared with E12's repeat.
-        self._run_and_show(lambda: self.session.run(step_id, self.form.values()))
+        params = self.form.values()
+        if not self._materials_are_known(step_id, params):
+            return
+        self._run_and_show(lambda: self.session.run(step_id, params))
+
+    def _materials_are_known(self, step_id: str, params) -> bool:
+        """Roadmap E31: a step that *names* a material asks about it first.
+
+        This reverses E15's ordering, and both orderings are right for their own
+        case. E15 asks **after** a step because a material can arrive without any
+        step naming it — a scattered particle, a plugin's own film — and nothing
+        can be asked in advance about a material nobody typed. But a material the
+        form *does* name is knowable now, and asking afterwards means the step has
+        already run at rate zero and the answer only helps the next one.
+
+        `anneal.thermal` is why this is not optional: it swaps a resist for
+        `resist_hardbaked` and nothing checked that the target existed, so a typo
+        in `becomes` produced a sample made of a material the library cannot
+        answer for — silently, one step before the strip that then did nothing.
+
+        Cancelling means the step does not run. That is the point of asking
+        first: the alternative is a revision somebody has to go and remove.
+        """
+        from nanofab_v3.materials import missing_before_running
+        from nanofab_v3.ui.material_dialog import ask_about
+
+        missing = missing_before_running(
+            self.session.registry[step_id], params, self.session.library
+        )
+        if not missing:
+            return True
+        described = 0
+        for entry in ask_about(missing, self):
+            path = self.session.describe_material(entry)
+            self.log.append((f"described {entry.material_id} -> {path}",))
+            described += 1
+        self.form.set_library(self.session.library)
+        if described < len(missing):
+            self.statusBar().showMessage(
+                f"{step_id} not run: "
+                + ", ".join(str(item.material_id) for item in missing)
+                + " is not in the library",
+                10_000,
+            )
+            return False
+        return True
 
     def _ask_about_unknown_materials(self) -> None:
         """Roadmap E15: a material the library cannot answer for gets asked about.
@@ -558,9 +685,19 @@ class MainWindow(QMainWindow):
         around *positions* and one interactive chain is not that.
         """
         total = len(self.session.recipe.steps)
+        started = time.monotonic()
 
         def announce(index: int, _total: int, step) -> None:
-            self.statusBar().showMessage(f"{title}: step {index + 1} of {total} — {step.step_id}")
+            # Handoff R8: the etch-stop demo blocks the window for ~24 s. The
+            # general fix is a cancellable chain runner and that is real work;
+            # the cheap one is making the freeze *legible* — which step, how far
+            # in, and how long it has been going. A frozen window that says
+            # "step 4 of 7, 18 s" is waiting; one that says nothing is broken.
+            elapsed = time.monotonic() - started
+            self.statusBar().showMessage(
+                f"{title}: step {index + 1} of {total} — {step.step_id} "
+                f"({elapsed:.0f} s so far)"
+            )
             if index < len(notes) and notes[index]:
                 self.log.append((f"  ({notes[index]})",))
             QApplication.processEvents()
@@ -576,6 +713,33 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
         self._refresh_all()
+
+    def _on_library_window(self) -> None:
+        """Open the library window, and take its edits when it makes one (E37).
+
+        Kept on the window rather than created per click, so a reader who leaves
+        it open beside the cross-section keeps their place in the list. Edits
+        rebind `self.session.library`, because a `MaterialLibrary` is a value:
+        the next step runs on the number that is now on disk, without a restart.
+        """
+        from nanofab_v3.ui.library_window import LibraryWindow
+
+        if getattr(self, "_library_window", None) is None:
+            self._library_window = LibraryWindow(self)
+            self._library_window.setWindowFlag(Qt.Window, True)
+            self._library_window.library_changed.connect(self._on_library_changed)
+        self._library_window.show()
+        self._library_window.raise_()
+
+    def _on_library_changed(self) -> None:
+        """A file changed under us: reload, and say what is running now."""
+        from nanofab_v3.materials import application_library
+
+        library, _report = application_library()
+        self.session.library = library
+        self.form.set_library(library)
+        self.log.append(self._provenance())
+        self._refresh_canvas()
 
     # -- the wafer fan (plan §8, §14) ----------------------------------------
 
@@ -733,4 +897,6 @@ def run(argv: list[str] | None = None) -> int:
         app.setWindowIcon(QIcon(str(icon)))
     window = MainWindow()
     window.show()
+    # After the window is up, never from its constructor: see the method.
+    window.offer_the_last_session()
     return int(app.exec())

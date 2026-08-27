@@ -107,6 +107,7 @@ hiddenimports = [
     "nanofab_v3.cli",
     "nanofab_v3.settings",
     "nanofab_v3.ui.window",
+    "nanofab_v3.ui.library_window",
     "nanofab_v3.ui.wafer_view",
 ] + collect_submodules("scipy")
 

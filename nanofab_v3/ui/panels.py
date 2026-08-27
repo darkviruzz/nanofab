@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -58,6 +59,7 @@ from PySide6.QtWidgets import (
 from nanofab_v3.materials import MaterialLibrary, didactic_library
 from nanofab_v3.materials.selection import filtered_choices
 from nanofab_v3.processes.contract import FIDELITIES, ParamSpec
+from nanofab_v3.ui.derived import derived_hints
 from nanofab_v3.ui import presets
 from nanofab_v3.processes.registry import ProcessRegistry
 from nanofab_v3.runtime.revision import RevisionChain
@@ -240,6 +242,8 @@ class ParameterForm(QWidget):
     ) -> None:
         super().__init__(parent)
         self._widgets: dict[str, QWidget] = {}
+        self._hints: dict[str, QLabel] = {}
+        self._grid = None
         self._library = library if library is not None else didactic_library()
         self._specs: tuple[ParamSpec, ...] = ()
         self._step_id = ""
@@ -253,12 +257,21 @@ class ParameterForm(QWidget):
         self.description.setWordWrap(True)
         self.description.setTextFormat(Qt.MarkdownText)
         self.description.setStyleSheet("color: #b7c0c9;")
+        # Handoff R8: E10's long descriptions are exactly the content an
+        # unscrollable label truncates, so E10 partly defeated itself on a small
+        # screen. A bounded scroll area rather than an unbounded label: the form
+        # underneath is what somebody came to use.
+        self.description_area = QScrollArea()
+        self.description_area.setWidgetResizable(True)
+        self.description_area.setFrameShape(QScrollArea.NoFrame)
+        self.description_area.setMaximumHeight(180)
+        self.description_area.setWidget(self.description)
         self.form = QFormLayout()
         self.form.setLabelAlignment(Qt.AlignRight)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.title)
-        layout.addWidget(self.description)
+        layout.addWidget(self.description_area)
         layout.addLayout(self.form)
         layout.addStretch(1)
 
@@ -275,7 +288,8 @@ class ParameterForm(QWidget):
         self._step_id = step_id
         self.title.setText(f"{display_name}   ({step_id})")
         self.description.setText(description)
-        self.description.setVisible(bool(description.strip()))
+        self.description_area.setVisible(bool(description.strip()))
+        self._hints.clear()
         for spec in self._specs:
             options = presets.options_for(step_id, spec.name)
             if options:
@@ -287,14 +301,53 @@ class ParameterForm(QWidget):
             self._widgets[spec.name] = widget
             label = spec.name if not spec.unit else f"{spec.name} [{spec.unit}]"
             widget.setToolTip(spec.description)
-            self.form.addRow(QLabel(label), widget)
+            hint = QLabel("")
+            hint.setWordWrap(True)
+            hint.setTextFormat(Qt.MarkdownText)
+            hint.setStyleSheet("color: #8b95a1;")
+            hint.setVisible(False)
+            self._hints[spec.name] = hint
+            holder = QWidget()
+            column = QVBoxLayout(holder)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(1)
+            column.addWidget(widget)
+            column.addWidget(hint)
+            self.form.addRow(QLabel(label), holder)
             self._watch(spec.name, widget)
             if options:
                 widget.currentIndexChanged.connect(  # type: ignore[union-attr]
                     lambda _index, name=spec.name: self._on_preset_chosen(name)
                 )
+        self.refresh_hints()
 
     # -- presets (roadmap M7 item 2) -----------------------------------------
+
+    def set_domain(self, grid) -> None:
+        """The grid the derived litho defaults are read from (E33)."""
+        self._grid = grid
+        self.refresh_hints()
+
+    def refresh_hints(self) -> None:
+        """Show what each marker value resolves to, and where it came from (R1).
+
+        Recomputed rather than remembered, on every edit, because the answers
+        depend on each other: changing the material changes the spin curve, and
+        changing the preset changes six fields at once.
+        """
+        if not self._hints:
+            return
+        try:
+            values = self.values()
+        except (RuntimeError, ValueError):  # pragma: no cover - a half-built form
+            return
+        hints = derived_hints(
+            self._step_id, values, library=self._library, grid=self._grid
+        )
+        for name, label in self._hints.items():
+            text = hints.get(name, "")
+            label.setText(text)
+            label.setVisible(bool(text))
 
     @property
     def step_id(self) -> str:
@@ -323,6 +376,7 @@ class ParameterForm(QWidget):
         def mark(*_args: Any) -> None:
             if not self._applying:
                 self._touched.add(name)
+            self.refresh_hints()
 
         if isinstance(widget, MaterialBox):
             widget.box.activated.connect(mark)
@@ -369,6 +423,7 @@ class ParameterForm(QWidget):
         finally:
             self._applying = False
         self._touched -= set(values)
+        self.refresh_hints()
 
     def values(self) -> dict[str, Any]:
         """What the form currently says, ready for `validate_params`.
@@ -434,6 +489,7 @@ class ParameterForm(QWidget):
         while self.form.rowCount():
             self.form.removeRow(0)
         self._widgets.clear()
+        self._hints.clear()
         self._specs = ()
         self._touched.clear()
         self.description.clear()

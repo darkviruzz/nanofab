@@ -32,6 +32,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+import numpy as np
+
 from nanofab_v3.io.exchange import load_chain, save_chain
 from nanofab_v3.kernel.domain import DomainPolicy
 from nanofab_v3.io.manifest import recipe_from_json, recipe_to_json
@@ -40,7 +42,7 @@ from nanofab_v3.materials.unknown import UnknownMaterials, unknown_materials
 from nanofab_v3.model.grid import Grid
 from nanofab_v3.model.structure import Structure
 from nanofab_v3.processes.contract import CapabilityError, ParameterError
-from nanofab_v3.model.artifact import ArtifactSink
+from nanofab_v3.model.artifact import ArtifactSink, MemoryArtifactSink
 from nanofab_v3.processes.plugins import DiscoveryReport, application_registry
 from nanofab_v3.processes.registry import ProcessRegistry
 from nanofab_v3.processes.substrate import cross_section_grid
@@ -59,6 +61,12 @@ SESSION_MANIFEST = "session.json"
 RECIPE_SUFFIX = ".recipe.json"
 """Suffix of a standalone recipe file — the text half of saving, on its own."""
 
+AUTOSAVE_FILE = "last-session.recipe.json"
+"""What E38 writes after every step, in the session half of the cache ladder."""
+
+ARTIFACTS_DIR = "artifacts"
+"""Where `save_build` puts what the inspection steps produced (roadmap E40)."""
+
 
 class Session:
     """One wafer position's interactive run: a recipe and the chain it produced.
@@ -73,7 +81,10 @@ class Session:
         domain: How far the domain may grow around a step and where it stops
             (roadmap E5). Held here because raising the cap is something an
             operator asks for once and every later step has to run under.
-        sink: Where an inspection step may put an artifact, or `None`.
+        sink: Where an inspection step may put an artifact. A
+            `MemoryArtifactSink` by default (roadmap E40) — see `__init__`.
+        autosave: Where the recipe is written after every step, or `None` to
+            switch it off (roadmap E38).
     """
 
     def __init__(
@@ -88,6 +99,7 @@ class Session:
         store: RevisionStore | None = None,
         resident: int = 3,
         sink: ArtifactSink | None = None,
+        autosave: "str | os.PathLike[str] | None" = None,
     ) -> None:
         # The *application* registry: builtins plus whatever entry points bring
         # (plan §11). A session is what an operator drives, and a plugin that
@@ -105,7 +117,14 @@ class Session:
         # Roadmap E5's cap is "raisable on request", so the policy is a session
         # value rather than a constant — the request lands here.
         self.domain = DomainPolicy() if domain is None else domain
-        self.sink = sink
+        # Roadmap E40. `inspect.sem` and `inspect.profilometer` have written an
+        # artifact only when handed a sink since M5, and nothing ever handed them
+        # one — the wire was laid and never plugged in. A *directory* sink would
+        # force a session nobody has saved yet to invent a path, so it is memory:
+        # it costs nothing, it is already written, and `save_build` takes the
+        # payloads along into the folder that is being created anyway.
+        self.sink = MemoryArtifactSink() if sink is None else sink
+        self.autosave = None if autosave is None else Path(autosave)
         self.recipe = Recipe(
             grid=grid if grid is not None else default_grid(), recipe_id=recipe_id
         )
@@ -194,7 +213,40 @@ class Session:
         )
         self.recipe = self.recipe.with_step(entry)
         self.chain.append(revision)
+        self.write_autosave()
         return revision
+
+    def write_autosave(self) -> Path | None:
+        """Write the recipe where a crash cannot take it (roadmap E38).
+
+        **The recipe, not the build**, and the ratio is the argument: a recipe is
+        about a kilobyte and writes in milliseconds, where one revision's
+        structures are 23 MB (plan §23.7) — 230 MB for a ten-step chain, and the
+        seconds during which the application does not respond, after *every*
+        step. The structures are not lost by not being written here: they are in
+        the replay cache, which makes a repeat 68x faster than the solve.
+
+        Atomic, via `os.replace`, which is atomic on all three platforms. A
+        half-written recipe cannot exist, so "restore the last session" can never
+        be offered a file that parses into a different recipe than the one that
+        ran.
+
+        Failures are swallowed: a read-only cache directory is a reason to lose
+        an autosave, never a reason to lose the step somebody just ran.
+        """
+        if self.autosave is None:
+            return None
+        try:
+            self.autosave.parent.mkdir(parents=True, exist_ok=True)
+            scratch = self.autosave.with_suffix(self.autosave.suffix + ".part")
+            scratch.write_text(
+                json.dumps(recipe_to_json(self.recipe), indent=1, sort_keys=True),
+                encoding="utf-8",
+            )
+            os.replace(scratch, self.autosave)
+        except OSError:  # pragma: no cover - depends on the machine
+            return None
+        return self.autosave
 
     def repeat(self, index: int) -> Revision:
         """Run the step that produced revision `index` again, at the head (E12).
@@ -231,6 +283,7 @@ class Session:
             steps=self.recipe.steps[:index],
             recipe_id=self.recipe.recipe_id,
         )
+        self.write_autosave()
 
     def reset(self, grid: Grid | None = None) -> None:
         """Start over on a fresh domain, keeping the registry and the library."""
@@ -336,7 +389,31 @@ class Session:
             target = target.parent / target.name[: -len(RECIPE_SUFFIX)]
         recipe_file = self.save_recipe(target.with_suffix(RECIPE_SUFFIX))
         directory = self.save(target)
+        self.save_artifacts(directory)
         return recipe_file, directory
+
+    def save_artifacts(self, directory: str | os.PathLike[str]) -> tuple[Path, ...]:
+        """Write what the inspection steps produced into the build's folder (E40).
+
+        The second half of E40, and the reason the sink is a memory one: a
+        session accumulates payloads for free while it runs, and they become
+        files at the moment a folder exists to put them in. A session nobody
+        saves keeps them in memory and loses them, which is the right trade — a
+        profilometer trace is cheap to produce again and expensive to have
+        invented a path for.
+        """
+        sink = self.sink
+        payloads = getattr(sink, "payloads", None)
+        if not payloads:
+            return ()
+        root = Path(directory) / ARTIFACTS_DIR
+        root.mkdir(parents=True, exist_ok=True)
+        written = []
+        for name, payload in payloads.items():
+            path = root / f"{name}.npy"
+            np.save(path, np.asarray(payload))
+            written.append(path)
+        return tuple(written)
 
     def save(self, directory: str | os.PathLike[str]) -> Path:
         """Write the recipe and every revision into one directory (plan §9).
@@ -370,6 +447,16 @@ class Session:
         )
         self.reset(recipe.grid)
         self.recipe = recipe
+        return recipe.steps
+
+    def peek_recipe(self, path: str | os.PathLike[str]) -> tuple[RecipeStep, ...]:
+        """The steps in a recipe file, **without** touching this session.
+
+        What the restore prompt needs: "there are six steps waiting" has to be
+        answerable before anybody has agreed to anything, and `load_recipe`
+        resets the chain.
+        """
+        recipe = recipe_from_json(json.loads(Path(path).read_text(encoding="utf-8")))
         return recipe.steps
 
     def run_recipe(self, on_step: "StepCallback | None" = None) -> tuple[Revision, ...]:
@@ -471,12 +558,22 @@ def demo_recipe(registry: ProcessRegistry | None = None) -> tuple[Grid, tuple[Re
     return demo.grid, demo.steps
 
 
+def autosaved_recipe_path() -> Path:
+    """Where `write_autosave` puts the recipe — the session half of the cache."""
+    from nanofab_v3.ui.wafer import session_cache_dir
+
+    return session_cache_dir() / AUTOSAVE_FILE
+
+
 __all__ = [
+    "ARTIFACTS_DIR",
+    "AUTOSAVE_FILE",
     "CapabilityError",
     "ParameterError",
     "RECIPE_SUFFIX",
     "SESSION_MANIFEST",
     "Session",
+    "autosaved_recipe_path",
     "default_grid",
     "demo_recipe",
 ]

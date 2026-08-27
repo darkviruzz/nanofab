@@ -269,10 +269,19 @@ def test_the_watcher_hears_about_every_change(graded, registry, library) -> None
 
 
 def test_the_cache_directory_is_decided_in_one_place(monkeypatch, tmp_path) -> None:
-    """The fan and the session share a directory because there is only one."""
+    """The fan and the session share a directory because there is only one.
+
+    Since M10 (E38) `$NANOFAB_CACHE` names the **root** rather than the replay
+    directory, because the ladder now has two rungs under it: `replay/` for the
+    structures and `session/` for the autosaved recipe. They are siblings so that
+    clearing the expensive one cannot take the irreplaceable one with it.
+    """
+    from nanofab_v3.ui.wafer import session_cache_dir
+
     monkeypatch.setenv("NANOFAB_CACHE", str(tmp_path / "elsewhere"))
 
-    assert default_cache_dir() == tmp_path / "elsewhere"
+    assert default_cache_dir() == tmp_path / "elsewhere" / "replay"
+    assert session_cache_dir() == tmp_path / "elsewhere" / "session"
 
     monkeypatch.delenv("NANOFAB_CACHE")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))

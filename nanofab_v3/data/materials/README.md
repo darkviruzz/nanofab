@@ -62,3 +62,51 @@ which is what tells a later reader that nothing in it came from a measurement.
 
 A rate a file simply does not list is a different thing and does **not** warn:
 `rate_for` answers 0.0, which is the deliberate statement "this does not move".
+
+## Provenance: the rule every number in here follows
+
+Handoff §3.3 promoted this from four precedents to a rule, and M10 wrote it down,
+because backlog **B7** — calibrated rates, one file set per tool — arrives through
+exactly this seam, and whoever writes those files should not have to infer the
+convention from examples.
+
+**Every rate is measured, assumed, or didactic.**
+
+- **Measured** — it comes from a source that measured it. The source is named in
+  `rate_notes`: *"Student process table, roadmap §3 row 5 (1000 nm/min)."* The
+  number and where it came from travel together; a rate without a source is a
+  rate nobody can check.
+- **Assumed** — a real number, taken from somewhere it does not strictly belong.
+  The two SiO₂ entries are the standing example: the table names "silicon oxide"
+  for sputter etching and "fused silica" for the plasma chemistries, this library
+  carries both as separate materials, and each borrows the other's value where
+  the table is silent. `rate_notes` begins with `"Assumed, not measured."` — a
+  **field**, not a comment, so a UI can print "assumed" beside the number and a
+  reader of the file cannot miss it.
+- **Didactic** — chosen so a scenario shows its mechanism at a readable scale.
+  The etch-stop selectivity (25:1 between `titania` and `alumina`) is the
+  example: the *ratio* is chosen, the *direction* is physics — a fluorine plasma
+  makes AlF₃, which is not volatile — and both files say exactly that.
+
+Three consequences, and they are the parts that are easy to get wrong:
+
+1. **Absent beats invented.** A rate the file does not list reads 0.0, which is a
+   statement, not a gap. `titania` carries no chemistry rates at all and its
+   `notes` say that a zero there means "nobody stated one" rather than "inert".
+   Inventing a plausible number is worse than leaving it out, because a plausible
+   wrong number is indistinguishable from a right one.
+2. **Invented-and-marked beats invented.** A number is dishonest when it cannot
+   be told apart from a measured one, not when it is chosen. Choose it, and say
+   in `rate_notes` that you did.
+3. **A new provenance needs a new key, never a new value in the old one.** This
+   is E18, and it is why `sputter_etch` exists beside `ion_beam`: the same
+   technique at two sets of numbers. Writing the table's values into `ion_beam`
+   would have changed what every recipe already written *meant*, silently, with
+   no way for a saved run to notice. A rate key is a claim about provenance as
+   much as about physics.
+
+The library window (roadmap E37) enforces the rule where it is easiest to break:
+editing a rate rewrites its `rate_notes` to *"Edited &lt;date&gt; (was &lt;value&gt;;
+&lt;what the note used to say&gt;)"*, so the file never keeps a provenance for a
+number that no longer has it. A note you write yourself is left alone — somebody
+who typed a provenance knows more about it than the editor does.
