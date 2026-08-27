@@ -368,39 +368,53 @@ falsch**.
 
 ## 4. Die Meilensteine
 
-### M10 — Auslieferung und Auswahl
+### M10 — Auslieferung und Auswahl ✅ *erledigt 2026-08-27*
 
 **Fasst keine einzige gemessene Zahl an.** Das ist der Grund für die Reihenfolge:
 M10 kann komplett grün bleiben, und danach ist jede rote Zahl nachweislich Physik.
 
-1. **Paket** (E19): `--onedir`, `contents_directory="bin"`, `data/` und `demos/`
+1. ✅ **Paket** (E19): `--onedir`, `contents_directory="bin"`, `data/` und `demos/`
    als einzige Kopie, lauter Abbruch ohne Materialien, Icon (E20),
    `settings.ini` mit allen Defaults und Kommentaren (E39),
    Bibliotheks-Fingerabdruck in `--version`/`--selftest` (E36).
-2. **Materialtypisierung** (E21/E22): `tags` in den 11 Dateien, Filterkriterium
+2. ✅ **Materialtypisierung** (E21/E22): `tags` in den 11 Dateien, Filterkriterium
    pro Materialparameter, Dropdown mit Begründung und „alle anzeigen", Freitext
    bleibt.
-3. **Bibliotheks- und Demofenster** (E37): lesen, `.original/`, kanonisch
-   schreiben, Provenienz fortschreiben, Fehlerliste, „neu laden".
-4. **Sitzung** (E38/E40): Autosave des Rezepts, Wiederherstellungsfrage beim
+3. ✅ **Bibliotheks- und Demofenster** (E37): lesen, `.original/`, kanonisch
+   schreiben, Provenienz fortschreiben, Fehlerliste, „neu laden". Der Demo-Reiter
+   ist **lesend** — ein zweiter Rezept-Editor neben „öffnen, ändern, speichern"
+   wäre eine zweite Definition davon, was ein Rezept ist.
+4. ✅ **Sitzung** (E38/E40): Autosave des Rezepts, Wiederherstellungsfrage beim
    Start, `MemoryArtifactSink`, Artefakte im `save_build`.
-5. **Bugs und kleine Formulierungen**: der `adjust`-Bug (§0.1 — `_on_revision_chosen`
-   schreibt nur noch, wenn die Revision denselben `step_id` hat wie das Formular)
-   und `adjust` löscht den Filter; Index-Map/Konturen als Radiobutton-Paar;
-   Ellipsometer raus, SEM umbenannt (E35); Warnung, wenn eine verlangte Dicke
-   unter einer Zelle liegt (§0.5).
-6. **Bild und Litho** (E28/E33): Belichtung als Fläche mit D₀-Linie,
+5. ✅ **Bugs und kleine Formulierungen**: der `adjust`-Bug (§0.1 — und es waren
+   **zwei** Schreibvorgänge, siehe Plan §26.2) und `adjust` löscht den Filter;
+   Index-Map/Konturen als Radiobutton-Paar; Ellipsometer raus, SEM umbenannt
+   (E35); Warnung, wenn eine verlangte Dicke unter einer Zelle liegt (§0.5).
+6. ✅ **Bild und Litho** (E28/E33): Belichtung als Fläche mit D₀-Linie,
    Litho-Defaults aus der Domain, `grating_center`, kumulative Belichtung.
-7. **Substrat** (E30): Preset „semi-infinit, 50 nm Oberfläche", `surface`-Default
-   100 nm für Wafer und Maske, `roughness_nm` in den Presets.
+7. ✅ **Substrat** (E30): Preset „semi-infinit, 50 nm Oberfläche", `surface`-Default
+   100 nm für Wafer und Maske, `roughness_nm` in den Presets, und das
+   Profilometer liest sie.
 
-**DoD:** Der ausgelieferte Ordner enthält Exe, `bin/`, `data/materials/`,
-`data/demos/`, `settings.ini` und sonst nichts; eine dort geänderte Rate wirkt
-nach einem Neustart und `--version` weist sie über den Fingerabdruck aus; ein
-Materialdropdown zeigt für `resist.spin_coat` keine Metalle und sagt warum;
-„Anpassen" lädt die gelaufenen Werte, auch bei aktivem Filter; das Programm
-startet nach einem Absturz mit der Frage nach der letzten Sitzung und rechnet
-sie nicht ungefragt; **589 Tests bleiben grün** und die Exe 7/7.
+Zusätzlich erledigt, weil die R1-Übung (§2 gegen §4 prüfen) sie fand bzw. der
+Handoff sie hier fällig machte: **E31s erste Hälfte** (ein Schritt, der ein
+Material einführt, fragt vorher — stand in *keiner* §4-Liste, nur die
+Bake-Trilogie war M12 zugewiesen) sowie **R1, R6, R7, R8 und R9**.
+
+**DoD — gemessen, alle erfüllt:** Der ausgelieferte Ordner enthält Exe, `bin/`,
+`data/materials/`, `data/demos/`, `settings.ini` und sonst nichts; eine dort
+geänderte Rate wirkt nach einem Neustart und `--version` weist sie über den
+Fingerabdruck aus (im ausgelieferten Ordner gemessen: eine geänderte Cr-Rate
+bewegt ihn und ein `.original/`-Reset bewegt ihn zurück; der aktuelle ist
+82f5c67a11d3); ein Materialdropdown
+zeigt für `resist.spin_coat` keine Metalle und sagt warum; „Anpassen" lädt die
+gelaufenen Werte, auch bei aktivem Filter; das Programm startet nach einem
+Absturz mit der Frage nach der letzten Sitzung und rechnet sie nicht ungefragt;
+die Tests sind grün (**589 → 672**, 0 übersprungen) und die Exe 7/7.
+
+Eine Zahl hat sich bewegt, und sie ist keine Physik: **31 → 30 Schritte**, weil
+E35 das Ellipsometer entfernt. Der Preis der Onedir-Auslieferung ist ebenfalls
+gemessen: 304 MB unkomprimiert gegen 115 MiB als Onefile (Plan §26.1).
 
 ### M11 — Gerichtete Prozesse und ihr Bild
 

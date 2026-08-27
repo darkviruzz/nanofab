@@ -1706,3 +1706,41 @@ Offen und bewusst vertagt:
 - Aus dem M6-M9-Handoff bleiben R2, R3, R5, R10 vertagt, jeweils mit Begründung in Roadmap §5.
 
 Next: der Nutzer nimmt `m10-m12-roadmap.md` ab; dann startet M10 mit `m10-start-prompt.md` in einer frischen Session.
+
+## Update 2026-08-27 (v2 M10: one delivered folder, typed materials, the library window, autosave)
+
+- Roadmap `docs/plans/m10-m12-roadmap.md` §4 "M10", all seven items plus E31's orphaned half plus handoff R1/R6/R7/R8/R9. Suite **589 -> 672** green, 0 skipped; delivered folder 7/7 in 4.5 s; 31 -> **30** steps.
+- New: `nanofab_v3/settings.py`, `nanofab_v3/branding.py`, `nanofab_v3/assets/nanofab.{svg,ico}`, `scripts/make_icon.py`, `nanofab_v3/materials/selection.py`, `nanofab_v3/materials/editing.py`, `nanofab_v3/ui/library_window.py`, `nanofab_v3/ui/derived.py`, `.github/workflows/tests.yml`, five test files.
+- Plan §26 carries the corrections; roadmap §4 "M10" is ticked with the measured DoD.
+
+Why it changed:
+- User: build M10 from the roadmap, on branch `claude/nanofab-v2-m6-datamodel-ez9dqu`.
+
+What was measured, and what turned under it:
+1. **`contents_directory` is an `EXE` option, not a `COLLECT` one.** Set on `COLLECT` it is silently ignored and the folder comes out as `_internal` — found only by looking at the artifact, which is the whole class of failure E19's strand is about. Plan §26.1.
+2. **Onedir costs 2.6x the bytes.** 115 MiB compressed as one file against **304 MB** as a folder, same content. Startup unchanged (7/7 in 4.5 s), because the bootloader no longer unpacks into a temp dir. Worth writing down because "just unpacked" is what one would assume.
+3. **The `adjust` bug was two writes.** §0.1's diagnosis was right and incomplete: after fixing the by-name write into a foreign form, `_on_adjust` still filled the form and *then* refreshed — and the refresh rebuilds the step list, changes its selection, re-emits `step_chosen` and rebuilds the form from the schema. Refresh first, fill second. Both halves look identical from the outside and both look like the filter.
+4. **A constructor that opens a modal dialog hangs a headless suite silently.** E38's restore prompt was called from `MainWindow.__init__`; every `MainWindow()` in the suite then waited for an answer nobody could give. No output, no traceback, no failing test — two aborted 20-minute runs and a `faulthandler` dump to see it. `run()` calls `offer_the_last_session()` after `show()` now. Its sibling: the suite was autosaving into `~/.cache`, so a run leaked into the next one through exactly the file the prompt reads; `conftest.py` points `$NANOFAB_CACHE` at a temp dir.
+5. **The R1 exercise found exactly one orphan, and it was E31.** Checking roadmap §2 (E19-E40) against the §4 task lists: E31's bake trilogy is assigned to M12, its *first* clause — "a step that introduces a material asks first" — is in no list at all. Built here, because it is live: `anneal.thermal` swaps to `resist_hardbaked` and nothing checked the target exists.
+6. **Alumina's fluorine rate is 0.02, not 0.** A test I wrote asserted the wrong premise; B12 gave it a 25:1 *slower* rate, not zero. Corrected before it could become a second wrong claim about the etch-stop demo.
+
+Decisions taken where the roadmap left room, all in the spirit of E19's "one truth":
+7. **Strictness follows whose files they are, not who is asking.** In a delivered build `didactic_library()` reads the operator's folder (E19 removed the shipped one), and reads it *leniently*: a broken file this project shipped is a build defect and must raise; one somebody edited last night costs that material and is listed by the report and by the new window. What that loses is what the fingerprint (E36) reports instead of hiding.
+8. **`--version` diagnoses rather than aborting.** The missing-library check stops everything else; `--version` prints the reason and continues, because diagnosing that exact failure is what it is for.
+9. **`settings.ini` is rendered from the same table that parses it**, so the comments cannot drift from the behaviour, and only keys something in M10 actually reads are in it (B10's lesson: infrastructure nobody exercises).
+10. **The icon is the `.ico` for both `setWindowIcon` and PyInstaller**, so the Qt SVG plugin never has to be frozen; the SVG is the versioned source and `scripts/make_icon.py` the generator, run by hand.
+11. **E30's "instruments read it" is deterministic, not drawn.** Adding a random component would put `ctx.rng` into a measurement, which is backlog B5 and a decision of its own. The profilometer adds the substrate's Ra in quadrature and says which half came from where.
+12. **E28 softens plan §10 by exactly one number** (the clearing dose) and the fence is written into `scene.DOSE_BANDS`: if a second physical quantity ever wants in, that is the moment to move to a presentation scale the session computes, not to soften §10 a third time.
+13. **The demo tab is read-only.** A second recipe editor beside "open, adjust, save" would be a second definition of what a recipe is.
+14. **`tags` are excluded from the M6 bit-identity test.** They are data the pre-migration models never had and no rate depends on them; what has to stay bit-identical is the model a cached revision was computed under.
+
+Validated: `python -m compileall nanofab_v3 tests`, `python -m pytest` (**672 passed**, 0 skipped), `pyinstaller nanofab_v3.spec` -> `dist/nanofab_v3/` holding exactly `nanofab_v3 · bin/ · data/ · settings.ini`, `--version` (30 processes, 11 materials from **1** root, fingerprint `82f5c67a11d3`, settings and icon paths), `--selftest` 7/7 in 4.5 s. DoD checked in the delivered folder: editing chrome's ion-beam rate moved the fingerprint and copying `.original/chrome.json` back moved it home.
+
+Known risks and what was deliberately left:
+- **The delivered `didactic_library()` is not isolated.** That is E19's accepted trade and the fingerprint is the mitigation, not a fix: a `--selftest` in a delivered folder is a statement about that folder's files.
+- **`roughness = 0` cannot express "a wafer with no roughness"** — it means "take the preset's", like every other 0 marker in this repo. The semi-infinite preset is what says zero.
+- **`grating_center` replaces `phase` by rename, not reinterpretation**, so a recipe saved before M10 fails loudly on the unknown parameter rather than quietly moving its grating. That is the intended failure and it is worth remembering when M11 touches recipes.
+- **No test drives the restore dialog end to end** — it is a modal `QMessageBox`, and the pieces under it (`peek_recipe`, `load_recipe`, the autosave file) are tested individually.
+- The 304 MB delivery is uncompressed by construction; if that becomes a problem the answer is a compressed installer, not `upx` (spec note 4).
+
+Next: M11 (`docs/plans/m10-m12-roadmap.md` §4) — rate unification E24 (one `etch.ion_beam`, `sputter_etch` gone, S2c to 120 s), ICP without an angle (E23), reflection and trenching (E25), redeposition identity plus `inherits` (E26/E27), and the live `StepPreview` (E29, whose arrow scale already has its `settings.ini` home waiting).

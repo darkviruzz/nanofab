@@ -2378,3 +2378,178 @@ one component through 60 s of a development it is not subject to. The §18.5
 velocity-extension collar is still there — it is what made the earlier, broken
 runs erode a thin body from both sides — but with a valid union field it no
 longer bites at this geometry. Backlog, not M9.
+
+## 26. Corrections from implementation (M10)
+
+Written 2026-08-27, at the end of `docs/plans/m10-m12-roadmap.md`'s first
+milestone. M10 was the one that "fasst keine einzige gemessene Zahl an" — no rate,
+no geometry, no scenario — and it held: the seven scenarios are unchanged and the
+suite went 589 → 672 with nothing red in between. Two numbers did move and
+neither is physics: **31 → 30 registered steps**, because E35 removes the
+ellipsometer, and the delivered build's size, below.
+
+### 26.1 `contents_directory` is an `EXE` option, and onedir is not free
+
+Roadmap E19 asks for `--onedir` with the collected files pushed into `bin/`, so
+that a delivered folder holds the executable and the four things somebody opens.
+Two things the build taught:
+
+**`contents_directory` belongs on `EXE`, not on `COLLECT`.** It describes the
+*collected* layout, so `COLLECT` is where it reads as if it belongs — and
+PyInstaller takes it off the executable's own options table. Set on `COLLECT` it
+is silently ignored and the folder comes out as `_internal`, which is the same
+class of failure as the whole packaging strand: correct-looking, and only visible
+in the artifact.
+
+**The size is the price of the decision, measured rather than assumed.** The
+one-file build was 115 MiB, because its archive is compressed; the same content
+as a directory is **304 MB**. That is 2.6x, it buys the one thing E19 is about —
+a library an operator can open, in exactly one copy — and it is worth writing
+down because "onedir is basically the same, just unpacked" is what somebody would
+otherwise assume. Startup is unchanged in the direction that matters: 7/7 in
+4.5 s, the same as the one-file build's, because the bootloader no longer unpacks
+an archive into a temp directory.
+
+The delivered folder is `nanofab_v3 · bin/ · data/materials/ · data/demos/ ·
+settings.ini`, and `data/materials/.original/` inside the first of those (E37's
+reset copy, a dot directory so `read_root`'s `*.json` glob never sees it).
+
+### 26.2 The `adjust` bug was two writes, and the second was an ordering
+
+Roadmap §0.1 measured the first half exactly right: `_on_revision_chosen` wrote
+`revision.history.params` into whatever form was on screen, **by parameter name**,
+and after `rewind(1)` the selection lands on revision #0 — `substrate.select`,
+`material=silicon`, `thickness=0.0` — whose two parameter names collide with the
+spin coat's. Stored `resist`/90.0, displayed `silicon`/0.0.
+
+Fixing that was not enough, and the second half is the more interesting one.
+`_on_adjust` filled the form and *then* called `_refresh_all`. Rewinding changes
+the capabilities, so the refresh rebuilds the step list, which changes its
+selection, which emits `step_chosen`, which rebuilds the form from the schema —
+throwing away the values that had just been written into it. Refresh first, fill
+second.
+
+Both halves look identical from the outside ("adjust does not load what ran") and
+both look like the material filter, which is what the roadmap warned about. The
+general form is worth keeping: **a form belongs to one step, and a parameter set
+only means anything inside the step that declared it.** `ParameterForm.step_id`
+exists so that rule is checkable rather than remembered.
+
+### 26.3 E28 softens §10 by exactly one number, and here is the fence
+
+Plan §10 says rendering is a consumer: it decides pictures, never physics. E28
+breaks that on purpose. The dose overlay's bands are multiples of the resist's
+**clearing dose**, which is `DevelopModel.clearing_dose` — physics, read by the
+renderer.
+
+The alternative was what M8 shipped: bands as fractions of the *peak dose
+present*. That is a picture whose meaning changes between two revisions of the
+same recipe, because the peak moves — and a scale that moves is not a scale. It
+is also unreadable in the way that matters: "twice over-dosed" is a sentence a
+relative scale cannot produce.
+
+The softening is bounded and the bound is written into `ui.scene.DOSE_BANDS`'s
+docstring, which is the point of recording it here as well: `scene.build` already
+receives the library (it needs the display colours), so nothing new crosses the
+boundary; what crosses is one number, read by name, for one overlay. No rate, no
+model evaluation, no decision about geometry. **If a second physical quantity
+ever wants in, that is the moment to move this to a "presentation scale" the
+session computes and hands over, rather than to soften §10 a third time.**
+
+The `exposed` overlay changed for a different reason and it is not a softening: a
+binary field has one value and nothing to grade, so a contour of it read as a
+*shape*, which is exactly what a latent image is not. It is a flat translucent
+area now.
+
+### 26.4 Roughness is a number, and the instrument reads it — deterministically
+
+E30's substance is that 0.5 nm at 1 nm per cell is below what the level set can
+carry, and the reinitialisation would pull it flat within a few sub-steps; an
+unpolished back side at Ra ~ 1 µm would be taller than the whole domain. So
+`substrate.roughness_nm` is metadata and the profilometer reads it.
+
+The decision the implementation had to make: E30 says the profilometer "adds it
+as noise", and a *drawn* random component would put `ctx.rng` into a measurement.
+That is backlog **B5** — it makes a measurement depend on replay order, which is
+a decision with its own consequences rather than a detail of this one. So the two
+contributions are added **in quadrature and deterministically**: two independent
+contributions to one Ra add that way, a polished wafer measures 0.50 nm on a
+cross-section that is perfectly flat, and the log says which part came from
+where. Nothing replay-dependent, and B5 stays open for the case it is about.
+
+The same decision surfaced `SEMI_INFINITE`, which had been a form factor with no
+preset: reachable only by typing it. It has an entry now, and it is the reason
+`presets_by_section()` grew a third section.
+
+### 26.5 The R1 exercise found one, and it was E31
+
+Handoff R1's process finding was that **a decision recorded in a roadmap's §2 but
+never written into a §4 task list gets built only by luck**, and its
+recommendation was a pass over the remaining §2 decisions before the next
+milestone list was written. That pass was done for E19–E40 at the start of M10
+and it found exactly one:
+
+**E31** — *"a step that introduces a material asks first"* — has two halves. Its
+bake trilogy is assigned to M12 explicitly. Its first clause, the pre-flight
+check, is in **no** §4 list at all, in any milestone. It is built here, because
+the case it names is live: `anneal.thermal` swaps a resist for
+`resist_hardbaked` and nothing checked the target existed, so a typo in `becomes`
+produced a sample made of a material the library cannot answer for — silently,
+one step before the strip that then did nothing.
+
+The check reads the *schema* rather than guessing from parameter names, which E22
+made possible: a material parameter says it is one. `becomes` is the single
+exception and is named as such, because it holds a material without being chosen
+from a list.
+
+This also settles the ordering question the two decisions raise together. E15
+asks **after** a step, because a material can arrive without any step naming it —
+a scattered particle, a plugin's own film — and nothing can be asked in advance
+about a material nobody typed. E31 asks **before**, because a material the form
+names is knowable now. Both are right for their own case, and cancelling E31's
+question means the step does not run.
+
+### 26.6 A constructor that opens a modal dialog hangs a headless suite silently
+
+E38's restore prompt was called from `MainWindow.__init__`. Every `MainWindow()`
+in the test suite then opened a modal `QMessageBox` and waited for an answer
+nobody could give — a hang with no output, no traceback and no failing test,
+which took two aborted twenty-minute runs and a `faulthandler` dump to see.
+
+It is the sharpest instance of a rule this repository already half-had: **a
+widget's constructor builds, and asking is something a caller decides to do.**
+`run()` calls `offer_the_last_session()` after `show()`, and the method returns a
+bool so a test can drive it.
+
+The same run turned up its sibling: the suite was autosaving into the developer's
+own `~/.cache`, so a test run leaked into the machine it ran on *and* into the
+next run, through exactly the file the restore prompt reads. `tests/conftest.py`
+points `$NANOFAB_CACHE` at a temp directory for the whole session — the same
+shape as the `QT_QPA_PLATFORM` line above it, and for the same reason.
+
+### 26.7 Measured M10 costs, extending §17.7, §18.8, §19.6, §20.8, §21.5, §22.6, §23.7 and §24.7
+
+Same container as M6–M9; §23.7's warning applies (a number measured on one
+machine is a statement about that machine).
+
+| | end of M9 | end of M10 |
+| --- | --- | --- |
+| tests | 589, 0 skipped | **672**, 0 skipped |
+| registered steps | 31 | **30** (E35 removes the ellipsometer) |
+| materials | 11, untagged | 11, **tagged** (E21) |
+| delivery | one file, 115 MiB | **one folder, 304 MB** (§26.1) |
+| `--selftest` | 7/7 in 4.5 s | 7/7 in **4.5 s** |
+| library roots, frozen | 2 (one of them sealed) | **1** (E19) |
+| library fingerprint | — | `82f5c67a11d3` (E36) |
+
+Two costs worth naming because they are per-step rather than per-build:
+
+- **The autosave is free at this scale.** A six-step lift-off recipe is 893 bytes
+  and the write is one `write_text` plus one `os.replace`; measured against the
+  step it follows (0.1–2.3 s), it does not appear. That is the whole argument of
+  E38 in one line — the *build* it deliberately does not write is 23 MB per
+  revision.
+- **The derived hints are recomputed on every keystroke** and are a library
+  lookup plus, for the spin coat, one interpolation. `ui.derived` never raises,
+  because a half-typed value in a spin box is a normal state for a form to be in
+  and a hint is not worth an exception.
