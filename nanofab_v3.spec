@@ -11,7 +11,7 @@ format rather than being linked in here.
 
 Read against `ui_backups/2026-08-25_v0.2.0_nanofab-manager/nanofab_manager.spec`,
 which is a working recipe for the *old* application and a record rather than a
-branch (`AGENTS.md` §7). Four things differ, and each is a decision:
+branch (`AGENTS.md` §7). Six things differ, and each is a decision:
 
 1. **`console=True`**, where v0.2.0 froze a windowed app. Plan §14's DoD for M5
    is *"packaged exe runs S1-S4"*, and the way it does that is `--selftest`
@@ -40,14 +40,24 @@ branch (`AGENTS.md` §7). Four things differ, and each is a decision:
    else's machine. A smaller download is not worth a class of failure that only
    appears there.
 
-5. **`datas` carries `nanofab_v3/data/materials/`.** Since M6 the material
-   library is fourteen JSON files rather than a Python literal (roadmap E14),
-   and PyInstaller collects data only when told to. Without this the exe starts,
-   fails to find a single `MaterialType`, and every scenario dies at the first
-   rate lookup — the same class of build-only failure as note 2, which is why
-   `materials.store.builtin_materials_dir()` checks `importlib.resources` first
-   and the package directory second, and why `--selftest` prints how many
-   materials it loaded.
+5. **`datas` carries `nanofab_v3/data/`.** Since M6 the material library is JSON
+   files rather than a Python literal (roadmap E14), and since M9's follow-up the
+   demos are too; PyInstaller collects data only when told to. Without this the
+   exe starts, finds not a single `MaterialType`, and every scenario dies at the
+   first rate lookup — the same class of build-only failure as note 2, which is
+   why `materials.store.builtin_materials_dir()` checks `importlib.resources`
+   first and the package directory second, and why `--selftest` prints how many
+   materials and demos it loaded.
+
+6. **The same two directories are also *placed beside* the exe** (the block after
+   `EXE(...)`). Those are the copies an operator edits: a rate, a duration, a new
+   demo. The exe keeps its own sealed copy and runs alone without them, and
+   `paths.portable_dir()` is what prefers the visible one at runtime.
+
+   This is deliberately **not** a one-directory build. `--onedir` would put
+   `data/` beside the executable for free and bury it among several hundred DLLs,
+   which is worse than sealing it: the point is a folder somebody can find. Plan
+   §11's one-file decision therefore stands, and the cost is these twelve lines.
 
 `excludes` drops the test and packaging machinery: pytest is not part of the
 delivery, and `--selftest` runs the scenarios out of `nanofab_v3.acceptance`
@@ -56,8 +66,10 @@ instead — which is the whole reason that module is in the package.
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-# See note 5: the material library is data files inside the package.
-datas = collect_data_files("nanofab_v3", includes=["data/materials/*.json"])
+# See note 5: the library and the demos are data files inside the package.
+datas = collect_data_files(
+    "nanofab_v3", includes=["data/materials/*.json", "data/demos/*.json"]
+)
 
 hiddenimports = [
     # `builtin_registry()` imports these inside the function (see note 2).
@@ -111,3 +123,15 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
+
+# See note 6: the editable copies, beside the exe rather than inside it.
+import shutil
+from pathlib import Path
+
+for _name in ("materials", "demos"):
+    _source = Path(SPECPATH) / "nanofab_v3" / "data" / _name
+    _target = Path(DISTPATH) / "data" / _name
+    if _source.is_dir():
+        shutil.copytree(_source, _target, dirs_exist_ok=True)
+        print(f"placed {_target} ({len(list(_target.glob('*')))} files) beside the exe")

@@ -28,7 +28,13 @@ without opening the application, which matters because neither ever raises.
 The material count is there because of how its absence fails. The library is data
 files inside the package (roadmap E14) and a build that did not collect them
 starts fine and dies at the first rate lookup; `materials: 0` on the version line
-says so in one word.
+says so in one word. The demo count is there for the same reason and one step
+milder — a build that missed those opens with an empty **Demos** menu.
+
+Both print their **roots**, which is how somebody checks that the editable copies
+beside a delivered exe are the ones being read. `paths.portable_dir()` prefers
+them silently when they are there, and a silent preference needs somewhere to be
+visible.
 """
 
 from __future__ import annotations
@@ -140,6 +146,12 @@ def describe_build(stream=None) -> int:
         print(line, file=out)
     for root in library_report.roots:
         print(f"materials root: {root}", file=out)
+    # The demos are data files too since M9's follow-up, and fail the same way:
+    # a build that did not collect them opens with an empty Demos menu.
+    from nanofab_v3.ui.demos import report as demo_report
+
+    for line in demo_report().describe():
+        print(line, file=out)
     for line in discovery.describe() or ("plugins: none found",):
         print(line, file=out)
     if getattr(sys, "frozen", False):

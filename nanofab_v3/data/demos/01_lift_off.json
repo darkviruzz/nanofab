@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "key": "lift_off",
+  "title": "Naive lift-off",
+  "summary": "resist, a window, evaporated metal, and a solvent",
+  "watch_for": "The metal in the window and the metal on the resist never touch, because an evaporation is a point source and a vertical wall is edge-on to it. That is the whole reason lift-off works, and `deposit.sputter` on the same stack breaks it.",
+  "grid": {
+    "origin": [
+      0.0,
+      0.0
+    ],
+    "spacing": 1.0,
+    "shape": [
+      241,
+      301
+    ],
+    "axes": [
+      "y",
+      "x"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "substrate.select",
+      "params": {
+        "material": "silicon",
+        "surface": 40.0
+      }
+    },
+    {
+      "step_id": "resist.spin_coat",
+      "params": {
+        "material": "resist",
+        "thickness": 90.0
+      }
+    },
+    {
+      "step_id": "litho.expose_ideal",
+      "params": {
+        "material": "resist",
+        "pattern": "window",
+        "center": 150.0,
+        "width": 100.0
+      }
+    },
+    {
+      "step_id": "develop.ideal",
+      "params": {
+        "material": "resist"
+      }
+    },
+    {
+      "step_id": "deposit.evaporate",
+      "params": {
+        "material": "metal",
+        "thickness": 20.0
+      }
+    },
+    {
+      "step_id": "strip.lift_off",
+      "params": {
+        "material": "resist"
+      }
+    }
+  ]
+}

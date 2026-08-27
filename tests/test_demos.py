@@ -146,6 +146,38 @@ def test_the_alumina_stops_a_deliberately_long_etch() -> None:
     covered = np.count_nonzero(np.isfinite(titania))
     assert 0.3 * titania.size < covered < 0.7 * titania.size  # patterned, not blanket
 
+    assert not _present(session, RESIST)  # and the mask is gone
+
+
+def test_the_oxygen_strip_takes_forty_seconds_and_not_four_hundred() -> None:
+    """The last step of the etch-stop demo used to run ten times longer than it needs.
+
+    "Deliberately long" is the *fluorine* step's argument — the alumina ends the
+    etch and not the clock — and it had been copied onto the oxygen strip that
+    follows, where it means nothing: there is no selectivity lesson in removing
+    resist that is already gone.
+
+    And by then it nearly is. The fluorine step takes resist at 1 nm/s for 350 s,
+    so what reaches the oxygen plasma is a remnant of a 400 nm coat. Measured on
+    this recipe: 35 s already leaves no resist cell, and 400 s left exactly the
+    same nothing — six minutes of solving it. 40 s, with the margin visible.
+    """
+    entry = demo("titania_stop")
+    strip = entry.steps[-1]
+
+    assert strip.step_id == "etch.rie_oxygen"
+    assert strip.params["duration"] == 40.0
+    assert "40 s, not 400" in entry.note(len(entry.steps) - 1)
+
+    session = _run("titania_stop")
+
+    # `_present`, not `in materials`: an etch that consumes a material leaves its
+    # key behind with an all-positive field (§20.5's phantom), and the question
+    # here is whether any resist is *there*.
+    assert not _present(session, RESIST)  # 40 s was enough
+    assert int((session.structure.phi_of(RESIST) < 0.0).sum()) == 0
+    assert _present(session, TITANIA) and _present(session, ALUMINA)  # and took nothing else
+
 
 # -- 4. black silicon ---------------------------------------------------------
 

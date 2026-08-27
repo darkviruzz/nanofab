@@ -34,7 +34,8 @@ include = ["nanofab_v3*"]
 # install — a library that loads from the source tree and is missing from the
 # distribution only shows up when somebody runs `--selftest` elsewhere.
 [tool.setuptools.package-data]
-nanofab_v3 = ["data/materials/*.json", "data/materials/README.md"]
+nanofab_v3 = ["data/materials/*.json", "data/materials/README.md",
+              "data/demos/*.json", "data/demos/README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

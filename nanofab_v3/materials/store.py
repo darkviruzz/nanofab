@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Mapping, Sequence
 
+from nanofab_v3 import paths
 from nanofab_v3.materials.material import MaterialId, MaterialType
 from nanofab_v3.materials.schema import MaterialFileError, read_material, write_material
 
@@ -77,15 +78,25 @@ def builtin_materials_dir() -> Path:
 def user_materials_dir() -> Path:
     """The writable root E15's dialog saves to; never created until something writes.
 
-    `$NANOFAB_MATERIALS` overrides it; otherwise `$XDG_DATA_HOME` or
-    `~/.local/share`, and a temp directory when the home directory cannot be
-    determined — the same ladder `ui.wafer.default_cache_dir()` climbs, so an
-    operator has one place for their own materials rather than one per entry
-    point.
+    `$NANOFAB_MATERIALS` overrides it. Then, in a frozen build, `data/materials/`
+    **next to the executable** if it is there — the copy `nanofab_v3.spec` places
+    beside the exe so an operator can open a rate in a text editor instead of
+    guessing at one. It is the writable root and not a third read-only one on
+    purpose: two editable directories, one of which silently wins, is a worse
+    answer than one, and a portable application's own folder is the one somebody
+    is actually looking at.
+
+    Otherwise `$XDG_DATA_HOME` or `~/.local/share`, and a temp directory when the
+    home directory cannot be determined — the same ladder
+    `ui.wafer.default_cache_dir()` climbs, so an operator has one place for their
+    own materials rather than one per entry point.
     """
     override = os.environ.get(MATERIALS_ENV)
     if override:
         return Path(override)
+    beside = paths.portable_dir(*MATERIALS_SUBDIR)
+    if beside is not None:
+        return beside
     try:
         base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     except (OSError, RuntimeError):  # pragma: no cover - depends on the machine
@@ -111,8 +122,11 @@ class LibraryReport:
         roots: The directories that were read, in the order they were read.
         loaded: `{material_id: file}` for everything that parsed.
         overridden: `{material_id: [earlier files]}` — a later root shadowing an
-            earlier one is the intended mechanism (B7), so it is reported rather
-            than warned about.
+            earlier one *with a different definition* is the intended mechanism
+            (B7), so it is reported rather than warned about. An identical file in
+            two roots is not an override and is not listed: a delivered build has
+            the whole library twice by construction, and reporting that would bury
+            the one entry somebody actually changed.
         failures: `(path, reason)` per file that did not parse.
     """
 
@@ -192,7 +206,14 @@ def load_library(
             raise MaterialFileError(reason if str(path) in reason else f"{path}: {reason}")
         failures.extend(root_failures)
         for material, entry in entries.items():
-            if material in files:
+            # Only a *different* definition counts as an override. Since the
+            # delivered exe carries its own copy of the library and reads the
+            # editable one beside it, every material shadows an identical twin —
+            # eleven lines saying nothing, which is exactly how the one line that
+            # means something (a lab's own chromium) becomes invisible. "A count
+            # is not a list" cuts both ways: a list of non-events is not one
+            # either.
+            if material in files and merged.get(material) != entry:
                 overridden[material] = overridden.get(material, ()) + (files[material],)
             merged[material] = entry
             files[material] = found[material]
