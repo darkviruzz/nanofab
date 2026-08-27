@@ -50,12 +50,15 @@ default rather than a degraded one.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from nanofab_v3.kernel import occurrences, predicates
 from nanofab_v3.materials import MaterialId
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
+from nanofab_v3.processes.substrate import ROUGHNESS_KEY
 from nanofab_v3.processes.contract import (
     IDEAL,
     FunctionStep,
@@ -200,17 +203,39 @@ def _run_profilometer(ctx: StepContext) -> StepResult:
                 label="Profilometer trace",
             ),
         )
+    # Roadmap E30: the substrate's own roughness is a *number* in the metadata,
+    # because 0.5 nm at 1 nm per cell is below what the level set can carry and
+    # the reinitialisation would smooth it away within a few sub-steps. So the
+    # instrument reads it and the picture does not show it, which is the lesson
+    # rather than the limitation: a profilometer measures the roughness of a
+    # surface that looks perfectly flat in every cross-section anybody draws.
+    #
+    # Added in quadrature, and deterministically. Two independent contributions
+    # to one Ra add that way; and a *drawn* random component would put an RNG
+    # into a measurement, which is backlog B5 — it makes a measurement depend on
+    # replay order, and that is a decision with its own consequences rather than
+    # a detail of this one.
+    substrate_ra = float(structure.metadata.get(ROUGHNESS_KEY, 0.0) or 0.0)
+    measured_ra = float(math.hypot(roughness, substrate_ra))
+    note = (
+        f", Ra {measured_ra:.2f} nm"
+        if not substrate_ra
+        else (
+            f", Ra {measured_ra:.2f} nm ({roughness:.2f} from the profile, "
+            f"{substrate_ra:.2f} from the substrate — the picture cannot show it)"
+        )
+    )
     return StepResult(
         structure=structure,
         measurements={
             "step_height": Quantity(step_height, "nm"),
-            "roughness_ra": Quantity(roughness, "nm"),
+            "roughness_ra": Quantity(measured_ra, "nm"),
+            "profile_ra": Quantity(roughness, "nm"),
             "mean_height": Quantity(mean, "nm"),
         },
         artifacts=artifacts,
         logs=(
-            f"profilometer (stylus {radius:.0f} nm): step {step_height:.1f} nm, "
-            f"Ra {roughness:.2f} nm",
+            f"profilometer (stylus {radius:.0f} nm): step {step_height:.1f} nm" + note,
         ),
     )
 
@@ -268,6 +293,11 @@ PROFILOMETER = FunctionStep(
     description=(
         "Drags a stylus of radius `tip_radius` across the surface and reports the trace, the "
         "step height and the roughness."
+        "\n\n"
+        "The roughness it reports is the profile's **and** the substrate's, added in "
+        "quadrature (roadmap E30). A polished wafer's Ra of 0.5 nm is below one cell, so no "
+        "cross-section can draw it and the instrument measures it anyway — which is the more "
+        "useful thing to learn than a perfectly smooth reading would be."
         "\n\n"
         "The tip convolution is the didactically valuable part and is really computed: a trench "
         "narrower than the tip comes back shallower than it is, and a sharp corner comes back "

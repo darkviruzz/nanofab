@@ -647,7 +647,10 @@ def test_a_scenario_that_breaks_reports_rather_than_raises(registry, library) ->
     """
     broken = replace(
         acceptance.scenarios()[0],
-        steps=(("substrate.select", {"material": SILICON}),),  # no `surface`
+        # A negative surface, not a *missing* one: since E30 gave `surface` the
+        # "0 means the preset's" marker, leaving it out is legal and this test
+        # would have stopped testing anything.
+        steps=(("substrate.select", {"material": SILICON, "surface": -5.0}),),
     )
 
     result = acceptance.run_scenario(broken, registry=registry, library=library)

@@ -60,7 +60,9 @@ def test_the_preset_list_is_two_sections_sorted_the_way_e3_asks() -> None:
     """
     sections = substrate.presets_by_section()
 
-    assert set(sections) == {"wafer", "mask"}
+    # "other" arrived with E30's semi-infinite entry — a substrate that is
+    # neither a wafer nor a mask blank because its thickness is not stated.
+    assert set(sections) == {"wafer", "mask", "other"}
     for entries in sections.values():
         keys = [preset.sort_key for preset in entries]
         assert keys == sorted(keys)

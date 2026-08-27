@@ -108,6 +108,16 @@ DIAMETER_KEY = "substrate.diameter"
 SIZE_X_KEY = "substrate.size_x"
 SIZE_Y_KEY = "substrate.size_y"
 FINISH_KEY = "substrate.surface_finish"
+ROUGHNESS_KEY = "substrate.roughness_nm"
+"""Surface roughness Ra in nm — a **number**, deliberately not geometry (E30).
+
+At 1 nm per cell a polished wafer's Ra of 0.5 nm is below what the level set can
+carry, and the reinitialisation would pull it flat within a few sub-steps; an
+unpolished back side at Ra ~ 1 um would be larger than the whole domain. Neither
+is a roughness the geometry can hold, so it is metadata — and the instruments
+read it. That teaches the right thing rather than hiding a limitation: *the
+profilometer measures roughness the picture does not show.*
+"""
 PRESET_KEY = "substrate.preset"
 
 
@@ -134,6 +144,15 @@ class SubstratePreset:
         diameter_mm: Diameter for a round substrate, else `None`.
         side_mm: Side length for a square one, else `None`.
         domain: The cross-section this preset proposes (E2).
+        roughness_nm: Surface roughness Ra in nm (E30). A polished wafer is 0.5,
+            a mask blank 0.3, a semi-infinite substrate 0.0 — the last because
+            "nobody stated a thickness" and "nobody stated a roughness" are the
+            same kind of silence, and inventing one here would be the failure
+            `titania`'s deliberate zeros exist to avoid.
+        surface_nm: Where this preset puts the original surface in the domain.
+            100 nm of substrate below it for a wafer and a mask, which is enough
+            for an etch to have somewhere to go; 50 for semi-infinite, which does
+            not model a bottom at all.
     """
 
     key: str
@@ -145,6 +164,8 @@ class SubstratePreset:
     diameter_mm: float | None = None
     side_mm: float | None = None
     domain: DomainSuggestion = DomainSuggestion()
+    roughness_nm: float = 0.5
+    surface_nm: float = 100.0
 
     @property
     def sort_key(self) -> tuple[str, float, float]:
@@ -178,6 +199,7 @@ def _mask(code: str, side_mm: float, thickness_mm: float) -> SubstratePreset:
         thickness_mm=thickness_mm,
         side_mm=side_mm,
         domain=_MASK_DOMAIN,
+        roughness_nm=0.3,
     )
 
 
@@ -215,6 +237,20 @@ SUBSTRATE_PRESETS: tuple[SubstratePreset, ...] = tuple(
             _mask("9012", 228.6, 3.05),
             _mask("9020", 228.6, 5.00),
             _mask("9025", 228.6, 6.35),
+            # E30, and the entry that closes roadmap §0.7's finding that
+            # `SEMI_INFINITE` existed as a form factor with no way to pick it.
+            # "The thickness does not matter here" is a legitimate answer and
+            # was reachable only by typing the form factor by hand.
+            SubstratePreset(
+                key="semi_infinite",
+                section="other",
+                label="Semi-infinite — thickness not stated, 50 nm of surface",
+                form_factor=SEMI_INFINITE,
+                material=SILICON,
+                thickness_mm=0.0,
+                roughness_nm=0.0,
+                surface_nm=50.0,
+            ),
         ),
         key=lambda preset: preset.sort_key,
     )
@@ -255,6 +291,7 @@ class SubstrateSpec:
     size_x: float | None = None
     size_y: float | None = None
     surface_finish: str = POLISHED
+    roughness_nm: float = 0.0
     preset: str = ""
 
     def __post_init__(self) -> None:
@@ -273,6 +310,8 @@ class SubstrateSpec:
             )
         if self.thickness is not None and self.thickness <= 0.0:
             raise ValueError(f"substrate thickness must be positive, got {self.thickness}")
+        if self.roughness_nm < 0.0:
+            raise ValueError(f"roughness must be non-negative, got {self.roughness_nm}")
 
     @classmethod
     def from_preset(cls, key: str) -> "SubstrateSpec":
@@ -286,10 +325,13 @@ class SubstrateSpec:
         return cls(
             material=preset.material,
             form_factor=preset.form_factor,
-            thickness=preset.thickness_mm * MM,
+            thickness=(
+                None if preset.form_factor == SEMI_INFINITE else preset.thickness_mm * MM
+            ),
             diameter=None if preset.diameter_mm is None else preset.diameter_mm * MM,
             size_x=None if preset.side_mm is None else preset.side_mm * MM,
             size_y=None if preset.side_mm is None else preset.side_mm * MM,
+            roughness_nm=preset.roughness_nm,
             preset=preset.key,
         )
 
@@ -304,6 +346,7 @@ class SubstrateSpec:
             MATERIAL_KEY: str(self.material),
             FORM_FACTOR_KEY: self.form_factor,
             FINISH_KEY: self.surface_finish,
+            ROUGHNESS_KEY: float(self.roughness_nm),
             SURFACE_KEY: float(surface),
         }
         for key, value in (
@@ -330,7 +373,10 @@ class SubstrateSpec:
         else:
             size = "unstated size"
         thick = "" if self.thickness is None else f", {self.thickness / MM:.3f} mm thick"
-        return f"{self.material} {self.form_factor}, {size}{thick}, {self.surface_finish}"
+        rough = f", Ra {self.roughness_nm:.2f} nm" if self.roughness_nm else ""
+        return (
+            f"{self.material} {self.form_factor}, {size}{thick}, {self.surface_finish}{rough}"
+        )
 
 
 def cross_section_grid(
@@ -488,6 +534,12 @@ def _spec_from_params(ctx: StepContext) -> tuple[SubstrateSpec, MaterialId]:
         if value > 0.0:
             changes[name] = value * MM
     changes["surface_finish"] = str(ctx["surface_finish"])
+    # E30 + E33's marker convention, third instance: `0` means "from the preset",
+    # like `thickness=0` means "from the spin curve" and `material=""` means
+    # "from the preset". The cost is that a *stated* zero on a wafer is not
+    # expressible; the semi-infinite preset is what says "no roughness".
+    roughness = float(ctx["roughness"])
+    changes["roughness_nm"] = roughness if roughness > 0.0 else spec.roughness_nm
     if changes.get("form_factor", spec.form_factor) == SEMI_INFINITE:
         changes["thickness"] = None
     spec = SubstrateSpec(
@@ -498,6 +550,7 @@ def _spec_from_params(ctx: StepContext) -> tuple[SubstrateSpec, MaterialId]:
         size_x=changes.get("size_x", spec.size_x),  # type: ignore[arg-type]
         size_y=changes.get("size_y", spec.size_y),  # type: ignore[arg-type]
         surface_finish=str(changes["surface_finish"]),
+        roughness_nm=float(changes["roughness_nm"]),  # type: ignore[arg-type]
         preset=spec.preset,
     )
     return spec, spec.material
@@ -525,7 +578,7 @@ def _grid_for(ctx: StepContext, spec: SubstrateSpec) -> Grid:
         spacing = spacing or suggestion.spacing
     spacing = spacing or given.spacing
     width = width or (given.shape[-1] - 1) * given.spacing
-    surface = float(ctx["surface"])
+    surface = _surface_of(ctx)
     headroom = headroom or max(
         given.spacing, (given.shape[0] - 1) * given.spacing - surface
     )
@@ -534,10 +587,26 @@ def _grid_for(ctx: StepContext, spec: SubstrateSpec) -> Grid:
     )
 
 
+def _surface_of(ctx: StepContext) -> float:
+    """Where the original surface goes — the parameter, or the preset's (E30).
+
+    `0` is the marker, as everywhere else in this repository: a parameter whose
+    default is a real number cannot say "I did not choose". Without a preset it
+    falls back to a wafer's 100 nm, because a substrate with no substrate under
+    its surface is one no etch can go anywhere in.
+    """
+    stated = float(ctx["surface"])
+    if stated > 0.0:
+        return stated
+    key = str(ctx["preset"]).strip()
+    preset = PRESETS_BY_KEY.get(key)
+    return 100.0 if preset is None else float(preset.surface_nm)
+
+
 def _run_select(ctx: StepContext) -> StepResult:
     spec, material = _spec_from_params(ctx)
     grid = _grid_for(ctx, spec)
-    surface = float(ctx["surface"])
+    surface = _surface_of(ctx)
     structure = select_substrate(grid, material, surface=surface, spec=spec)
     measurements = {"surface": Quantity(surface, "nm")}
     if spec.thickness is not None:
@@ -592,12 +661,29 @@ SELECT_SUBSTRATE = FunctionStep(
             ),
         ),
         ParamSpec(
+            "roughness",
+            float,
+            unit="nm",
+            default=0.0,
+            minimum=0.0,
+            description=(
+                "Surface roughness Ra; 0 takes the preset's (polished wafer 0.5, mask "
+                "blank 0.3, semi-infinite 0). A number rather than geometry: 0.5 nm is "
+                "below one cell, so the picture cannot show it and the profilometer "
+                "reports it anyway — which is the lesson"
+            ),
+        ),
+        ParamSpec(
             "surface",
             float,
             unit="nm",
-            default=None,
+            default=0.0,
             minimum=0.0,
-            description="Height of the wafer surface in the domain",
+            description=(
+                "Height of the wafer surface in the domain. 0 takes the preset's — "
+                "100 nm for a wafer or a mask, 50 for semi-infinite — which is the "
+                "same convention as thickness 0 and an empty material"
+            ),
         ),
         ParamSpec(
             "thickness",
