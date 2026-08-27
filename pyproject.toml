@@ -35,7 +35,8 @@ include = ["nanofab_v3*"]
 # distribution only shows up when somebody runs `--selftest` elsewhere.
 [tool.setuptools.package-data]
 nanofab_v3 = ["data/materials/*.json", "data/materials/README.md",
-              "data/demos/*.json", "data/demos/README.md"]
+              "data/demos/*.json", "data/demos/README.md",
+              "assets/nanofab.ico", "assets/nanofab.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

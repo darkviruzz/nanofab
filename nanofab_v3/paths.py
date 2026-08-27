@@ -3,27 +3,39 @@
 One question, asked once: **is there a folder next to this program, and where is
 it?** A source checkout answers "no" and everything falls back to the roots it
 already had; a frozen build answers "yes, next to the executable", which is what
-makes `data/materials/` and `data/demos/` visible and editable rather than sealed
-inside the exe.
+makes `data/materials/`, `data/demos/` and `settings.ini` visible and editable
+rather than sealed inside the exe.
 
-Plan §11 froze the delivery as **one file**, and that decision stands — a
-one-directory build would put the library among several hundred DLLs, which is
-worse than sealing it. So the exe still carries its own copy and runs alone;
-`nanofab_v3.spec` additionally *places* the two directories beside it at build
-time, and this module is how the running program finds them. Nothing here creates
-anything: a folder that is not there simply means the packaged copy is the only
-one, which is the correct behaviour for an exe somebody moved on its own.
+## The delivery is one directory, and the library is in it exactly once
 
-`sys.executable` rather than `sys._MEIPASS`: `_MEIPASS` is the temp directory the
-one-file bootloader unpacks *into*, which is exactly the place an operator cannot
-edit and which disappears when the program exits. The two are easy to confuse and
-the failure is silent — an edit that appears to work until the next start.
+Plan §11 froze the delivery as one file and M9's follow-up placed the two data
+directories beside it — which left the library in **two** places, the sealed copy
+and the visible one. Roadmap **E19** ends that: `--onedir`, the several hundred
+DLLs pushed into `bin/` by `contents_directory`, and the editable directories as
+the *only* copy. The reasoning is not about size: two copies of a rate table mean
+that when they disagree nobody can say which one ran, and the visible one silently
+winning is a worse answer than not having it.
+
+The price is that there is **no fallback**. A delivered build whose
+`data/materials/` is missing has no library at all, and the correct response is to
+say so and stop — `materials.store.missing_library_reason()` produces the sentence
+and `cli.main` prints it. Starting with an empty library would put a program that
+computes nothing in front of somebody who would have to find out why on their own.
+
+`sys.executable` rather than `sys._MEIPASS`: under `--onedir` the two are now
+genuinely different directories — the executable's own, and `bin/` beside it,
+where PyInstaller keeps everything it collected. Editing a file in `bin/` is
+editing a copy that will be overwritten by the next build, which is exactly the
+silent failure the one-file version of this warning was about.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+SETTINGS_FILE = "settings.ini"
+"""Name of the application-behaviour file beside the executable (roadmap E39)."""
 
 
 def frozen() -> bool:
@@ -53,7 +65,8 @@ def portable_dir(*parts: str) -> Path | None:
 
     Existence is checked rather than assumed, because "the exe was copied
     somewhere on its own" is a normal thing for a portable application and has to
-    keep working. The caller's fallback is then the packaged copy.
+    keep working. Since E19 the caller has no packaged copy to fall back to, so
+    `None` here is a diagnosis rather than a shrug: see `expected_dir`.
     """
     root = portable_root()
     if root is None:
@@ -62,4 +75,31 @@ def portable_dir(*parts: str) -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-__all__ = ["frozen", "portable_dir", "portable_root"]
+def expected_dir(*parts: str) -> Path | None:
+    """Where `portable_dir` *looked*, whether or not anything was there.
+
+    The half of the answer an error message needs. "No materials" is not
+    actionable; "no materials — expected them in `<path>/data/materials`" is, and
+    the difference is this function.
+    """
+    root = portable_root()
+    return None if root is None else root.joinpath(*parts)
+
+
+def portable_file(name: str = SETTINGS_FILE) -> Path | None:
+    """`<next to the exe>/<name>` if the file is there, else `None`."""
+    root = portable_root()
+    if root is None:
+        return None
+    candidate = root / name
+    return candidate if candidate.is_file() else None
+
+
+__all__ = [
+    "SETTINGS_FILE",
+    "expected_dir",
+    "frozen",
+    "portable_dir",
+    "portable_file",
+    "portable_root",
+]

@@ -247,8 +247,21 @@ def user_demos_dir() -> Path | None:
 
 
 def demo_roots() -> tuple[Path, ...]:
-    """The directories a demo is looked for in, shipped first and editable last."""
+    """The directories a demo is looked for in, shipped first and editable last.
+
+    A delivered build has **no** shipped root (roadmap E19: the packaged copy is
+    gone, so that there is only ever one file per demo), which is why a directory
+    that is not there is dropped rather than read as empty. The consequence is the
+    one E19 chose: a delivery whose `data/demos/` is missing opens with an empty
+    Demos menu, where a missing `data/materials/` stops the program. The
+    difference is what each absence costs — a demo is a worked example and the
+    library is the physics.
+    """
+    import os
+
     editable = user_demos_dir()
+    if paths.frozen() and not os.environ.get(DEMOS_ENV):
+        return () if editable is None else (editable,)
     shipped = builtin_demos_dir()
     return (shipped,) if editable is None or editable == shipped else (shipped, editable)
 

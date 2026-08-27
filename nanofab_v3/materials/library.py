@@ -61,8 +61,9 @@ from nanofab_v3.materials.material import (
 )
 from nanofab_v3.materials.store import (
     LibraryReport,
-    builtin_materials_dir,
     cached_library,
+    delivered_only,
+    didactic_roots,
     material_roots,
 )
 
@@ -175,8 +176,17 @@ def didactic_library() -> MaterialLibrary:
     honest failure is an exception rather than a library that is quietly one
     material short. Memoised on the root path, because
     `processes.engine.run_step` falls back to it once per step.
+
+    **In a delivered build there is no shipped root** (roadmap E19), so this reads
+    the operator's own folder and reads it *leniently*: strictness is a property of
+    whose files these are, not of who is asking. A broken file this project shipped
+    is a build defect and must raise; a broken file somebody edited last night
+    costs that material and is listed by `application_library()`'s report and by
+    the library window. What that loses — a `--selftest` whose numbers are this
+    project's — is what `LibraryReport.fingerprint` reports instead of hiding
+    (E36).
     """
-    library, _ = cached_library((builtin_materials_dir(),), strict=True)
+    library, _ = cached_library(didactic_roots(), strict=not delivered_only())
     return library
 
 

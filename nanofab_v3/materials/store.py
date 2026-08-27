@@ -21,6 +21,19 @@ happened to be in somebody's home directory would answer differently on every
 machine, and a library is the one input the acceptance scenarios are least able
 to notice a change in.
 
+**In a frozen build there is exactly one root, and it is the visible one**
+(roadmap E19). The packaged copy is gone: two libraries, one of which silently
+wins, means that when they disagree nobody can say which one ran. The
+consequences are all deliberate and all named here rather than mitigated:
+
+- `didactic_roots()` and `material_roots()` collapse to the same single root, so
+  `didactic_library()` **loses its isolation** in a delivered build. That is why
+  `LibraryReport.fingerprint` exists (E36) — a `--selftest` whose numbers depend
+  on the operator's files says which files those were, instead of pretending to a
+  separation it no longer has.
+- There is no fallback. `missing_library_reason()` is the sentence a build with
+  no `data/materials/` prints before it stops.
+
 **Why inside the package and not `data/` at the repo root** (the question the M6
 start prompt asked to settle): a root-level `data/` is not part of the
 distribution. `pip install nanofab-v3` would install `nanofab_v3/` and leave the
@@ -33,6 +46,7 @@ only show up as a `--selftest` failure on somebody else's machine.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -41,7 +55,12 @@ from typing import TYPE_CHECKING, Iterable, Mapping, Sequence
 
 from nanofab_v3 import paths
 from nanofab_v3.materials.material import MaterialId, MaterialType
-from nanofab_v3.materials.schema import MaterialFileError, read_material, write_material
+from nanofab_v3.materials.schema import (
+    MaterialFileError,
+    read_material,
+    to_json,
+    write_material,
+)
 
 if TYPE_CHECKING:  # `library` imports this module, so the runtime import is local
     from nanofab_v3.materials.library import MaterialLibrary
@@ -75,28 +94,42 @@ def builtin_materials_dir() -> Path:
     return Path(__file__).resolve().parent.parent.joinpath(*MATERIALS_SUBDIR)
 
 
+def delivered_materials_dir() -> Path | None:
+    """`data/materials/` beside a frozen executable, or `None`.
+
+    `$NANOFAB_MATERIALS` wins over it, which is how a test stands in for a
+    delivered folder without freezing anything. `None` outside a frozen build, and
+    `None` in one where the directory is simply not there — the second case is
+    what `missing_library_reason()` turns into a sentence.
+    """
+    override = os.environ.get(MATERIALS_ENV)
+    if override:
+        return Path(override)
+    return paths.portable_dir(*MATERIALS_SUBDIR)
+
+
 def user_materials_dir() -> Path:
     """The writable root E15's dialog saves to; never created until something writes.
 
     `$NANOFAB_MATERIALS` overrides it. Then, in a frozen build, `data/materials/`
-    **next to the executable** if it is there — the copy `nanofab_v3.spec` places
-    beside the exe so an operator can open a rate in a text editor instead of
-    guessing at one. It is the writable root and not a third read-only one on
-    purpose: two editable directories, one of which silently wins, is a worse
-    answer than one, and a portable application's own folder is the one somebody
-    is actually looking at.
+    **next to the executable** — since E19 that is not merely the writable root
+    but the *only* one, which is what makes an edit there take effect at all.
 
     Otherwise `$XDG_DATA_HOME` or `~/.local/share`, and a temp directory when the
     home directory cannot be determined — the same ladder
     `ui.wafer.default_cache_dir()` climbs, so an operator has one place for their
     own materials rather than one per entry point.
     """
-    override = os.environ.get(MATERIALS_ENV)
-    if override:
-        return Path(override)
-    beside = paths.portable_dir(*MATERIALS_SUBDIR)
-    if beside is not None:
-        return beside
+    delivered = delivered_materials_dir()
+    if delivered is not None:
+        return delivered
+    if paths.frozen():
+        # A delivered build with no directory: name where it *should* be, so a
+        # save creates the folder the next start will read rather than one in a
+        # home directory nobody will look in.
+        expected = paths.expected_dir(*MATERIALS_SUBDIR)
+        if expected is not None:
+            return expected
     try:
         base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     except (OSError, RuntimeError):  # pragma: no cover - depends on the machine
@@ -104,9 +137,63 @@ def user_materials_dir() -> Path:
     return Path(base) / "nanofab_v3" / "materials"
 
 
+def delivered_only() -> bool:
+    """Whether this build has given up its packaged library (E19).
+
+    True in a frozen build with no `$NANOFAB_MATERIALS` override — the case where
+    the only root is the operator's own folder, which is what makes both the
+    single-root collapse above and the leniency below correct rather than lax.
+    """
+    return paths.frozen() and not os.environ.get(MATERIALS_ENV)
+
+
+def didactic_roots() -> tuple[Path, ...]:
+    """The roots the *shipped* library is read from — one in a delivered build.
+
+    In a source checkout this is the packaged directory alone, which is what keeps
+    a test's numbers independent of anybody's home directory. In a frozen build
+    the packaged directory does not exist, so this is the visible one and the
+    isolation is gone; `LibraryReport.fingerprint` is what makes that legible
+    instead of silent (E36).
+    """
+    if delivered_only():
+        return (user_materials_dir(),)
+    return (builtin_materials_dir(),)
+
+
 def material_roots() -> tuple[Path, ...]:
-    """The roots an *application* reads, shipped first and writable last."""
+    """The roots an *application* reads, shipped first and writable last.
+
+    One root in a delivered build, for E19's reason: the shipped one is not there
+    to read.
+    """
+    if delivered_only():
+        return (user_materials_dir(),)
     return (builtin_materials_dir(), user_materials_dir())
+
+
+def missing_library_reason() -> str | None:
+    """Why this build has no material library, or `None` when it has one.
+
+    E19 took the fallback away on purpose, so this is the whole of the safety net:
+    a delivered build with no `data/materials/` **stops**, saying where it looked.
+    Running on with an empty library would put a program that computes nothing in
+    front of somebody with no way to find out why — every step would report rate
+    zero and every scenario would fail at its first lookup, which is a bug report
+    about the model rather than about a missing folder.
+    """
+    roots = [root for root in material_roots() if Path(root).is_dir()]
+    if roots and any(any(Path(root).glob("*.json")) for root in roots):
+        return None
+    expected = material_roots()[0] if material_roots() else None
+    where = f"\n  expected: {expected}" if expected is not None else ""
+    return (
+        "no material library: this build reads its materials from files beside the "
+        "executable and found none." + where + "\n"
+        "  A delivered NanoFab folder holds the executable, bin/, data/materials/, "
+        "data/demos/ and settings.ini — restore data/materials/ from the delivery "
+        "and start again."
+    )
 
 
 @dataclass(frozen=True)
@@ -128,21 +215,48 @@ class LibraryReport:
             the whole library twice by construction, and reporting that would bury
             the one entry somebody actually changed.
         failures: `(path, reason)` per file that did not parse.
+        fingerprint: A short hash over every entry that was loaded (E36) — see
+            `library_fingerprint`.
     """
 
     roots: tuple[Path, ...] = ()
     loaded: Mapping[MaterialId, Path] = field(default_factory=dict)
     overridden: Mapping[MaterialId, tuple[Path, ...]] = field(default_factory=dict)
     failures: tuple[tuple[Path, str], ...] = ()
+    fingerprint: str = ""
 
     def describe(self) -> tuple[str, ...]:
         """Lines for a log or a `--selftest` banner."""
         lines = [f"materials: {len(self.loaded)} from {len(self.roots)} root(s)"]
+        if self.fingerprint:
+            lines.append(f"materials: fingerprint {self.fingerprint}")
         for material, shadowed in sorted(self.overridden.items()):
             lines.append(f"materials: {material} overrides {len(shadowed)} earlier definition(s)")
         for path, reason in self.failures:
             lines.append(f"materials: skipped {path.name} ({reason})")
         return tuple(lines)
+
+
+def library_fingerprint(entries: Mapping[MaterialId, MaterialType]) -> str:
+    """A short hash over the material set a build actually loaded (roadmap E36).
+
+    E19 leaves a delivered build with one library root, the operator's own, so the
+    acceptance scenarios no longer run against files this project shipped — they
+    run against whatever is in that folder. That is the intended trade and it is
+    made **visible** rather than repaired: `--version` and `--selftest` print this,
+    so a result carries the identity of the numbers that produced it and "my
+    chromium etches wrong" is answerable from a screenshot.
+
+    Over the **canonical encoding** of each entry rather than over the file bytes.
+    The claim being made is "these are the models that ran", and reformatting a
+    file or reordering its keys does not change that; changing a rate does.
+    """
+    digest = hashlib.sha256()
+    for material in sorted(entries, key=str):
+        digest.update(str(material).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(to_json(entries[material]).encode("utf-8"))
+    return digest.hexdigest()[:12]
 
 
 RootContents = tuple[
@@ -218,7 +332,11 @@ def load_library(
             merged[material] = entry
             files[material] = found[material]
     report = LibraryReport(
-        roots=paths, loaded=files, overridden=overridden, failures=tuple(failures)
+        roots=paths,
+        loaded=files,
+        overridden=overridden,
+        failures=tuple(failures),
+        fingerprint=library_fingerprint(merged),
     )
     return MaterialLibrary(merged), report
 

@@ -19,7 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nanofab_v3 import __version__
+from nanofab_v3 import __version__, branding
 from nanofab_v3.io import replay_cache_for
 from nanofab_v3.processes.contract import CapabilityError, ParameterError
 from nanofab_v3.processes.lithography import pattern_from_params as lithography_pattern
@@ -63,6 +63,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.session = session or Session()
         self.setWindowTitle(f"{APP_NAME} {__version__}")
+        # Roadmap E20: the program has had no mark of its own until now, and a
+        # window with a generic icon is the one thing every screenshot shows.
+        # A build that did not collect it simply keeps the platform default.
+        icon = branding.icon_file()
+        if icon is not None:
+            self.setWindowIcon(QIcon(str(icon)))
         self.resize(1280, 800)
 
         self.steps = StepListPanel(self.session.registry)
@@ -658,6 +664,11 @@ def run(argv: list[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication(argv or [])
+    icon = branding.icon_file()
+    if icon is not None:
+        # On the application as well as on the window: the taskbar entry reads
+        # this one, and a window icon alone leaves the taskbar generic.
+        app.setWindowIcon(QIcon(str(icon)))
     window = MainWindow()
     window.show()
     return int(app.exec())

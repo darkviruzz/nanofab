@@ -35,6 +35,21 @@ Both print their **roots**, which is how somebody checks that the editable copie
 beside a delivered exe are the ones being read. `paths.portable_dir()` prefers
 them silently when they are there, and a silent preference needs somewhere to be
 visible.
+
+## The fingerprint, and the one thing this program refuses to start without
+
+Roadmap E19 leaves a delivered build with a single library root — the operator's
+own files, beside the executable — so `--selftest` no longer runs against numbers
+this project shipped. That is deliberate and it is made **visible** rather than
+patched over: both flags print `materials: fingerprint <hash>` (E36), a hash over
+the models that were actually loaded. A changed rate moves it, so a self-test
+result carries the identity of the library that produced it.
+
+The other side of the same decision is that there is no fallback. A build with no
+`data/materials/` is not a build with an empty library — it is a build that cannot
+answer anything, and `main` says so and stops (`missing_library_reason`). Only
+`--version` continues past it, because diagnosing that exact failure is what
+`--version` is for.
 """
 
 from __future__ import annotations
@@ -44,10 +59,10 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from nanofab_v3 import __version__
+from nanofab_v3 import __version__, branding, paths, settings as app_settings
 from nanofab_v3.acceptance import ScenarioResult, run_all, scenarios
 from nanofab_v3.io.manifest import code_version
-from nanofab_v3.materials import application_library
+from nanofab_v3.materials import application_library, missing_library_reason
 from nanofab_v3.processes.plugins import application_registry
 
 
@@ -96,8 +111,14 @@ def selftest(
     """
     out = stream if stream is not None else sys.stdout
     print(f"NanoFab structure model {__version__} — acceptance scenarios", file=out)
+    # E36: which library these numbers came out of. In a delivered build that is
+    # the operator's own folder, so a scenario result without this line is a claim
+    # about physics whose inputs nobody can identify.
+    _, library_report = application_library()
+    banner = f"library: {len(library_report.loaded)} materials, fingerprint {library_report.fingerprint}"
+    print(banner, file=out)
 
-    lines: list[str] = []
+    lines: list[str] = [banner]
 
     def show(result: ScenarioResult) -> None:
         print(result.describe(), file=out, flush=True)
@@ -141,6 +162,9 @@ def describe_build(stream=None) -> int:
         sample = registry.digest(sorted(registry.steps)[0])
         mode = "wrapper source" if sample.startswith("src:") else "contract only (no source)"
         print(f"step digests: {mode}", file=out)
+    reason = missing_library_reason()
+    if reason is not None:
+        print(reason, file=out)
     _, library_report = application_library()
     for line in library_report.describe():
         print(line, file=out)
@@ -154,17 +178,35 @@ def describe_build(stream=None) -> int:
         print(line, file=out)
     for line in discovery.describe() or ("plugins: none found",):
         print(line, file=out)
-    if getattr(sys, "frozen", False):
-        print("frozen build (PyInstaller)", file=out)
-    return 0
+    for line in app_settings.application_settings().describe():
+        print(line, file=out)
+    icon = branding.icon_file()
+    print(f"icon: {icon if icon is not None else 'missing from this build'}", file=out)
+    if paths.frozen():
+        print(f"frozen build (PyInstaller), delivered in {paths.portable_root()}", file=out)
+    return 0 if missing_library_reason() is None else 2
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """The one entry point: the exe's, `python -m nanofab_v3`'s, and a test's."""
+    """The one entry point: the exe's, `python -m nanofab_v3`'s, and a test's.
+
+    The library check comes first and stops everything except `--version`. E19
+    took the packaged copy away, so "no `data/materials/`" is not a degraded mode
+    — every rate lookup would answer zero and every scenario would fail on
+    physics that is not wrong. Saying where the folder should be, once, at the
+    top, is the whole of the fallback this build has.
+    """
     args = build_parser().parse_args(list(argv) if argv is not None else None)
 
     if args.version:
+        app_settings.ensure_delivered_settings()
         return describe_build()
+
+    reason = missing_library_reason()
+    if reason is not None:
+        print(f"NanoFab structure model {__version__}: {reason}", file=sys.stderr)
+        return 2
+    app_settings.ensure_delivered_settings()
     if args.list_scenarios:
         for scenario in scenarios():
             print(f"{scenario.name:<4} {scenario.title}")
