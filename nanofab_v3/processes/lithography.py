@@ -185,7 +185,15 @@ def expose_ideal(
     if material not in structure.phi:
         raise KeyError(f"no material {material!r} to expose")
     struck = grid.as_field(pattern, dtype=PHI_DTYPE) <= 0.0
-    return structure.with_field(EXPOSED.key(material), struck.astype(np.int8))
+    # E33: a second exposure ORs into the first rather than replacing it. Both
+    # halves of the decision are here and they are not the same statement:
+    # `exposed` is binary, so OR is the only thing "twice" can mean, and it
+    # loses the information that a cell was struck twice. `dose` below adds,
+    # which is physically what two exposures do. The log says which happened.
+    key = EXPOSED.key(material)
+    if key in structure.fields:
+        struck = struck | (np.asarray(structure.field(key)) != 0)
+    return structure.with_field(key, struck.astype(np.int8))
 
 
 def expose_dose(
@@ -229,7 +237,13 @@ def expose_dose(
         inside = predicates.cells_of(structure, material)
         depth = ndimage.distance_transform_edt(inside, sampling=grid.spacing)
         values = values * np.exp(-float(alpha) * depth)
-    return structure.with_field(DOSE.key(material), values.astype(np.float32))
+    # E33: energy adds. Two exposures at 0.6 D0 clear a resist that neither
+    # clears on its own, which is the whole of what a double exposure is for and
+    # was silently impossible while this overwrote.
+    key = DOSE.key(material)
+    if key in structure.fields:
+        values = values + np.asarray(structure.field(key), dtype=np.float64)
+    return structure.with_field(key, values.astype(np.float32))
 
 
 def threshold_dose(
@@ -391,12 +405,58 @@ def pattern_from_params(grid: Grid, params) -> np.ndarray:
     return _pattern_from_params(grid, params)
 
 
+def domain_defaults(grid: Grid, params) -> dict[str, float]:
+    """The litho parameters a `0` leaves to the domain (roadmap E33).
+
+    `0` means "from the domain", the third instance of a convention this
+    repository already has twice: `thickness=0` is "from the spin curve" and
+    `material=""` is "from the preset". A marker rather than a new mechanism,
+    because the alternative — a nullable default, or a separate "auto" checkbox
+    per parameter — would be a second way to say the same thing.
+
+    What the domain says, and why each is the obvious answer rather than a
+    tunable one:
+
+    - `center` and `grating_center`: the middle of the domain. A window at x = 0
+      sits on the left wall, which is where the old default put it — a default
+      nobody would type on purpose.
+    - `period`: a third of the domain width, so a grating has three periods to
+      look at. Wide enough that the shape is legible, narrow enough that the
+      pattern is visibly periodic.
+
+    Returns only the keys it resolved, so a caller can log what the domain
+    decided rather than silently substituting.
+    """
+    ctx = params if hasattr(params, "__getitem__") else dict(params)
+    width = float((grid.shape[-1] - 1) * grid.spacing)
+    middle = float(grid.origin[-1]) + 0.5 * width
+    resolved: dict[str, float] = {}
+    if float(ctx["center"]) == 0.0:
+        resolved["center"] = middle
+    if float(ctx["grating_center"]) == 0.0:
+        resolved["grating_center"] = middle
+    if float(ctx["period"]) == 0.0:
+        resolved["period"] = width / 3.0
+    return resolved
+
+
 def _pattern_from_params(grid: Grid, ctx: StepContext) -> np.ndarray:
     """Build the exposure pattern named by the step parameters."""
+    resolved = domain_defaults(grid, ctx)
     if ctx["pattern"] == "grating":
-        return grating(grid, period=ctx["period"], duty=ctx["duty"], phase=ctx["phase"])
+        period = resolved.get("period", float(ctx["period"]))
+        # `grating_center` is where a *line* sits, not where the waveform starts.
+        # The old `phase` was the second, which is the same number only for one
+        # duty cycle and is unusable as "put a line here" — the question anybody
+        # actually has. Renamed rather than reinterpreted (E33), because a
+        # parameter that quietly changed meaning would silently move every saved
+        # recipe's grating.
+        centre = resolved.get("grating_center", float(ctx["grating_center"]))
+        duty = float(ctx["duty"])
+        phase = centre - 0.5 * duty * period
+        return grating(grid, period=period, duty=duty, phase=phase)
     half = 0.5 * float(ctx["width"])
-    centre = float(ctx["center"])
+    centre = resolved.get("center", float(ctx["center"]))
     return windows(grid, [(centre - half, centre + half)])
 
 
@@ -408,11 +468,18 @@ _PATTERN_PARAMS = (
         choices=("window", "grating"),
         description="Procedural pattern the mask projects",
     ),
-    ParamSpec("center", float, unit="nm", default=0.0, description="Window centre"),
+    ParamSpec("center", float, unit="nm", default=0.0, minimum=0.0,
+              description="Window centre; 0 is the middle of the domain (E33)"),
     ParamSpec("width", float, unit="nm", default=100.0, minimum=0.0, description="Window width"),
-    ParamSpec("period", float, unit="nm", default=200.0, minimum=0.0, description="Grating period"),
+    ParamSpec("period", float, unit="nm", default=0.0, minimum=0.0,
+              description="Grating period; 0 is a third of the domain width, so three lines"),
     ParamSpec("duty", float, default=0.5, minimum=0.0, maximum=1.0, description="Open fraction"),
-    ParamSpec("phase", float, unit="nm", default=0.0, description="Grating phase"),
+    ParamSpec("grating_center", float, unit="nm", default=0.0, minimum=0.0,
+              description=(
+                  "Where a grating line sits; 0 is the middle of the domain. Was `phase`, "
+                  "which named where the waveform started — the same number only at one "
+                  "duty cycle, and never the question anybody has"
+              )),
 )
 
 
@@ -470,6 +537,25 @@ def _run_spin_coat(ctx: StepContext) -> StepResult:
     )
 
 
+def _cumulative_note(structure: Structure, material: MaterialId, field: str) -> tuple[str, ...]:
+    """Say that this exposure landed on an existing one, and what that costs.
+
+    Information, not a warning — the same honesty `threshold_dose` already
+    practises about what it discards. Adding energy is right and losing the count
+    of how often a cell was struck is a real loss; both are facts about what just
+    happened, and neither is a mistake to be corrected.
+    """
+    spec = DOSE if field == DOSE.name else EXPOSED
+    if spec.key(material) not in structure.fields:
+        return ()
+    if field == DOSE.name:
+        return (f"    a {field} field was already there: the two doses add",)
+    return (
+        f"    an {field} field was already there: the two are OR-ed, so how often "
+        "a cell was struck is not recorded",
+    )
+
+
 def _run_expose_ideal(ctx: StepContext) -> StepResult:
     material = MaterialId(str(ctx["material"]))
     pattern = _pattern_from_params(ctx.structure.grid, ctx)
@@ -478,7 +564,9 @@ def _run_expose_ideal(ctx: StepContext) -> StepResult:
         structure=structure,
         provides=frozenset({capability.of_field(material, EXPOSED.name)}),
         field_specs={EXPOSED.name: EXPOSED},
-        logs=(f"exposed {material} through a {ctx['pattern']} pattern (ideal)",),
+        logs=(
+            f"exposed {material} through a {ctx['pattern']} pattern (ideal)",
+        ) + _cumulative_note(ctx.structure, material, EXPOSED.name),
     )
 
 
@@ -498,7 +586,9 @@ def _run_expose_dose(ctx: StepContext) -> StepResult:
         provides=frozenset({capability.of_field(material, DOSE.name)}),
         field_specs={DOSE.name: DOSE},
         measurements={"dose": Quantity(ctx["dose"], "mJ/cm^2")},
-        logs=(f"exposed {material} at {ctx['dose']:.0f} mJ/cm^2, blur {ctx['blur']:.1f} nm",),
+        logs=(
+            f"exposed {material} at {ctx['dose']:.0f} mJ/cm^2, blur {ctx['blur']:.1f} nm",
+        ) + _cumulative_note(ctx.structure, material, DOSE.name),
     )
 
 
@@ -644,7 +734,7 @@ EXPOSE_IDEAL = FunctionStep(
         "edge of a cell."
         "\n\n"
         "`pattern` chooses a single window or a grating; `center` and `width`, or `period`, "
-        "`duty` and `phase`, place it. It writes the `exposed` field, which is what ideal "
+        "`duty` and `grating_center`, place it. It writes the `exposed` field, which is what ideal "
         "development consumes."
         "\n\n"
         "This is the ideal tier: no dose, no blur, no depth. Run `litho.expose_dose` on the "

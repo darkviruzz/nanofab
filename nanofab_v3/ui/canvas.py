@@ -200,9 +200,26 @@ class CrossSectionCanvas(QWidget):
 
         for overlay in scene.overlays:
             color = QColor(overlay.color)
+            # Roadmap E28: the exposure overlays are *areas*, in discrete bands
+            # darkest-last, because a latent image is a quantity spread over a
+            # region and an outline of it reads as a shape. Painted before the
+            # lines so the one line that matters — the clearing-dose contour —
+            # sits on top of its own bands.
+            for band in overlay.bands:
+                band_path = self._path(band.outlines)
+                if band_path is None:
+                    continue
+                fill = QColor(color)
+                fill.setAlphaF(max(0.0, min(1.0, band.shade)))
+                painter.setPen(Qt.NoPen)
+                painter.fillPath(band_path, fill)
             painter.setPen(QPen(color, 1.6, Qt.DashLine))
             path = self._path(overlay.outlines)
             if path is not None:
+                if overlay.filled:
+                    fill = QColor(color)
+                    fill.setAlphaF(0.35)
+                    painter.fillPath(path, fill)
                 painter.drawPath(path)
             if overlay.segments is not None and len(overlay.segments):
                 painter.setPen(QPen(color, 1.2))

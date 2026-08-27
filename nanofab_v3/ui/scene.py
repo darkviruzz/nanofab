@@ -95,6 +95,22 @@ class MaterialShape:
 
 
 @dataclass(frozen=True)
+class OverlayBand:
+    """One filled region of a banded overlay — roadmap E28's exposure picture.
+
+    Attributes:
+        label: What this band is, in the reader's units: "1.0-1.5 D0".
+        outlines: Closed polylines in nm, fill-ready like a shape's.
+        shade: 0..1, how dark this band paints. Monotonic in dose, so "darker
+            means more" is readable without the legend.
+    """
+
+    label: str
+    outlines: tuple[np.ndarray, ...] = ()
+    shade: float = 0.5
+
+
+@dataclass(frozen=True)
 class Overlay:
     """One inspect overlay on top of the geometry (plan §10).
 
@@ -112,6 +128,10 @@ class Overlay:
         segments: Straight segments in nm as `(N, 2, 2)` — what a normals field
             is, and what an arrow needs.
         note: One sentence for the UI, e.g. how many voids there are.
+        bands: Filled regions, darkest last (E28). A predicate has none; the two
+            exposure overlays are the only banded ones, because they are the only
+            ones showing a *quantity* rather than a yes/no.
+        filled: Whether `outlines` are painted as an area rather than as a line.
     """
 
     kind: str
@@ -120,6 +140,8 @@ class Overlay:
     outlines: tuple[np.ndarray, ...] = ()
     segments: np.ndarray | None = None
     note: str = ""
+    bands: tuple[OverlayBand, ...] = ()
+    filled: bool = False
 
 
 OVERLAY_KINDS = ("exposed", "dose", "reachable", "voids", "unsupported", "normals")
@@ -144,7 +166,7 @@ takes seconds is not where the time goes.
 """
 
 _OVERLAY_COLORS = {
-    "exposed": "#ffe066",
+    "exposed": "#c8ccd2",
     "dose": "#ff9f43",
     "reachable": "#5ac8fa",
     "voids": "#ff6b6b",
@@ -152,14 +174,33 @@ _OVERLAY_COLORS = {
     "normals": "#a0e7a0",
 }
 
-DOSE_LEVELS = (0.25, 0.5, 0.75, 1.0)
-"""Iso-dose contours, as fractions of the peak dose present.
+DOSE_BANDS = (0.5, 1.0, 1.5, 2.0)
+"""Band edges of the dose picture, **in multiples of the resist's clearing dose**.
 
-Fractions rather than absolute mJ/cm^2, because what a reader is looking for is
-the *shape* of the aerial image and where it crosses the resist's clearing dose —
-and the clearing dose is a property of the resist, which this module deliberately
-does not know about (it holds no physics, plan §10).
+Roadmap E28. Four edges make five bands — under half D0, approaching it, the
+first stop over, the second, and everything beyond — and the point of discrete
+bands rather than a gradient is that you can *read* one off: "this is twice
+over-dosed" is a sentence a continuous ramp cannot produce.
+
+**This is where plan §10 gets softened, deliberately, and it is recorded here so
+that it does not go on softening unnoticed.** §10 says the renderer decides
+pictures and never physics, and D0 is physics: it is the resist's
+`DevelopModel.clearing_dose`. The alternative — bands as fractions of the *peak
+dose present*, which is what this module drew before — is a picture that changes
+meaning between two revisions of the same recipe, because the peak moves. A scale
+that moves is not a scale. And the cost is small and bounded: `build` already
+receives the library (it needs it for the colours), so nothing new crosses the
+boundary; what crosses is one number, read by name, for one overlay.
+
+The rule that stays: no rate, no model evaluation, no decision about *geometry*
+here. If a second physical quantity ever wants in, that is the moment to move
+this to a "presentation scale" the session computes and hands over, rather than
+to soften §10 a third time.
 """
+
+_UNDOSED_SHADE = 0.12
+"""How dark the below-D0 band paints. Light, because "not enough" is the default
+state of a resist and a picture where nothing happened should look like it."""
 
 
 @dataclass(frozen=True)
@@ -285,7 +326,9 @@ def build(
         overlays=tuple(
             overlay
             for overlay in (
-                _overlay(structure, kind) for kind in overlays if kind in OVERLAY_KINDS
+                _overlay(structure, kind, library)
+                for kind in overlays
+                if kind in OVERLAY_KINDS
             )
             if overlay.label
         ),
@@ -545,7 +588,30 @@ def _runs(mask: np.ndarray):
     return list(zip(edges[0::2], edges[1::2]))
 
 
-def _field_overlay(structure: Structure, kind: str) -> Overlay:
+def _clearing_dose(structure: Structure, library: MaterialLibrary | None) -> tuple[float, str]:
+    """`(D0, which resist it came from)` for the dose picture — see `DOSE_BANDS`.
+
+    The first resist on the structure that has a develop model, because a
+    cross-section with two resists exposed at once is not a thing any recipe in
+    this repository builds and inventing a rule for it would be inventing a
+    requirement. `(0.0, "")` when nobody can answer, and the caller then falls
+    back to the peak — a relative scale is worse than an absolute one and much
+    better than no picture.
+    """
+    if library is None:
+        return 0.0, ""
+    for key in structure.fields:
+        if key.name != "dose" or key.material is None:
+            continue
+        entry = library.get(key.material)
+        if entry is not None and entry.develop is not None:
+            return float(entry.develop.clearing_dose), str(key.material)
+    return 0.0, ""
+
+
+def _field_overlay(
+    structure: Structure, kind: str, library: MaterialLibrary | None = None
+) -> Overlay:
     """`exposed` or `dose` — the latent image, drawn from the field that holds it.
 
     Roadmap §0 found these fields existed and were rendered nowhere, which made
@@ -574,38 +640,76 @@ def _field_overlay(structure: Structure, kind: str) -> Overlay:
         planes.append(values)
     stacked = np.maximum.reduce(planes)
     if kind == "exposed":
+        # E28: a flat translucent area, not a contour. `exposed` is binary — it
+        # has one value and nothing to grade — and an outline of it read as a
+        # *shape*, which is exactly the thing a latent image is not.
         mask = stacked > 0.5
+        struck = int(np.count_nonzero(mask))
         return Overlay(
             kind,
-            "Exposed",
+            "Exposed" if struck else "",
             color,
-            outlines=_mask_outlines(grid, mask),
-            note=f"{int(np.count_nonzero(mask))} cells the pattern struck",
+            filled=True,
+            bands=(
+                (OverlayBand("struck by the pattern", _mask_outlines(grid, mask), 0.35),)
+                if struck
+                else ()
+            ),
+            note=f"{struck} cells the pattern struck",
         )
     peak = float(np.max(stacked))
     if peak <= 0.0:
         return Overlay(kind, "Dose", color, note="no dose anywhere")
-    outlines: list[np.ndarray] = []
-    for level in DOSE_LEVELS:
-        outlines.extend(contour_kernel.marching_squares(grid, (level * peak) - stacked))
+
+    reference, resist = _clearing_dose(structure, library)
+    unit = "D0" if reference > 0.0 else "peak"
+    scale = reference if reference > 0.0 else peak
+    edges = [level * scale for level in DOSE_BANDS]
+
+    bands: list[OverlayBand] = []
+    lows = [0.0] + edges
+    highs = edges + [float("inf")]
+    for index, (low, high) in enumerate(zip(lows, highs)):
+        region = (stacked > low) & (stacked <= high) if np.isfinite(high) else stacked > low
+        if not region.any():
+            continue
+        # Monotonic in dose, so darker always means more without reading the key.
+        shade = _UNDOSED_SHADE + (0.75 - _UNDOSED_SHADE) * index / max(1, len(lows) - 1)
+        edge = "over" if np.isinf(high) else f"{low / scale:.2g}-{high / scale:.2g}"
+        bands.append(OverlayBand(f"{edge} {unit}", _mask_outlines(grid, region), shade))
+
+    # The one *line*, and the only one: the clearing-dose contour is where the
+    # developer will actually cut, so it predicts the edge the next step makes.
+    # Every other iso-dose line is decoration next to that.
+    contour = tuple(
+        fillable_outlines(grid, contour_kernel.marching_squares(grid, scale - stacked))
+    )
+    where = f" of {resist}" if resist else ""
     return Overlay(
         kind,
         "Dose",
         color,
-        outlines=tuple(fillable_outlines(grid, outlines)) if outlines else (),
+        outlines=contour,
+        bands=tuple(bands),
         note=(
-            f"iso-dose at {', '.join(f'{int(l * 100)}%' for l in DOSE_LEVELS)} "
-            f"of {peak:.0f} mJ/cm^2"
+            f"bands of {', '.join(f'{level:g}' for level in DOSE_BANDS)} x the "
+            f"clearing dose{where} ({scale:.0f} mJ/cm^2); the line is D0, where "
+            "development will cut"
+            if reference > 0.0
+            else f"no clearing dose in the library — bands are fractions of the "
+            f"peak {peak:.0f} mJ/cm^2"
         ),
     )
 
 
-def _overlay(structure: Structure, kind: str) -> Overlay:
+def _overlay(
+    structure: Structure, kind: str, library: MaterialLibrary | None = None
+) -> Overlay:
     """Compute one inspect overlay (plan §10's "predicate highlights")."""
     grid = structure.grid
     color = _OVERLAY_COLORS[kind]
     if kind in ALWAYS_ON:
-        return _field_overlay(structure, kind)
+        return _field_overlay(structure, kind, library)
     if kind in ("reachable", "voids"):
         # `solid_phi` is the right field for a *connectivity* question even
         # though §17.1 forbids reading geometry off it: what is read here is the

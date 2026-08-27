@@ -55,7 +55,9 @@ def test_the_exposed_field_now_has_a_picture(coated, window_pattern, library) ->
 
     assert "exposed" in scene.OVERLAY_KINDS
     overlay = snapshot.overlays[0]
-    assert overlay.kind == "exposed" and overlay.outlines
+    # M10 (E28): the outline moved into a *band*, because the picture of a
+    # binary field is a translucent area rather than a line around one.
+    assert overlay.kind == "exposed" and overlay.bands and overlay.bands[0].outlines
     assert "cells the pattern struck" in overlay.note
 
 
@@ -75,14 +77,22 @@ def test_the_latent_image_is_clipped_to_the_resist_that_holds_it(
     struck = int(overlay.note.split()[0])
 
     assert 7000 < struck < 9000
+    # M10 (E28): the picture of a binary field is a filled area, not a contour.
+    assert overlay.filled and len(overlay.bands) == 1
 
 
-def test_the_dose_overlay_is_iso_contours_of_the_aerial_image(
+def test_the_dose_overlay_is_banded_against_the_clearing_dose(
     coated, window_pattern, library
 ) -> None:
-    """Fractions of the peak, not absolute mJ/cm^2: what a reader is looking for
-    is the shape, and where it crosses a clearing dose the renderer deliberately
-    does not know about (plan §10 — this module holds no physics)."""
+    """M10 (E28) changed the scale, and the change is the point.
+
+    M8 drew iso-contours at fractions of the **peak dose present**, which is a
+    picture whose meaning moves between two revisions of the same recipe. The
+    bands are now multiples of the resist's own clearing dose, so "twice
+    over-dosed" is readable, and the single line is D0 — where development will
+    actually cut. That softens plan §10 by exactly one number, and `scene`'s
+    `DOSE_BANDS` docstring is where that is recorded.
+    """
     dosed = lithography.expose_dose(
         coated, RESIST, window_pattern, dose=150.0, blur=8.0, library=library
     )
@@ -90,8 +100,8 @@ def test_the_dose_overlay_is_iso_contours_of_the_aerial_image(
     overlay = scene.build(dosed, library=library, overlays=["dose"]).overlays[0]
 
     assert overlay.kind == "dose"
-    assert len(overlay.outlines) >= len(scene.DOSE_LEVELS) - 1
-    assert "150 mJ/cm^2" in overlay.note
+    assert len(overlay.bands) >= 2
+    assert "clearing dose of resist" in overlay.note
 
 
 def test_a_structure_with_no_latent_image_gets_no_empty_legend_entry(
@@ -148,11 +158,11 @@ def test_the_preview_is_the_step_s_own_pattern_and_not_a_second_reading(
 ) -> None:
     """One definition of what the mask is. Two would drift the first time a
     parameter was added, and the drift would look like an optical effect."""
-    params = {"pattern": "grating", "period": 120.0, "duty": 0.4, "phase": 0.0,
+    params = {"pattern": "grating", "period": 120.0, "duty": 0.4, "grating_center": 60.0,
               "center": 0.0, "width": 0.0}
 
     from_step = lithography.pattern_from_params(coated.grid, params)
-    directly = lithography.grating(coated.grid, period=120.0, duty=0.4, phase=0.0)
+    directly = lithography.grating(coated.grid, period=120.0, duty=0.4, phase=60.0 - 0.2 * 120.0)
 
     assert np.array_equal(from_step, directly)
 
