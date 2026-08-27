@@ -45,6 +45,7 @@ from nanofab_v3.model.field import FieldKey, FieldSpec
 from nanofab_v3.model.grid import PHI_DTYPE, Grid
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
+from nanofab_v3.materials.selection import MaterialFilter
 from nanofab_v3.processes.contract import (
     DIDACTIC,
     IDEAL,
@@ -541,7 +542,27 @@ def _run_develop_rate(ctx: StepContext) -> StepResult:
     )
 
 
-_MATERIAL = ParamSpec("material", str, default=str(RESIST), description="Resist material")
+_MATERIAL = ParamSpec(
+    "material",
+    str,
+    default=str(RESIST),
+    description="Resist material",
+    # Roadmap E22, the *tag* half. A spin coat at this tier puts a layer down for
+    # a typed thickness and consults no curve, so "what does the library know
+    # about it" filters nothing — and chromium is still nonsense in a spin
+    # coater. E21's substance classes are the only thing that can say so.
+    material=MaterialFilter(tags=("resist",), what="resists"),
+)
+
+_DEVELOPABLE = ParamSpec(
+    "material",
+    str,
+    default=str(RESIST),
+    description="Resist material",
+    # The *library data* half: a developer bath acts through `DevelopModel`, so
+    # a material without one is a material this step would run on at rate zero.
+    material=MaterialFilter(submodel="develop", what="resists a developer attacks"),
+)
 
 SPIN_COAT = FunctionStep(
     step_id="resist.spin_coat",
@@ -701,7 +722,7 @@ DEVELOP_IDEAL = FunctionStep(
     display_name="Development (ideal)",
     fidelity=IDEAL,
     schema=(
-        _MATERIAL,
+        _DEVELOPABLE,
         ParamSpec(
             "tone",
             str,
@@ -734,7 +755,7 @@ DEVELOP_RATE = FunctionStep(
     display_name="Development (rate)",
     fidelity=DIDACTIC,
     schema=(
-        _MATERIAL,
+        _DEVELOPABLE,
         ParamSpec(
             "duration", float, unit="s", default=None, minimum=0.0, description="Develop time"
         ),

@@ -26,5 +26,8 @@
     "sputter_etch": "Student process table, roadmap §3 row 1 (14 nm/min).",
     "wet_etch_cr": "Student process table, roadmap §3 row 5: this bath attacks chromium only.",
     "wet_etch_oxide": "Student process table, roadmap §3 row 6: stated as zero for everything but SiO2 and resist."
-  }
+  },
+  "tags": [
+    "semiconductor"
+  ]
 }

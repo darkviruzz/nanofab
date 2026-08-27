@@ -32,6 +32,7 @@ from nanofab_v3.kernel import motion, predicates, regions
 from nanofab_v3.materials import RESIST, MaterialId
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
+from nanofab_v3.materials.selection import MaterialFilter
 from nanofab_v3.processes.contract import (
     DIDACTIC,
     IDEAL,
@@ -193,7 +194,12 @@ def _run_remove_unsupported(ctx: StepContext) -> StepResult:
     )
 
 
-_MATERIAL = ParamSpec("material", str, default=str(RESIST), description="Material the bath attacks")
+_MATERIAL = ParamSpec(
+    "material", str, default=str(RESIST), description="Material the bath attacks",
+    # E22: a solvent acts through `DissolveModel`, and a material without one is
+    # one no bath in this library removes.
+    material=MaterialFilter(submodel="dissolve", what="materials a solvent removes"),
+)
 
 DISSOLVE = FunctionStep(
     step_id="strip.dissolve",

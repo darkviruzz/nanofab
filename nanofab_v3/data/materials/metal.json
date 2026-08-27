@@ -15,5 +15,8 @@
   },
   "density": 19.3,
   "optical_n": 0.47,
-  "optical_k": 2.83
+  "optical_k": 2.83,
+  "tags": [
+    "metal"
+  ]
 }

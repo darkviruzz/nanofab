@@ -119,6 +119,40 @@ source), where an etch rate sits on the material being attacked. Both are the
 same mapping, which is why the table needed no change to the schema.
 """
 
+# -- what a material *is* ------------------------------------------------------
+#
+# Roadmap E21. Substance classes, never roles: chromium is a hard mask *and* a
+# deposition material *and* something an ion beam etches, so a `mask` or
+# `deposit` tag would be a second, competing truth about a thing the capabilities
+# and the rate table already say. What a tag answers is the question a rate
+# cannot — "is this a metal" — which is what an *ideal* step needs, because an
+# ideal step reads no rate at all (E22).
+
+METAL_TAG = "metal"
+OXIDE_TAG = "oxide"
+METAL_OXIDE_TAG = "metal_oxide"
+DIELECTRIC_TAG = "dielectric"
+SEMICONDUCTOR_TAG = "semiconductor"
+RESIST_TAG = "resist"
+CONTAMINATION_TAG = "contamination"
+
+MATERIAL_TAGS = (
+    METAL_TAG,
+    OXIDE_TAG,
+    METAL_OXIDE_TAG,
+    DIELECTRIC_TAG,
+    SEMICONDUCTOR_TAG,
+    RESIST_TAG,
+    CONTAMINATION_TAG,
+)
+"""Every substance class a `MaterialType` may claim. Closed, and validated.
+
+Closed because an open vocabulary is a vocabulary with three spellings of
+"dielectric" in it, and a dropdown filtered on `dielectrics` would then quietly
+lose the file that said `Dielectric`. A new class is a decision, and a decision
+has a place to be written down."""
+
+
 PROCESS_CLASSES = (
     WET_ETCH,
     DRY_ETCH,
@@ -407,6 +441,10 @@ class MaterialType:
             the file cannot miss it. Keys are validated against
             `PROCESS_CLASSES`, because a note attached to a misspelt class is a
             note nobody will ever see.
+        tags: Substance classes from `MATERIAL_TAGS` (roadmap E21) — what this
+            material *is*, never what it is for. Read by the material dropdowns
+            of steps that consult no rate (E22): `resist.spin_coat` at ideal
+            fidelity reads no spin curve, and chromium is still nonsense in it.
     """
 
     material_id: MaterialId
@@ -423,6 +461,7 @@ class MaterialType:
     absorption: float = 0.0
     notes: str = ""
     rate_notes: Mapping[str, str] = dataclass_field(default_factory=dict)
+    tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not str(self.material_id).strip():
@@ -455,6 +494,16 @@ class MaterialType:
         object.__setattr__(self, "rate_notes", MappingProxyType(notes))
         if not math.isfinite(self.absorption) or self.absorption < 0.0:
             raise ValueError(f"absorption must be non-negative, got {self.absorption}")
+        tags = []
+        for tag in tuple(self.tags):
+            if tag not in MATERIAL_TAGS:
+                raise ValueError(
+                    f"unknown tag {tag!r} on material {self.material_id!r}; "
+                    f"the substance classes are {MATERIAL_TAGS}"
+                )
+            if tag not in tags:
+                tags.append(tag)
+        object.__setattr__(self, "tags", tuple(tags))
 
     # -- what the process layer asks ------------------------------------------
 
@@ -463,6 +512,10 @@ class MaterialType:
         if process_class not in PROCESS_CLASSES:
             raise ValueError(f"unknown process class {process_class!r}")
         return float(self.rates.get(process_class, default))
+
+    def has_tag(self, *tags: str) -> bool:
+        """Whether this material claims any of `tags` (roadmap E21)."""
+        return bool(set(self.tags) & set(tags))
 
     def rate_note(self, process_class: str) -> str:
         """Where this material's rate for one class came from; `""` if unrecorded."""

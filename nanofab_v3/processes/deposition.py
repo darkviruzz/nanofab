@@ -40,6 +40,7 @@ from nanofab_v3.materials import DEPOSIT, METAL, SPUTTER_DEPOSIT, MaterialId
 from nanofab_v3.model import capability
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
+from nanofab_v3.materials.selection import MaterialFilter
 from nanofab_v3.processes.contract import (
     DIDACTIC,
     IDEAL,
@@ -307,7 +308,17 @@ def _run_sputter_rate(ctx: StepContext) -> StepResult:
     )
 
 
-_MATERIAL = ParamSpec("material", str, default=str(METAL), description="Deposited material")
+_DEPOSITABLE = MaterialFilter(
+    tags=("metal", "oxide", "metal_oxide", "dielectric", "semiconductor"),
+    what="films",
+)
+"""What a source can put down (E22). A resist arrives by spinning and a particle
+by falling on the sample; neither is a thing a chamber deposits."""
+
+_MATERIAL = ParamSpec(
+    "material", str, default=str(METAL), description="Deposited material",
+    material=_DEPOSITABLE,
+)
 _THICKNESS = ParamSpec(
     "thickness",
     float,
@@ -427,7 +438,12 @@ SPUTTER_RATE = FunctionStep(
     fidelity=DIDACTIC,
     schema=(
         ParamSpec("material", str, default=str(METAL),
-                  description="Deposited material; its sputter_deposit rate sets the thickness"),
+                  description="Deposited material; its sputter_deposit rate sets the thickness",
+                  # The rate *is* the thickness here, so a material without one
+                  # would deposit nothing and say nothing (E22's library half).
+                  material=MaterialFilter(
+                      process_class=SPUTTER_DEPOSIT, what="sputter targets"
+                  )),
         ParamSpec("duration", float, unit="s", default=None, minimum=0.0,
                   description="Time in the chamber — the thickness follows from the rate"),
         ParamSpec("exponent", float, default=1.0, minimum=0.0, maximum=8.0,

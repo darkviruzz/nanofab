@@ -262,8 +262,13 @@ def test_the_shipped_library_is_the_pre_migration_one_bit_for_bit() -> None:
 
     for material in expected:
         # `notes`/`rate_notes` are prose about provenance and are checked by the
-        # tests below; what has to be bit-identical is the model.
-        assert replace(loaded[material], notes="", rate_notes={}) == expected[material], material
+        # tests below; `tags` are M10's substance classes (E21), data the
+        # pre-migration models did not carry at all and which no rate depends on.
+        # What has to be bit-identical is the model a revision was computed under.
+        assert (
+            replace(loaded[material], notes="", rate_notes={}, tags=())
+            == expected[material]
+        ), material
 
 
 def test_no_material_is_left_in_the_code() -> None:
@@ -571,3 +576,97 @@ def test_the_oxygen_plasma_is_a_resist_strip_and_the_fluorine_one_is_not() -> No
     # why an ICP etch through a chromium hard mask works and one through resist
     # does not.
     assert library[RESIST].rate_for(ICP_FLUORINE) / library[CHROME].rate_for(ICP_FLUORINE) > 25.0
+
+
+# -- E21/E22: substance classes, and the dropdowns they let a step filter -----
+
+
+def test_every_shipped_material_carries_a_substance_class(): 
+    """E21: `tags` is what an *ideal* step filters on, so a gap is an unfiltered list."""
+    from nanofab_v3.materials.material import MATERIAL_TAGS
+
+    library = didactic_library()
+    for material, entry in library.entries.items():
+        assert entry.tags, f"{material} has no substance class"
+        assert set(entry.tags) <= set(MATERIAL_TAGS)
+
+
+def test_tags_are_substance_classes_and_never_roles():
+    """The decision E21 turned on: chromium is a mask *and* a film *and* a target."""
+    from nanofab_v3.materials.material import MATERIAL_TAGS
+
+    assert "mask" not in MATERIAL_TAGS and "deposit" not in MATERIAL_TAGS
+    library = didactic_library()
+    assert library["chrome"].tags == ("metal",)
+    assert library["particle"].tags == ("contamination",)
+    assert set(library["alumina"].tags) == {"metal_oxide", "dielectric"}
+
+
+def test_an_unknown_tag_is_refused_where_it_is_written_not_where_it_is_read():
+    from nanofab_v3.materials import MaterialId, MaterialType
+
+    with pytest.raises(ValueError, match="unknown tag"):
+        MaterialType(material_id=MaterialId("x"), name="X", tags=("Dielectric",))
+
+
+def test_tags_survive_the_canonical_round_trip(tmp_path):
+    from nanofab_v3.materials import read_material, write_material
+
+    entry = didactic_library()["titania"]
+    path = write_material(entry, tmp_path / "titania.json")
+    assert read_material(path).tags == entry.tags
+
+
+def test_the_spin_coat_offers_no_metals_and_says_what_it_filtered_by():
+    """The DoD's sentence, at the level below the widget.
+
+    `resist.spin_coat` is *ideal*: it reads no spin curve, so no amount of
+    library data can rule chromium out — only E21's substance class can, which is
+    why E22 has two filter sources rather than one.
+    """
+    from nanofab_v3.materials.selection import filtered_choices
+    from nanofab_v3.processes.registry import builtin_registry
+
+    spec = next(
+        spec
+        for spec in builtin_registry()["resist.spin_coat"].parameter_schema()
+        if spec.name == "material"
+    )
+    offered, why = filtered_choices(spec.material, didactic_library())
+    assert "chrome" not in offered and "metal" not in offered
+    assert "resist" in offered
+    assert "resist" in why and why.startswith("showing ")
+
+
+def test_the_target_of_an_etch_is_never_filtered_because_it_is_never_chosen():
+    """Alumina has fluorine rate 0 and that *is* the etch-stop demo (E22)."""
+    from nanofab_v3.processes.registry import builtin_registry
+
+    registry = builtin_registry()
+    for step_id in registry.steps:
+        if not step_id.startswith("etch."):
+            continue
+        for spec in registry[step_id].parameter_schema():
+            assert spec.material is None, f"{step_id}.{spec.name} filters an etch target"
+    library = didactic_library()
+    assert 0.0 < library["alumina"].rate_for("icp_fluorine") < library[
+        "titania"
+    ].rate_for("icp_fluorine")
+
+
+def test_the_recipes_own_value_is_offered_even_when_the_filter_rejects_it():
+    """Otherwise 'adjust' would silently substitute another material."""
+    from nanofab_v3.materials.selection import MaterialFilter, filtered_choices
+
+    offered, _ = filtered_choices(
+        MaterialFilter(tags=("resist",)), didactic_library(), keep=("chrome",)
+    )
+    assert "chrome" in offered
+
+
+def test_a_filter_with_no_criterion_is_refused():
+    """A filter that filters nothing is a filter whose reason line lies."""
+    from nanofab_v3.materials.selection import MaterialFilter
+
+    with pytest.raises(ValueError, match="no criterion"):
+        MaterialFilter()

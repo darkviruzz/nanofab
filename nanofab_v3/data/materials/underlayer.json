@@ -26,5 +26,8 @@
   },
   "density": 1.15,
   "optical_n": 1.55,
-  "optical_k": 0.0
+  "optical_k": 0.0,
+  "tags": [
+    "resist"
+  ]
 }

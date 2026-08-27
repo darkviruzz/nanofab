@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
 
         self.steps = StepListPanel(self.session.registry)
-        self.form = ParameterForm()
+        self.form = ParameterForm(library=self.session.library)
         self.canvas = CrossSectionCanvas()
         self.revisions = RevisionListPanel()
         self.log = RunLogPanel()
@@ -354,6 +354,9 @@ class MainWindow(QMainWindow):
         for entry in ask_about(unknown.missing, self):
             path = self.session.describe_material(entry)
             self.log.append((f"described {entry.material_id} -> {path}",))
+        # E22 + E15: the dropdowns filter against the library, so a material
+        # just described has to be in the list the next step offers.
+        self.form.set_library(self.session.library)
         self._refresh_all()
 
     def _offer_to_raise_the_domain_cap(self, revision) -> None:

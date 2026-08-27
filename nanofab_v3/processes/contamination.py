@@ -53,6 +53,7 @@ from nanofab_v3.materials import PARTICLE, MaterialId
 from nanofab_v3.model import capability
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
+from nanofab_v3.materials.selection import MaterialFilter
 from nanofab_v3.processes.contract import (
     IDEAL,
     FunctionStep,
@@ -231,7 +232,8 @@ def _run_clean(ctx: StepContext) -> StepResult:
 
 
 _MATERIAL = ParamSpec(
-    "material", str, default=str(PARTICLE), description="Which material the particles are"
+    "material", str, default=str(PARTICLE), description="Which material the particles are",
+    material=MaterialFilter(tags=("contamination",), what="contaminants"),
 )
 
 PARTICLES = FunctionStep(

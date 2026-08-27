@@ -55,6 +55,7 @@ from nanofab_v3.model import capability
 from nanofab_v3.model.grid import Grid
 from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
+from nanofab_v3.materials.selection import MaterialFilter
 from nanofab_v3.processes.contract import (
     IDEAL,
     FunctionStep,
@@ -571,6 +572,12 @@ SELECT_SUBSTRATE = FunctionStep(
             "material",
             str,
             default="",
+            # E22: what a sample is *built on*. Resists and contaminants are
+            # things that arrive on a substrate, never one.
+            material=MaterialFilter(
+                tags=("semiconductor", "oxide", "metal_oxide", "dielectric", "metal"),
+                what="substrate materials",
+            ),
             description="Wafer material; empty takes the preset's, or silicon without one",
         ),
         ParamSpec(

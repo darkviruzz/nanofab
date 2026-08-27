@@ -36,6 +36,7 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 import numpy as np
 
 from nanofab_v3.materials import MaterialLibrary
+from nanofab_v3.materials.selection import MaterialFilter
 from nanofab_v3.model.artifact import ArtifactRef, ArtifactSink
 from nanofab_v3.model.field import FieldSpec
 from nanofab_v3.model.quantity import Quantity
@@ -80,6 +81,14 @@ class ParamSpec:
         minimum / maximum: Inclusive bounds for the numeric kinds.
         choices: Admissible values, for the enumerated ones.
         description: What it means, for the UI.
+        material: When this parameter names a **material**, what the step needs
+            of it (roadmap E22). Declared here rather than guessed from the
+            parameter's name, because two steps called it `material` and meant
+            different things — a spin coat means "which resist" and a particle
+            seed means "which contaminant". Not validated: it filters a
+            *dropdown*, and free text stays legal (E15), so a material the
+            library has never heard of is still typeable and E15's dialog is
+            what catches it.
     """
 
     name: str
@@ -90,6 +99,7 @@ class ParamSpec:
     maximum: float | None = None
     choices: tuple[Any, ...] | None = None
     description: str = ""
+    material: MaterialFilter | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():

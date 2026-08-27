@@ -24,5 +24,9 @@
     "icp_fluorine": "Didactic, not from the process table (backlog B12). The table has no TiO2 or Al2O3 row, and M8's grating demo needs an etch stop, so the *ratio* was chosen and the reason it is this way round is real: a fluorine plasma makes AlF3, which is not volatile, so alumina stops a fluorine etch where titania does not. The numbers carry that contrast and nothing else.",
     "ion_beam": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
     "wet_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table."
-  }
+  },
+  "tags": [
+    "metal_oxide",
+    "dielectric"
+  ]
 }

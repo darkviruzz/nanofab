@@ -32,5 +32,9 @@
     "wet_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
     "wet_etch_cr": "Student process table, roadmap §3 row 5: this bath attacks chromium only.",
     "wet_etch_oxide": "Assumed, not measured. The table names silicon oxide for this row and fused silica for the plasma chemistries (roadmap §3.1); this quartz-glass entry takes the silicon-oxide value of row 6. Row 6's 'everything else zero' is read as covering the materials it names, not as a statement that a buffered oxide etch leaves quartz glass alone."
-  }
+  },
+  "tags": [
+    "oxide",
+    "dielectric"
+  ]
 }

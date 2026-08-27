@@ -15,5 +15,8 @@
   "density": 1.28,
   "optical_n": 1.58,
   "optical_k": 0.0,
-  "absorption": 0.0015
+  "absorption": 0.0015,
+  "tags": [
+    "resist"
+  ]
 }

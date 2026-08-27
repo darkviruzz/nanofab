@@ -259,7 +259,11 @@ def test_an_identical_file_in_two_roots_is_not_an_override(tmp_path, monkeypatch
 
     _library, report = application_library()
     assert report.overridden == {}
-    assert report.describe() == ("materials: 11 from 2 root(s)",)
+    lines = report.describe()
+    assert lines[0] == "materials: 11 from 2 root(s)"
+    # M10 (E36) adds the fingerprint line; what this test is about is that no
+    # *override* line appears for eleven identical twins.
+    assert not any("overrides" in line for line in lines)
 
     edited = json.loads((tmp_path / "chrome.json").read_text(encoding="utf-8"))
     edited["rates"]["icp_fluorine"] = 0.5

@@ -55,6 +55,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from nanofab_v3.materials import MaterialLibrary, didactic_library
+from nanofab_v3.materials.selection import filtered_choices
 from nanofab_v3.processes.contract import FIDELITIES, ParamSpec
 from nanofab_v3.ui import presets
 from nanofab_v3.processes.registry import ProcessRegistry
@@ -233,9 +235,12 @@ class ParameterForm(QWidget):
     programmatic writes are made behind `_applying` so they do not count as one.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, library: MaterialLibrary | None = None
+    ) -> None:
         super().__init__(parent)
         self._widgets: dict[str, QWidget] = {}
+        self._library = library if library is not None else didactic_library()
         self._specs: tuple[ParamSpec, ...] = ()
         self._step_id = ""
         self._touched: set[str] = set()
@@ -273,7 +278,12 @@ class ParameterForm(QWidget):
         self.description.setVisible(bool(description.strip()))
         for spec in self._specs:
             options = presets.options_for(step_id, spec.name)
-            widget = _preset_box(options) if options else _widget_for(spec)
+            if options:
+                widget = _preset_box(options)
+            elif spec.material is not None:
+                widget = MaterialBox(spec, self._library)
+            else:
+                widget = _widget_for(spec)
             self._widgets[spec.name] = widget
             label = spec.name if not spec.unit else f"{spec.name} [{spec.unit}]"
             widget.setToolTip(spec.description)
@@ -297,7 +307,10 @@ class ParameterForm(QWidget):
             if not self._applying:
                 self._touched.add(name)
 
-        if isinstance(widget, QComboBox):
+        if isinstance(widget, MaterialBox):
+            widget.box.activated.connect(mark)
+            widget.box.lineEdit().textEdited.connect(mark)
+        elif isinstance(widget, QComboBox):
             widget.activated.connect(mark)  # user-driven; `currentIndexChanged` is not
         elif isinstance(widget, QCheckBox):
             widget.clicked.connect(mark)
@@ -350,7 +363,9 @@ class ParameterForm(QWidget):
         collected: dict[str, Any] = {}
         for spec in self._specs:
             widget = self._widgets[spec.name]
-            if isinstance(widget, QComboBox):
+            if isinstance(widget, MaterialBox):
+                collected[spec.name] = widget.value()
+            elif isinstance(widget, QComboBox):
                 # A preset box carries the key as data and shows the label; a
                 # `choices` box shows the value itself.
                 data = widget.currentData()
@@ -371,6 +386,9 @@ class ParameterForm(QWidget):
             widget = self._widgets.get(name)
             if widget is None:
                 continue
+            if isinstance(widget, MaterialBox):
+                widget.setValue(str(value))
+                continue
             if isinstance(widget, QComboBox):
                 index = widget.findData(str(value))
                 if index >= 0:
@@ -388,6 +406,13 @@ class ParameterForm(QWidget):
         for widget in self._widgets.values():
             widget.setEnabled(enabled)
 
+    def set_library(self, library: MaterialLibrary) -> None:
+        """Use another library for the material dropdowns (E15 wrote an entry)."""
+        self._library = library
+        for widget in self._widgets.values():
+            if isinstance(widget, MaterialBox):
+                widget.setLibrary(library)
+
     def _clear(self) -> None:
         while self.form.rowCount():
             self.form.removeRow(0)
@@ -395,6 +420,93 @@ class ParameterForm(QWidget):
         self._specs = ()
         self._touched.clear()
         self.description.clear()
+
+
+class MaterialBox(QWidget):
+    """A material dropdown that filters hard, says why, and has a way out (E22).
+
+    Three parts, and each is one clause of the decision:
+
+    - An **editable** combo. The list is what the step's `MaterialFilter` admits;
+      typing is what E15 needs, because a material the library has never heard of
+      is the fastest way to try something uncalibrated and the unknown-material
+      dialog is what catches it afterwards. An uneditable list would kill E15.
+    - A **sentence** under it saying what it filtered by. A list that silently
+      omits what somebody came for is worse than a long one: they conclude the
+      material is missing from the library and go and add a second copy of it.
+    - **Show all**, which turns the filter off. A didactic tool exists for
+      experiments, and one that decided which experiments are legal would be
+      teaching the wrong thing. The sentence changes with it, so the state is
+      never ambiguous.
+
+    The value already in the recipe is always offered, filter or no filter
+    (`filtered_choices(keep=...)`). A step that ran on a material this filter now
+    rejects — because somebody edited its rate to zero, or typed it — must still
+    show that value, or "adjust" would silently substitute a different material.
+    That is the `adjust` bug arriving from the other side.
+    """
+
+    def __init__(
+        self,
+        spec: ParamSpec,
+        library: MaterialLibrary | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._spec = spec
+        self._library = library if library is not None else didactic_library()
+        self.box = QComboBox()
+        self.box.setEditable(True)
+        self.box.setInsertPolicy(QComboBox.NoInsert)
+        self.show_all = QCheckBox("show all")
+        self.show_all.setToolTip(
+            "Offer every material in the library, including the ones this step has "
+            "no data for. Typing a name the library does not know is always allowed."
+        )
+        self.reason = QLabel("")
+        self.reason.setWordWrap(True)
+        self.reason.setStyleSheet("color: #8b95a1;")
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.box, 1)
+        row.addWidget(self.show_all)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(1)
+        layout.addLayout(row)
+        layout.addWidget(self.reason)
+        self.show_all.toggled.connect(lambda _on: self._repopulate())
+        self._repopulate()
+        if spec.default:
+            self.setValue(str(spec.default))
+
+    def setLibrary(self, library: MaterialLibrary) -> None:
+        """Point the list at another library — E15 wrote one, so the list moved."""
+        self._library = library
+        self._repopulate()
+
+    def _repopulate(self) -> None:
+        current = self.value()
+        filter_ = None if self.show_all.isChecked() else self._spec.material
+        ids, why = filtered_choices(filter_, self._library, keep=(current,))
+        self.box.blockSignals(True)
+        self.box.clear()
+        self.box.addItems([str(key) for key in ids])
+        self.box.setCurrentText(current)
+        self.box.blockSignals(False)
+        if self.show_all.isChecked():
+            why = f"showing all {len(ids)} materials — the filter is off"
+        self.reason.setText(why + ". Any name may be typed.")
+
+    def value(self) -> str:
+        return self.box.currentText().strip()
+
+    def setValue(self, value: str) -> None:
+        text = str(value)
+        if text and self.box.findText(text) < 0:
+            # The recipe's own value outranks the filter — see the class docstring.
+            self.box.addItem(text)
+        self.box.setCurrentText(text)
 
 
 def _widget_for(spec: ParamSpec) -> QWidget:
