@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from nanofab_v3.io.exchange import load_chain, save_chain
 from nanofab_v3.kernel.domain import DomainPolicy
@@ -50,8 +50,14 @@ from nanofab_v3.runtime.run import Position, Recipe, RecipeStep
 from nanofab_v3.ui import scene as scene_builder
 from nanofab_v3.ui.scene import SceneSnapshot
 
+StepCallback = Callable[[int, int, RecipeStep], None]
+"""`(index, total, step)` before each step of `run_recipe` — a progress hook."""
+
 SESSION_MANIFEST = "session.json"
-"""Name of the recipe file next to a saved session's revision directory."""
+"""Name of the recipe file *inside* a saved build's revision directory."""
+
+RECIPE_SUFFIX = ".recipe.json"
+"""Suffix of a standalone recipe file — the text half of saving, on its own."""
 
 
 class Session:
@@ -288,8 +294,57 @@ class Session:
 
     # -- saving --------------------------------------------------------------
 
+    def save_recipe(self, path: str | os.PathLike[str]) -> Path:
+        """Write **only** the recipe: one JSON file, no structures (plan §9).
+
+        The cheap half of saving, and the one worth doing often. A recipe is a few
+        kilobytes of text that a person can read, diff, mail and edit; a build is
+        every `phi` of every revision, which for the etch-stop demo is a couple of
+        hundred megabytes and half a minute. Keeping them one operation meant
+        paying the second price for the first thing.
+
+        `.recipe.json` is appended when the name has no suffix, so a file dialog
+        that returns a bare name still produces something whose type is legible in
+        a directory listing.
+        """
+        target = Path(path)
+        if not target.suffix:
+            target = target.with_suffix(RECIPE_SUFFIX)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(recipe_to_json(self.recipe), indent=1, sort_keys=True),
+            encoding="utf-8",
+        )
+        return target
+
+    def save_build(self, path: str | os.PathLike[str]) -> tuple[Path, Path]:
+        """Write the recipe **and** every computed revision, side by side.
+
+        `foo` produces `foo.recipe.json` and `foo/` — the recipe as its own file,
+        readable and loadable without touching the structures, and next to it a
+        directory with one file pair per step. Returns both.
+
+        The directory keeps its **own** copy of the recipe (`session.json`, where
+        it has always been), so it stays loadable if somebody moves it away from
+        its sibling. Two copies of one recipe is normally the drift this
+        repository refuses; here it is the difference between a folder that is a
+        saved session and a folder that is half of one, and the pair is written in
+        a single operation from a single source.
+        """
+        target = Path(path)
+        if target.suffix == RECIPE_SUFFIX or target.name.endswith(RECIPE_SUFFIX):
+            target = target.parent / target.name[: -len(RECIPE_SUFFIX)]
+        recipe_file = self.save_recipe(target.with_suffix(RECIPE_SUFFIX))
+        directory = self.save(target)
+        return recipe_file, directory
+
     def save(self, directory: str | os.PathLike[str]) -> Path:
-        """Write the whole session: the recipe and every revision (plan §9)."""
+        """Write the recipe and every revision into one directory (plan §9).
+
+        The original shape of saving, kept because `load` reads it and because a
+        directory that carries its own recipe is self-contained. `save_build` is
+        this plus the sibling `.recipe.json`, and is what the UI calls.
+        """
         directory = Path(directory)
         save_chain(directory, self.chain)
         (directory / SESSION_MANIFEST).write_text(
@@ -297,6 +352,72 @@ class Session:
             encoding="utf-8",
         )
         return directory
+
+    def load_recipe(self, path: str | os.PathLike[str]) -> tuple[RecipeStep, ...]:
+        """Read a recipe in, **without running it**, and return its steps.
+
+        The chain is emptied and the domain becomes the recipe's own; nothing is
+        computed. That is the point: the etch-stop demo is 25 s of solver and the
+        chromium grating 11, so a load that ran what it read would make opening a
+        file a decision rather than a look.
+
+        What comes back is the steps, so the caller can list them — a recipe with
+        no revisions shows an empty revision panel, and the operator has to be
+        told what they just opened and that running it is a separate act.
+        """
+        recipe = recipe_from_json(
+            json.loads(Path(path).read_text(encoding="utf-8"))
+        )
+        self.reset(recipe.grid)
+        self.recipe = recipe
+        return recipe.steps
+
+    def run_recipe(self, on_step: "StepCallback | None" = None) -> tuple[Revision, ...]:
+        """Run every step of the loaded recipe that has no revision yet.
+
+        Resumable by construction — it starts at `len(self.chain)` — so a run
+        stopped by a failing step continues from there once the parameters are
+        fixed, instead of starting over. `on_step(index, total, step)` is called
+        before each one, which is how the window keeps its status bar and log
+        alive without this method knowing what a window is.
+
+        `run` appends to the recipe as well as to the chain, and here the step is
+        already in the recipe. So the steps after `index` are lifted off, `run`
+        re-appends the one it just ran, and they go back.
+
+        The two paths are written out rather than shared through a `finally`,
+        because they restore different things. `run` raises **before** it appends
+        — a capability or a parameter is checked ahead of anything moving — so on
+        failure the recipe is the truncated prefix and what has to come back is
+        the whole original, the failing step included. A `finally` that reattached
+        only the tail would quietly delete the step somebody has to go and fix.
+        """
+        produced: list[Revision] = []
+        while len(self.chain) < len(self.recipe.steps):
+            index = len(self.chain)
+            before = self.recipe.steps
+            step = before[index]
+            if on_step is not None:
+                on_step(index, len(before), step)
+            self._replace_steps(before[:index])
+            try:
+                produced.append(self.run(step.step_id, step.params))
+            except BaseException:
+                self._replace_steps(before)
+                raise
+            self._replace_steps(self.recipe.steps + before[index + 1 :])
+        return tuple(produced)
+
+    def _replace_steps(self, steps: tuple[RecipeStep, ...]) -> None:
+        """Swap the recipe's step list, keeping its grid and id."""
+        self.recipe = Recipe(
+            grid=self.recipe.grid, steps=tuple(steps), recipe_id=self.recipe.recipe_id
+        )
+
+    @property
+    def pending(self) -> tuple[RecipeStep, ...]:
+        """Recipe steps with no revision yet — what `run_recipe` would run."""
+        return self.recipe.steps[len(self.chain) :]
 
     @classmethod
     def load(
@@ -353,6 +474,7 @@ def demo_recipe(registry: ProcessRegistry | None = None) -> tuple[Grid, tuple[Re
 __all__ = [
     "CapabilityError",
     "ParameterError",
+    "RECIPE_SUFFIX",
     "SESSION_MANIFEST",
     "Session",
     "default_grid",

@@ -47,7 +47,7 @@ from nanofab_v3.ui.panels import (
 )
 from nanofab_v3.ui.scene import ALWAYS_ON, OVERLAY_KINDS, light_preview
 from nanofab_v3.ui.scene import build as build_scene
-from nanofab_v3.ui.demos import DEMOS, demo
+from nanofab_v3.ui.demos import demo, demos as all_demos
 from nanofab_v3.ui.session import Session
 from nanofab_v3.ui.wafer import WaferFan, default_cache_dir
 from nanofab_v3.ui.wafer_view import WaferPanel
@@ -175,23 +175,73 @@ class MainWindow(QMainWindow):
         return row
 
     def _build_menu(self) -> None:
+        """The menus, and the one distinction the Session menu now makes.
+
+        **A recipe and a build are two different things to save**, and keeping
+        them one action meant paying the expensive price for the cheap thing. A
+        recipe is a few kilobytes of text — readable, diffable, mailable — and a
+        build is every `phi` of every revision, hundreds of megabytes and half a
+        minute for the etch-stop demo. So: `Save recipe…` on Ctrl+S, because it is
+        the one worth doing often, and `Save build…` without a shortcut, because
+        it is a decision.
+
+        Opening a recipe does **not** run it (`Session.load_recipe`), which is why
+        `Run the loaded recipe` exists as its own entry: a load that computed
+        would make opening a file a twenty-five-second commitment. The revision
+        list is empty until it runs, and the status bar and the log say so.
+
+        The demos are their own menu, which is where the stray "Run the lift-off
+        demo" that used to sit at the bottom of the Session menu went — it was the
+        pre-M8 single demo, still there after the picker replaced it, offering
+        entry one of four from the wrong menu.
+        """
         session_menu = self.menuBar().addMenu("&Session")
-        for text, shortcut, slot in (
-            ("&New", QKeySequence.New, self._on_new),
-            ("&Open…", QKeySequence.Open, self._on_open),
-            ("&Save…", QKeySequence.Save, self._on_save),
+        for text, shortcut, slot, tip in (
+            ("&New", QKeySequence.New, self._on_new, "Start over on an empty domain"),
+            (
+                "&Open recipe…",
+                QKeySequence.Open,
+                self._on_open_recipe,
+                "Read a recipe file. Nothing is computed — run it when you want it.",
+            ),
+            (
+                "&Save recipe…",
+                QKeySequence.Save,
+                self._on_save_recipe,
+                "Write the steps as one JSON file. Kilobytes, and no structures.",
+            ),
         ):
             action = QAction(text, self)
             action.setShortcut(shortcut)
+            action.setToolTip(tip)
             action.triggered.connect(slot)
             session_menu.addAction(action)
         session_menu.addSeparator()
-        demo = QAction("Run the &lift-off demo", self)
-        demo.triggered.connect(self._on_demo)
-        session_menu.addAction(demo)
+        for text, slot, tip in (
+            (
+                "Open &build…",
+                self._on_open_build,
+                "Read a saved build back: the recipe and every computed revision.",
+            ),
+            (
+                "Save &build…",
+                self._on_save_build,
+                "Write <name>.recipe.json and a <name>/ folder with every step in it.",
+            ),
+        ):
+            action = QAction(text, self)
+            action.setToolTip(tip)
+            action.triggered.connect(slot)
+            session_menu.addAction(action)
+        session_menu.addSeparator()
+        self._run_recipe_action = QAction("&Run the loaded recipe", self)
+        self._run_recipe_action.setToolTip("Compute the steps that have no revision yet")
+        self._run_recipe_action.triggered.connect(self._on_run_recipe)
+        self._run_recipe_action.setEnabled(False)
+        session_menu.addAction(self._run_recipe_action)
 
         demo_menu = self.menuBar().addMenu("&Demos")
-        for entry in DEMOS:
+        for entry in all_demos():
             action = QAction(entry.title, self)
             action.setToolTip(f"{entry.summary} — {len(entry.steps)} steps")
             action.triggered.connect(lambda _checked, key=entry.key: self._on_demo(key))
@@ -216,6 +266,16 @@ class MainWindow(QMainWindow):
     def _refresh_all(self) -> None:
         self.steps.refresh(self.session.capabilities)
         self.revisions.refresh(self.session.chain)
+        # Enabled exactly when there is something to run: a loaded recipe whose
+        # steps have no revisions, or one a failing step stopped part way. Greyed
+        # out otherwise, so the menu answers "is there anything left" by itself.
+        action = getattr(self, "_run_recipe_action", None)
+        if action is not None:
+            pending = len(self.session.pending)
+            action.setEnabled(bool(pending))
+            action.setText(
+                "&Run the loaded recipe" if not pending else f"&Run the loaded recipe ({pending})"
+            )
         self._refresh_canvas()
 
     def _refresh_canvas(self) -> None:
@@ -406,30 +466,48 @@ class MainWindow(QMainWindow):
         what makes a demo teach anything is knowing what to watch for while it
         happens — afterwards it is a shape somebody has to interpret.
 
-        Run in the foreground with a wait cursor and the events pumped between
-        steps, so the chain and the log fill in as it goes. The etch-stop demo is
-        about 25 s of solver; backgrounding it the way the wafer fan does would be
-        the better answer and is deliberately not done here, because the fan's
-        runner is built around *positions* and one interactive chain is not that.
+        Since the demos moved to JSON a step may also carry a `note` saying why
+        its numbers are what they are, and that is logged as the step runs: the
+        moment somebody wonders about a duration is the moment it is on screen.
         """
         entry = demo(key)
         self.session.reset(entry.grid)
+        self.session.recipe = replace(self.session.recipe, steps=tuple(entry.steps))
         self.log.view.clear()
         self.log.append((entry.describe(),))
+        self._run_pending(entry.title, notes=entry.notes)
+        self.statusBar().showMessage(f"{entry.title}: {entry.watch_for}", 30_000)
+
+    def _run_pending(self, title: str, *, notes: tuple[str, ...] = ()) -> None:
+        """Compute the recipe steps that have no revision yet, visibly.
+
+        The one runner behind both the Demos menu and `Run the loaded recipe`,
+        because they are the same act: a recipe exists and its structures do not.
+        Foreground with a wait cursor and the events pumped between steps, so the
+        chain and the log fill in as it goes. The etch-stop demo is about 25 s of
+        solver; backgrounding it the way the wafer fan does would be the better
+        answer and is deliberately not done here, because the fan's runner is built
+        around *positions* and one interactive chain is not that.
+        """
+        total = len(self.session.recipe.steps)
+
+        def announce(index: int, _total: int, step) -> None:
+            self.statusBar().showMessage(f"{title}: step {index + 1} of {total} — {step.step_id}")
+            if index < len(notes) and notes[index]:
+                self.log.append((f"  ({notes[index]})",))
+            QApplication.processEvents()
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            for index, step in enumerate(entry.steps, start=1):
-                self.statusBar().showMessage(
-                    f"{entry.title}: step {index} of {len(entry.steps)} — {step.step_id}"
-                )
-                revision = self.session.run(step.step_id, step.params)
+            for revision in self.session.run_recipe(on_step=announce):
                 self.log.append(self.session.log_lines(revision))
                 self.revisions.refresh(self.session.chain)
                 QApplication.processEvents()
+        except (CapabilityError, ParameterError) as error:
+            QMessageBox.warning(self, "The recipe stopped", str(error))
         finally:
             QApplication.restoreOverrideCursor()
         self._refresh_all()
-        self.statusBar().showMessage(f"{entry.title}: {entry.watch_for}", 30_000)
 
     # -- the wafer fan (plan §8, §14) ----------------------------------------
 
@@ -490,14 +568,75 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(status.describe(), 5000)
 
-    def _on_save(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Save session into…")
-        if directory:
-            self.session.save(Path(directory))
-            self.statusBar().showMessage(f"Saved {len(self.session.chain)} revisions", 5000)
+    def _on_save_recipe(self) -> None:
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Save the recipe as…", "recipe.recipe.json", "Recipe (*.recipe.json *.json)"
+        )
+        if not path:
+            return
+        written = self.session.save_recipe(Path(path))
+        self.statusBar().showMessage(
+            f"Wrote {written.name} — {len(self.session.recipe.steps)} steps, no structures", 8000
+        )
 
-    def _on_open(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Open a saved session")
+    def _on_save_build(self) -> None:
+        """`<name>.recipe.json` and a `<name>/` folder, from one chosen name.
+
+        A save *file* dialog rather than a directory one, although the bigger half
+        of what this writes is a directory: the name is what the two share, and
+        asking for a folder would make the recipe file's name a thing this code
+        invented rather than a thing somebody chose.
+        """
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Save the build as…", "build", "Build (*)"
+        )
+        if not path:
+            return
+        recipe_file, directory = self.session.save_build(Path(path))
+        self.statusBar().showMessage(
+            f"Wrote {recipe_file.name} and {directory.name}/ "
+            f"({len(self.session.chain)} revisions)",
+            8000,
+        )
+
+    def _on_open_recipe(self) -> None:
+        """Read a recipe and stop there — see `_build_menu` for why it does not run.
+
+        The log gets the whole step list, because the revision panel has nothing
+        to show yet and "I opened a file and the window did not change" is what
+        this would otherwise look like.
+        """
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Open a recipe", "", "Recipe (*.recipe.json *.json)"
+        )
+        if not path:
+            return
+        try:
+            steps = self.session.load_recipe(Path(path))
+        except (OSError, ValueError, KeyError) as error:
+            QMessageBox.warning(self, "Could not open", str(error))
+            return
+        self.log.view.clear()
+        self.log.append(
+            (f"{Path(path).name} — {len(steps)} steps, not run yet:",)
+            + tuple(f"  {index + 1}. {step.step_id}" for index, step in enumerate(steps))
+            + ("Session -> Run the loaded recipe computes them.",)
+        )
+        self._refresh_all()
+        self.statusBar().showMessage(
+            f"{len(steps)} steps loaded — nothing computed yet", 15_000
+        )
+
+    def _on_run_recipe(self) -> None:
+        pending = len(self.session.pending)
+        if not pending:
+            self.statusBar().showMessage("Every step of this recipe already has a revision", 5000)
+            return
+        self._run_pending(self.session.recipe.recipe_id)
+        self.statusBar().showMessage(f"Ran {pending} step(s)", 8000)
+
+    def _on_open_build(self) -> None:
+        directory = QFileDialog.getExistingDirectory(self, "Open a saved build")
         if not directory:
             return
         try:
