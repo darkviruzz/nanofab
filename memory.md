@@ -1744,3 +1744,18 @@ Known risks and what was deliberately left:
 - The 304 MB delivery is uncompressed by construction; if that becomes a problem the answer is a compressed installer, not `upx` (spec note 4).
 
 Next: M11 (`docs/plans/m10-m12-roadmap.md` §4) — rate unification E24 (one `etch.ion_beam`, `sputter_etch` gone, S2c to 120 s), ICP without an angle (E23), reflection and trenching (E25), redeposition identity plus `inherits` (E26/E27), and the live `StepPreview` (E29, whose arrow scale already has its `settings.ini` home waiting).
+
+## Update 2026-08-28 (M10 E31 engine contract completed)
+
+What changed:
+- `processes.engine.run_step` now checks every resolved material parameter against the active library before domain fitting or `step.run`. Missing entries raise the Qt-free `MissingMaterialsError`, carrying the existing `MissingMaterial` questions.
+- The Qt shell resolves that engine error through the existing material dialog and retries only after every missing entry was described. Loaded recipes receive the same preflight as a direct Run action.
+- E15's post-commit warning remains for plugin-shaped steps that introduce a material without declaring it in their parameter schema.
+- Tests now distinguish those two orderings. Two M10 cache tests were also made platform-correct: `LOCALAPPDATA` remains ahead of `XDG_CACHE_HOME` on Windows, and path assertions no longer require POSIX string separators from a `WindowsPath`.
+
+Why it changed:
+- Roadmap E31 assigns the pre-run check to `engine.run_step`, but M10 had implemented it only in `ui.window`. Direct engine calls, replay, wafer materialization and loaded recipes could therefore bypass the contract.
+
+Validated:
+- `python -m compileall nanofab_v3 tests`
+- `python -m pytest` — **673 passed**, 0 skipped.

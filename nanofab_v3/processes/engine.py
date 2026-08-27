@@ -22,7 +22,13 @@ The RNG seed is `(recipe id, position, step index)` exactly as §5.2 and ADR-000
 require, so two runs of the same chain at the same wafer position produce the
 same sample, and adding a position later replays to the sample it would have had.
 
-**A fifth thing happens, added in M6 (roadmap E15), and it happens here because
+**A fifth thing happens, added in M10 (roadmap E31): declared materials are
+checked before the step runs.** A material parameter is recipe input, so the
+engine can refuse it before a rate-zero result or an unknown material enters the
+revision chain.  The refusal is a Qt-free `MissingMaterialsError`; a UI may
+describe the material and retry, while a headless caller gets the same contract.
+
+**A sixth thing happens, added in M6 (roadmap E15), and it happens here because
 here is the only place every step passes through.** After the commit, the
 committed structure's materials are checked against the library, and one the
 library cannot answer for produces a warning and a log line rather than a silent
@@ -31,7 +37,7 @@ forget it and no coverage for a plugin's step at all; putting it after the commi
 rather than before catches a material the step itself *introduced*, which is the
 case that actually bit — a scattered particle nobody's recipe ever named.
 
-**And a sixth, added in M7 (roadmap E5): the domain is fitted around the step.**
+**And a seventh, added in M7 (roadmap E5): the domain is fitted around the step.**
 `kernel.domain` decides whether the sample still has room; this decides when to
 ask. The order is what makes it work:
 
@@ -51,7 +57,7 @@ a pure function of the input structure and the policy, the retry is a pure
 function of the outcome, and the RNG is re-seeded identically from (recipe,
 position, index) on every attempt.
 
-**And a seventh: the substrate can be etched through** (roadmap E7). That check
+**And an eighth: the substrate can be etched through** (roadmap E7). That check
 reads `Structure.metadata`, which is a `processes`-layer convention — the kernel
 gate knows about geometry and invariants and has no business knowing what
 `substrate.thickness` means. So the verdict is added to the gate's report here,
@@ -70,7 +76,12 @@ from nanofab_v3.kernel import domain as domain_kernel
 from nanofab_v3.kernel import gate as commit_gate
 from nanofab_v3.kernel import reinit
 from nanofab_v3.materials import MaterialLibrary, didactic_library
-from nanofab_v3.materials.unknown import UnknownMaterials, unknown_materials
+from nanofab_v3.materials.unknown import (
+    MissingMaterialsError,
+    UnknownMaterials,
+    missing_before_running,
+    unknown_materials,
+)
 from nanofab_v3.model.artifact import ArtifactRef, ArtifactSink
 from nanofab_v3.model.occurrence import LineageReport
 from nanofab_v3.model.quantity import Quantity
@@ -173,6 +184,9 @@ def run_step(
         )
 
     resolved = validate_params(step.parameter_schema(), params)
+    declared_missing = missing_before_running(step, resolved, library)
+    if declared_missing:
+        raise MissingMaterialsError(declared_missing)
     domain_policy = domain_kernel.DomainPolicy() if domain is None else domain
     current, change = domain_kernel.fit(structure, domain_policy)
 

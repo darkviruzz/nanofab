@@ -48,7 +48,7 @@ def test_windows_gets_local_appdata_before_a_dot_directory_in_the_profile(monkey
     assert str(wafer.cache_root()).startswith(r"C:\Users\somebody\AppData\Local")
 
     monkeypatch.setattr(sys, "platform", "linux")
-    assert str(wafer.cache_root()).startswith("/should/not/win")
+    assert wafer.cache_root() == Path("/should/not/win") / "nanofab_v3"
 
 
 # -- E38: what it writes ------------------------------------------------------

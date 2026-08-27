@@ -98,6 +98,19 @@ class MissingMaterial:
         )
 
 
+class MissingMaterialsError(RuntimeError):
+    """A step named materials that must be described before it can run (E31).
+
+    The engine raises this value before calling the step.  It carries the
+    Qt-free questions so an interactive shell can ask them, while a headless
+    caller gets the same refusal and enough information to resolve it.
+    """
+
+    def __init__(self, missing: Sequence[MissingMaterial]) -> None:
+        self.missing = tuple(missing)
+        super().__init__("; ".join(entry.question() for entry in self.missing))
+
+
 @dataclass(frozen=True)
 class UnknownMaterials:
     """Every unknown material one step met, with the lines that report them."""

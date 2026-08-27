@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 from nanofab_v3 import __version__, branding
 from nanofab_v3 import settings as app_settings
 from nanofab_v3.io import replay_cache_for
+from nanofab_v3.materials import MissingMaterialsError
 from nanofab_v3.processes.contract import CapabilityError, ParameterError
 from nanofab_v3.processes.lithography import pattern_from_params as lithography_pattern
 from nanofab_v3.ui.canvas import CrossSectionCanvas
@@ -487,11 +488,15 @@ class MainWindow(QMainWindow):
         first: the alternative is a revision somebody has to go and remove.
         """
         from nanofab_v3.materials import missing_before_running
-        from nanofab_v3.ui.material_dialog import ask_about
-
         missing = missing_before_running(
             self.session.registry[step_id], params, self.session.library
         )
+        return self._resolve_missing_materials(missing)
+
+    def _resolve_missing_materials(self, missing) -> bool:
+        """Ask E31's Qt-free engine questions and update the session library."""
+        from nanofab_v3.ui.material_dialog import ask_about
+
         if not missing:
             return True
         described = 0
@@ -501,6 +506,7 @@ class MainWindow(QMainWindow):
             described += 1
         self.form.set_library(self.session.library)
         if described < len(missing):
+            step_id = missing[0].seen_in or "step"
             self.statusBar().showMessage(
                 f"{step_id} not run: "
                 + ", ".join(str(item.material_id) for item in missing)
@@ -635,6 +641,10 @@ class MainWindow(QMainWindow):
         """Run something that appends a revision, and show whatever it said."""
         try:
             revision = action()
+        except MissingMaterialsError as error:
+            if self._resolve_missing_materials(error.missing):
+                self._run_and_show(action)
+            return
         except (CapabilityError, ParameterError) as error:
             QMessageBox.warning(self, "Step not run", str(error))
             return
@@ -684,6 +694,10 @@ class MainWindow(QMainWindow):
         answer and is deliberately not done here, because the fan's runner is built
         around *positions* and one interactive chain is not that.
         """
+        for entry in self.session.pending:
+            if not self._materials_are_known(entry.step_id, entry.params):
+                return
+
         total = len(self.session.recipe.steps)
         started = time.monotonic()
 
@@ -702,17 +716,23 @@ class MainWindow(QMainWindow):
                 self.log.append((f"  ({notes[index]})",))
             QApplication.processEvents()
 
+        missing_error = None
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             for revision in self.session.run_recipe(on_step=announce):
                 self.log.append(self.session.log_lines(revision))
                 self.revisions.refresh(self.session.chain)
                 QApplication.processEvents()
+        except MissingMaterialsError as error:
+            missing_error = error
         except (CapabilityError, ParameterError) as error:
             QMessageBox.warning(self, "The recipe stopped", str(error))
         finally:
             QApplication.restoreOverrideCursor()
+        retry = bool(missing_error) and self._resolve_missing_materials(missing_error.missing)
         self._refresh_all()
+        if retry:
+            self._run_pending(title, notes=notes)
 
     def _on_library_window(self) -> None:
         """Open the library window, and take its edits when it makes one (E37).

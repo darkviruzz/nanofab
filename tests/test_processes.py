@@ -33,7 +33,7 @@ from nanofab_v3.materials import (
     SILICON,
     MaterialLibrary,
     MaterialType,
-    UnknownMaterialWarning,
+    MissingMaterialsError,
     didactic_library,
 )
 from nanofab_v3.model import capability
@@ -675,36 +675,21 @@ def test_a_step_is_a_plain_function_before_it_is_a_registry_entry(
     )
 
 
-def test_a_library_a_process_has_never_heard_of_still_runs(patterned: Structure) -> None:
-    """`StepContext.library` is data, so a scene can carry materials nobody described.
-
-    The rule `MaterialLibrary` enforces by raising on lookup has to stop short of
-    the *processes*: a deposition of an undescribed material falls back to its
-    parameters, because the alternative is a package that cannot draw anything
-    the didactic library does not contain.
-
-    Since M6 it is not silent about it either (roadmap E15). Both halves are
-    asserted here because they are the two halves of one decision: free text
-    stays legal, and it stops being quiet. `tests/test_unknown_material.py` has
-    the rest.
-    """
+def test_a_declared_material_the_library_has_never_heard_of_is_refused(
+    patterned: Structure,
+) -> None:
+    """E31 reverses E15 when the recipe names the material before execution."""
     sparse = MaterialLibrary.of(MaterialType(material_id=SILICON, name="Silicon"))
 
-    with pytest.warns(UnknownMaterialWarning) as caught:
-        outcome = run_step(
+    with pytest.raises(MissingMaterialsError) as caught:
+        run_step(
             builtin_registry()["deposit.evaporate"],
             patterned,
             {"material": "gold", "thickness": 10.0},
             library=sparse,
         )
 
-    assert "gold" in outcome.structure.phi
-    assert capability.of_material("gold") in outcome.capabilities
-    # The resist was already on the sample and this library never described it,
-    # so both are reported — which is the point: what is checked is the sample,
-    # not the parameter somebody typed.
-    assert set(outcome.unknown.ids) == {"gold", RESIST}
-    assert len(caught) == 2
+    assert tuple(item.material_id for item in caught.value.missing) == ("gold",)
 
 
 # -- 4. particles and clean (plan §6 rows 16-17, milestone M5) ----------------

@@ -35,18 +35,44 @@ from nanofab_v3.materials import (
     WET_ETCH,
     MaterialLibrary,
     MissingMaterial,
+    MissingMaterialsError,
     UnknownMaterialWarning,
     didactic_library,
     read_material,
     unknown_materials,
 )
+from nanofab_v3.materials.selection import MaterialFilter
 from nanofab_v3.materials import store
 from nanofab_v3.model.structure import Structure
-from nanofab_v3.processes import builtin_registry, run_step
+from nanofab_v3.processes import (
+    DIDACTIC,
+    FunctionStep,
+    ParamSpec,
+    StepResult,
+    builtin_registry,
+    run_step,
+)
 from nanofab_v3.processes import substrate
 
 PARTICLE_ID = "chrome_particle"
 """The material of the failure this feature is named after."""
+
+
+def _introduce_unannounced_material(ctx) -> StepResult:
+    """A plugin-shaped step whose output cannot be known from its empty schema."""
+    phi = ctor.ball(ctx.structure.grid, center=(44.0, 120.0), radius=6.0)
+    return StepResult(ctor.add_material(ctx.structure, PARTICLE_ID, phi))
+
+
+UNANNOUNCED_MATERIAL_STEP = FunctionStep(
+    step_id="test.introduce_unannounced_material",
+    display_name="Introduce unannounced material",
+    fidelity=DIDACTIC,
+    schema=(),
+    required=frozenset(),
+    provided=frozenset(),
+    run_function=_introduce_unannounced_material,
+)
 
 
 @pytest.fixture
@@ -152,19 +178,49 @@ def test_a_known_material_with_no_rate_for_this_process_does_not_warn(
         )
 
 
-def test_a_material_introduced_by_the_step_itself_is_caught(
+def test_an_unannounced_material_introduced_by_the_step_itself_is_caught(
     wafer: Structure, library: MaterialLibrary
 ) -> None:
-    """Checked after the commit, not before: the step is how the material arrives."""
-    with pytest.warns(UnknownMaterialWarning, match="tungsten"):
-        outcome = run_step(
-            builtin_registry()["deposit.evaporate"],
-            wafer,
-            {"material": "tungsten", "thickness": 10.0},
-            library=library,
-        )
+    """E15 remains post-commit when no declared parameter could reveal it."""
+    with pytest.warns(UnknownMaterialWarning, match=PARTICLE_ID):
+        outcome = run_step(UNANNOUNCED_MATERIAL_STEP, wafer, library=library)
 
-    assert outcome.unknown.ids == ("tungsten",)
+    assert outcome.unknown.ids == (PARTICLE_ID,)
+
+
+def test_a_declared_unknown_material_is_refused_before_the_step_runs(
+    wafer: Structure, library: MaterialLibrary
+) -> None:
+    """E31 belongs to the engine and also covers a resolved schema default."""
+    called = False
+
+    def run(ctx) -> StepResult:
+        nonlocal called
+        called = True
+        return StepResult(ctx.structure)
+
+    step = FunctionStep(
+        step_id="test.declared_material",
+        display_name="Declared material",
+        fidelity=DIDACTIC,
+        schema=(
+            ParamSpec(
+                "material",
+                str,
+                default="tungsten",
+                material=MaterialFilter(tags=("metal",)),
+            ),
+        ),
+        required=frozenset(),
+        provided=frozenset(),
+        run_function=run,
+    )
+
+    with pytest.raises(MissingMaterialsError) as caught:
+        run_step(step, wafer, library=library)
+
+    assert not called
+    assert tuple(item.material_id for item in caught.value.missing) == ("tungsten",)
 
 
 # -- the answer ---------------------------------------------------------------
@@ -233,14 +289,16 @@ def test_the_session_reports_what_its_head_revision_cannot_answer_for(
     """What the shell reads to decide whether to raise the dialog at all."""
     from nanofab_v3.ui.session import Session
 
-    session = Session()
+    registry = builtin_registry()
+    registry.register(UNANNOUNCED_MATERIAL_STEP)
+    session = Session(registry=registry)
     session.run("substrate.select", {"material": str(SILICON), "surface": 40.0})
     assert not session.unknown_materials()
 
     with pytest.warns(UnknownMaterialWarning):
-        session.run("deposit.evaporate", {"material": "tungsten", "thickness": 10.0})
+        session.run(UNANNOUNCED_MATERIAL_STEP.step_id)
 
-    assert session.unknown_materials().ids == ("tungsten",)
+    assert session.unknown_materials().ids == (PARTICLE_ID,)
 
 
 # -- the dialog, where a headless runner has Qt -------------------------------

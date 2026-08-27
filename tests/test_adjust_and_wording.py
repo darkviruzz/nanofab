@@ -64,9 +64,13 @@ def test_selecting_the_revision_of_the_shown_step_still_fills_the_form(qt_app):
 
 def test_adjust_loads_the_values_that_ran_even_when_the_filter_would_hide_them(qt_app):
     """The DoD's sentence. A typed material is still the material that ran."""
+    from nanofab_v3.materials import MaterialType
     from nanofab_v3.ui.window import MainWindow
 
     window = MainWindow()
+    window.session.library = window.session.library.with_entry(
+        MaterialType(material_id="unobtainium", name="Unobtainium")
+    )
     window.session.run("substrate.select", {"material": "silicon", "surface": 40.0})
     window.session.run("resist.spin_coat", {"material": "unobtainium", "thickness": 80.0})
 

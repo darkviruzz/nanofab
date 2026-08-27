@@ -81,6 +81,7 @@ from nanofab_v3.materials.store import (
 )
 from nanofab_v3.materials.unknown import (
     MissingMaterial,
+    MissingMaterialsError,
     declared_materials,
     missing_before_running,
     UnknownMaterials,
@@ -123,6 +124,7 @@ __all__ = [
     "MaterialLibrary",
     "MaterialType",
     "MissingMaterial",
+    "MissingMaterialsError",
     "SpinCurve",
     "SputterResponse",
     "UnknownMaterialWarning",

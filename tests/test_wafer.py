@@ -284,6 +284,7 @@ def test_the_cache_directory_is_decided_in_one_place(monkeypatch, tmp_path) -> N
     assert session_cache_dir() == tmp_path / "elsewhere" / "session"
 
     monkeypatch.delenv("NANOFAB_CACHE")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
 
     assert default_cache_dir() == tmp_path / "nanofab_v3" / "replay"
