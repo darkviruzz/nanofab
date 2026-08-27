@@ -22,12 +22,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QRadioButton,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -35,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from nanofab_v3 import __version__, branding
+from nanofab_v3 import settings as app_settings
 from nanofab_v3.io import replay_cache_for
 from nanofab_v3.processes.contract import CapabilityError, ParameterError
 from nanofab_v3.processes.lithography import pattern_from_params as lithography_pattern
@@ -59,8 +62,14 @@ APP_NAME = "NanoFab Structure Model"
 class MainWindow(QMainWindow):
     """Steps, sample, chain, log — the four panels of plan §10."""
 
-    def __init__(self, session: Session | None = None) -> None:
+    def __init__(
+        self, session: Session | None = None, settings: "app_settings.Settings | None" = None
+    ) -> None:
         super().__init__()
+        # Roadmap E39: what is switched on at startup comes from `settings.ini`,
+        # never from a constant in here — and never goes back, so a box ticked
+        # while the program runs stays ticked only until it closes.
+        self.settings = settings if settings is not None else app_settings.application_settings()
         self.session = session or Session()
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         # Roadmap E20: the program has had no mark of its own until now, and a
@@ -130,7 +139,9 @@ class MainWindow(QMainWindow):
         row.addWidget(QLabel("Overlays:"))
         for kind in OVERLAY_KINDS:
             box = QCheckBox(kind)
-            if kind in ALWAYS_ON:
+            if kind in app_settings.overlay_names(self.settings, OVERLAY_KINDS) or (
+                kind in ALWAYS_ON and not self.settings.get("view.overlays")
+            ):
                 # Roadmap E9: the exposure *result* colours without being asked,
                 # because a latent image you have to remember to look for is a
                 # latent image nobody looks at. Not free — the outline costs
@@ -151,6 +162,7 @@ class MainWindow(QMainWindow):
             self._overlays[kind] = box
             row.addWidget(box)
         self.light_box = QCheckBox("light preview")
+        self.light_box.setChecked(bool(self.settings.get("view.light_preview", False)))
         self.light_box.setToolTip(
             "Draw where the light would fall, from the mask parameters in the form — "
             "geometry only, before the step runs. The difference from the exposed "
@@ -160,6 +172,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.light_box)
         row.addStretch(1)
         self.true_to_scale_box = QCheckBox("true to scale")
+        self.true_to_scale_box.setChecked(bool(self.settings.get("view.true_to_scale", False)))
         self.true_to_scale_box.setToolTip(
             "Draw the domain 1:1 whatever its aspect ratio. Off by default: a very "
             "deep or very narrow domain is otherwise a sliver. The compression "
@@ -168,16 +181,31 @@ class MainWindow(QMainWindow):
         self.true_to_scale_box.stateChanged.connect(
             lambda _state: self.canvas.set_true_to_scale(self.true_to_scale_box.isChecked())
         )
-        self.index_map_box = QCheckBox("index map")
-        self.index_map_box.setToolTip(
+        # Two pictures of one revision, so two radio buttons rather than a tick
+        # box: the contours and the index map are alternatives, and a checkbox
+        # said "and also" about something that is "instead". Which one starts
+        # selected is `[view] picture` in settings.ini (E39).
+        row.addWidget(QLabel("  picture:"))
+        self.contour_radio = QRadioButton("contours")
+        self.contour_radio.setToolTip(
+            "The sub-cell outline the renderer derives from each phi — what the "
+            "geometry is, at better than one-cell resolution"
+        )
+        self.index_map_radio = QRadioButton("index map")
+        self.index_map_radio.setToolTip(
             "Paint material_index directly — one pixel per cell, the honest "
             "picture of what the model stores"
         )
-        self.index_map_box.stateChanged.connect(
-            lambda state: self.canvas.set_index_map_visible(bool(state))
-        )
+        self._picture_group = QButtonGroup(self)
+        self._picture_group.addButton(self.contour_radio)
+        self._picture_group.addButton(self.index_map_radio)
+        wanted = str(self.settings.get("view.picture", "contours"))
+        (self.index_map_radio if wanted == "index_map" else self.contour_radio).setChecked(True)
+        self.canvas.set_index_map_visible(wanted == "index_map")
+        self.index_map_radio.toggled.connect(self.canvas.set_index_map_visible)
         row.addWidget(self.true_to_scale_box)
-        row.addWidget(self.index_map_box)
+        row.addWidget(self.contour_radio)
+        row.addWidget(self.index_map_radio)
         return row
 
     def _build_menu(self) -> None:
@@ -326,9 +354,28 @@ class MainWindow(QMainWindow):
         )
 
     def _on_revision_chosen(self, index: int) -> None:
+        """Show that revision, and fill the form **only if it is the same step**.
+
+        Roadmap §0.1, and the measurement is why this reads the way it does. This
+        used to write `revision.history.params` into whatever form happened to be
+        on screen, **by parameter name**. After `rewind(1)` the selection lands on
+        revision #0 — `substrate.select`, `material=silicon`, `thickness=0.0` —
+        and those two names collide with the spin coat's, so the form that was
+        showing the spin coat's own `resist` / `90.0` was overwritten with
+        `silicon` / `0.0`. Measured exactly that: stored
+        `{'material': 'resist', 'thickness': 90.0}`, displayed
+        `{'material': 'silicon', 'thickness': 0.0}`.
+
+        The bug was never the material filter, which is what it looked like from
+        the outside — the wrong material was in the box because a *different
+        step's* parameters had been written into it by name. A form belongs to one
+        step, and parameters only mean anything inside the step that declared
+        them.
+        """
         self._refresh_canvas()
         revision = self.session.chain[index]
-        self.form.set_values(revision.history.params)
+        if revision.step_id == self.form.step_id:
+            self.form.set_values(revision.history.params)
 
     def _on_run(self, step_id: str) -> None:
         # The engine's verdict is shown rather than second-guessed: the UI has no
@@ -415,10 +462,22 @@ class MainWindow(QMainWindow):
         entry = self.session.recipe[index]
         params = self.session.parameters_of(index)
         self.session.rewind(index)
+        # Refresh **first**, then fill the form. Rewinding changes the
+        # capabilities, so `_refresh_all` rebuilds the step list, which changes
+        # its selection, which emits `step_chosen`, which rebuilds the form from
+        # the schema — wiping anything written before it. That is the second half
+        # of roadmap §0.1: one half wrote a foreign step's values into the form,
+        # this half threw the right ones away, and both looked from the outside
+        # like "adjust does not load what ran".
+        self._refresh_all()
         self.steps.select_step(entry.step_id)
         self._on_step_chosen(entry.step_id)
+        # The values that ran outrank the dropdown filter (E22): a material this
+        # step would no longer offer — because a rate was edited to zero, or
+        # because it was typed as free text — is still the material this step
+        # ran on, and adjusting has to show it.
+        self.form.show_all_materials()
         self.form.apply_values(params)
-        self._refresh_all()
         self.statusBar().showMessage(
             f"Adjusting {entry.step_id}: change the parameters and press Run", 8000
         )

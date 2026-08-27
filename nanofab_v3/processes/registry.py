@@ -413,7 +413,6 @@ def builtin_registry() -> ProcessRegistry:
         contamination.CLEAN,
         inspection.SEM,
         inspection.PROFILOMETER,
-        inspection.ELLIPSOMETER,
         anneal.ANNEAL,
     ):
         registry.register(step)

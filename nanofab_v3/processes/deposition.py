@@ -42,6 +42,7 @@ from nanofab_v3.model.quantity import Quantity
 from nanofab_v3.model.structure import Structure
 from nanofab_v3.materials.selection import MaterialFilter
 from nanofab_v3.processes.contract import (
+    sub_cell_warning,
     DIDACTIC,
     IDEAL,
     FunctionStep,
@@ -186,12 +187,20 @@ def atomic_layer_deposition(
 
 
 def _deposit_result(ctx: StepContext, material: MaterialId, outcome, note: str) -> StepResult:
+    """The one place every thickness-driven deposition ends, so the one place to warn.
+
+    Roadmap §0.5's sub-cell warning is here rather than in each of the four run
+    functions for the reason the four of them already share this function: a
+    warning that has to be remembered in four places is a warning that is missing
+    from one of them.
+    """
+    warning = sub_cell_warning(float(ctx["thickness"]), ctx.grid.spacing, str(material))
     return StepResult(
         structure=outcome.structure,
         swept=outcome.swept,
         provides=frozenset({capability.of_material(material)}),
         measurements={"thickness": Quantity(ctx["thickness"], "nm")},
-        logs=(note,),
+        logs=(note,) + ((warning,) if warning else ()),
     )
 
 

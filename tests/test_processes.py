@@ -820,7 +820,7 @@ def test_an_inspection_returns_the_very_same_structure(patterned, library) -> No
     and moves no interface. `swept=None` keeps it out of the balance check too,
     which is the honest answer for a step that swept no front.
     """
-    for step in (inspection.SEM, inspection.PROFILOMETER, inspection.ELLIPSOMETER):
+    for step in (inspection.SEM, inspection.PROFILOMETER):
         result = step.run(StepContext(structure=patterned, params={
             spec.name: spec.default for spec in step.parameter_schema()
         }, library=library))
@@ -854,30 +854,6 @@ def test_a_blunt_stylus_under_reports_a_narrow_trench(patterned, library) -> Non
     assert ideal == pytest.approx(80.0, abs=1.0)
     assert blunt < 0.6 * ideal
     assert blunt > 0.0  # it still sees a dimple
-
-
-def test_the_ellipsometer_reports_the_topmost_film_when_none_is_named(
-    patterned, library
-) -> None:
-    """The one step whose answer comes from the library rather than the geometry."""
-    outcome = run_step(inspection.ELLIPSOMETER, patterned, {}, library=library)
-
-    assert outcome.measurements["thickness"].value == pytest.approx(80.0, abs=1.0)
-    assert outcome.measurements["thickness"].unit == "nm"
-    assert outcome.measurements["n"].value == pytest.approx(1.51)
-    assert 0.0 < outcome.measurements["coverage"].value < 1.0
-
-
-def test_an_ellipsometer_on_a_material_that_is_not_there_measures_zero(
-    wafer, library
-) -> None:
-    """A missing film is a reading of nothing, not an exception."""
-    outcome = run_step(
-        inspection.ELLIPSOMETER, wafer, {"material": str(METAL)}, library=library
-    )
-
-    assert outcome.measurements["thickness"].value == 0.0
-    assert outcome.artifacts == ()
 
 
 def test_the_sem_counts_the_pieces_of_what_it_is_pointed_at(patterned, library) -> None:

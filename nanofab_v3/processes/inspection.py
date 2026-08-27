@@ -1,4 +1,4 @@
-"""SEM, profilometer, ellipsometer (plan §6, row 18) — steps that only look.
+"""SEM and profilometer (plan §6, row 18) — steps that only look.
 
 Interview decision Q6, and the reason inspection is a *step* rather than a panel:
 "etch, inspect, etch, inspect" has to be four plain entries in one chain, so that
@@ -29,11 +29,14 @@ answer, dressed in the units the instrument reports it in:
   finite tip cannot enter a trench narrower than itself, so it rolls over the
   top and **under-reports the step**. That is the instrument's characteristic
   error, not a modelling shortcut, and setting the radius to 0 turns it off.
-- **The ellipsometer** reports a film's mean thickness and the optical constants
-  the library holds for it. It is the one step whose answer depends on the
-  `MaterialType` library rather than on the geometry alone, which makes it the
-  natural partner of `anneal` — anneal changes what the library says, and this
-  is what notices.
+
+**There was a third, and it is gone** (roadmap E35). The ellipsometer reported a
+film's mean thickness and the library's optical constants for it; no demo, no
+scenario and no recipe used it, and the thing it was for — "how thick is this
+layer" — is what `predicates.film_thickness` answers and what the profilometer
+already reports. A step nobody runs is a step nobody notices going wrong, and
+this one carried its own copy of the stack-walking logic to do it. The predicate
+stays: it has three callers, the profilometer among them.
 
 ## The artifact wire this module is the first user of
 
@@ -131,31 +134,6 @@ def _extent(structure: Structure, material: MaterialId) -> tuple[float, float]:
     )
 
 
-def _topmost(structure: Structure) -> MaterialId | None:
-    """The material the surface is made of, over most of the sample.
-
-    What an ellipsometer with no material named would be looking at. The *mode*
-    over the columns rather than the single highest point, because one particle
-    is not what the spot is measuring.
-    """
-    index = structure.material_index
-    trace = surface_trace(structure)
-    if not np.isfinite(trace).any():
-        return None
-    grid = structure.grid
-    rows = np.rint((trace - grid.origin[STACK_AXIS]) / grid.spacing).astype(int)
-    columns = np.flatnonzero(np.isfinite(trace))
-    seen = index[rows[columns], columns]
-    seen = seen[seen >= 0]
-    if seen.size == 0:
-        return None
-    winner = int(np.bincount(seen).argmax())
-    return structure.material_at(winner)
-
-
-# -- registered steps ---------------------------------------------------------
-
-
 def _run_sem(ctx: StepContext) -> StepResult:
     structure = ctx.structure
     named = str(ctx["material"]).strip()
@@ -237,63 +215,6 @@ def _run_profilometer(ctx: StepContext) -> StepResult:
     )
 
 
-def _run_ellipsometer(ctx: StepContext) -> StepResult:
-    structure = ctx.structure
-    named = str(ctx["material"]).strip()
-    material = MaterialId(named) if named else _topmost(structure)
-    if material is None or material not in structure.phi:
-        return StepResult(
-            structure=structure,
-            measurements={"thickness": Quantity(0.0, "nm")},
-            logs=(f"ellipsometer: nothing to measure ({named or 'topmost film'})",),
-        )
-
-    thickness = predicates.film_thickness(structure, material)
-    footprint = np.any(structure.inside(material), axis=STACK_AXIS)
-    coverage = float(np.count_nonzero(footprint)) / float(footprint.size)
-    entry = ctx.library.get(material)
-
-    measurements = {
-        "thickness": Quantity(thickness, "nm"),
-        "coverage": Quantity(coverage),
-    }
-    if entry is not None and entry.optical_n is not None:
-        measurements["n"] = Quantity(float(entry.optical_n))
-    if entry is not None and entry.optical_k is not None:
-        measurements["k"] = Quantity(float(entry.optical_k))
-
-    artifacts = ()
-    if ctx.artifacts is not None:
-        thicknesses = np.array(
-            [
-                [float(index), predicates.film_thickness(structure, present)]
-                for index, present in enumerate(structure.materials)
-            ]
-        )
-        artifacts = (
-            ctx.artifacts.put(
-                f"stack-{ctx['tag']}" if ctx["tag"] else "stack",
-                thicknesses,
-                kind="table",
-                label="Ellipsometer stack",
-            ),
-        )
-    optics = (
-        f", n={entry.optical_n}, k={entry.optical_k}"
-        if entry is not None and entry.optical_n is not None
-        else ""
-    )
-    return StepResult(
-        structure=structure,
-        measurements=measurements,
-        artifacts=artifacts,
-        logs=(
-            f"ellipsometer: {material} {thickness:.1f} nm mean over "
-            f"{coverage * 100:.0f}% of the field{optics}",
-        ),
-    )
-
-
 _TAG = ParamSpec(
     "tag",
     str,
@@ -303,7 +224,7 @@ _TAG = ParamSpec(
 
 SEM = FunctionStep(
     step_id="inspect.sem",
-    display_name="SEM",
+    display_name="SEM (cross-section)",
     fidelity=IDEAL,
     schema=(
         ParamSpec("material", str, default="",
@@ -314,9 +235,14 @@ SEM = FunctionStep(
     provided=frozenset(),
     run_function=_run_sem,
     description=(
-        "A top-down look at the sample: the connected pieces of each material, counted and "
-        "measured, with the material index map saved as an artifact when there is somewhere to "
-        "put one."
+        "A look at the sample **in cross-section**: the connected pieces of each material, "
+        "counted and measured, with the material index map saved as an artifact when there is "
+        "somewhere to put one."
+        "\n\n"
+        "The name says cross-section because that is what this view is (roadmap E35): the plane "
+        "you are looking at is the one a FIB cut would expose, and calling it a top-down SEM "
+        "would describe a picture this model does not have. A real FIB as a *second* section, "
+        "across this one, would require three dimensions and is deliberately not here."
         "\n\n"
         "It reads the real geometry — nothing here is mocked — but it is a label map rather "
         "than a simulated electron image: no edge brightness, no material contrast, no tilt. "
@@ -352,26 +278,3 @@ PROFILOMETER = FunctionStep(
     ),
 )
 
-ELLIPSOMETER = FunctionStep(
-    step_id="inspect.ellipsometer",
-    display_name="Ellipsometer",
-    fidelity=IDEAL,
-    schema=(
-        ParamSpec("material", str, default="",
-                  description="Film to measure; blank means the topmost one"),
-        _TAG,
-    ),
-    required=frozenset(),
-    provided=frozenset(),
-    run_function=_run_ellipsometer,
-    description=(
-        "Reports the thickness of each layer in one column of the sample, in the order they are "
-        "stacked, from the geometry itself."
-        "\n\n"
-        "Exact, with no noise, no drift and no calibration error — which for a didactic tool is "
-        "the right choice: you want to see the process, not the instrument. Real measurement "
-        "uncertainty is a model of its own and is deliberately not here."
-        "\n\n"
-        "Changes nothing on the sample. Needs: a sample."
-    ),
-)

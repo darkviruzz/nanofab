@@ -181,6 +181,34 @@ def validate_params(
     return resolved
 
 
+def sub_cell_warning(thickness: float, spacing: float, what: str = "layer") -> str:
+    """A log line when a requested thickness is thinner than the grid can carry.
+
+    Roadmap §0.5, measured rather than assumed: chromium on fused silica at
+    1 nm/cell, asked for 0.2 nm, came out **0.51 nm** — 153 % over, with *zero*
+    interior cells — and 0.5 nm came out 0.59 nm (18 %). At 1.0 nm and above it is
+    exact. Identical with and without surface mobility, which is what ruled the
+    mobility model out as the cause: the level set simply cannot represent a body
+    thinner than the cell it lives in, and the commit gate's balance check then
+    reports a discrepancy that is the *resolution*, not the physics.
+
+    So this warns where the user can act — at the step, naming both numbers and
+    the remedy — rather than leaving them to read a balance warning as a bug in
+    the model. Below half a cell the result is not merely imprecise; it is a
+    different number, so the wording escalates.
+
+    `""` when there is nothing to say, so the caller can filter falsy lines.
+    """
+    if thickness <= 0.0 or spacing <= 0.0 or thickness >= spacing:
+        return ""
+    severity = "is a different number from" if thickness < 0.5 * spacing else "will overshoot"
+    return (
+        f"warning: {thickness:.3g} nm of {what} is below the {spacing:.3g} nm cell size, "
+        f"so what the model produces {severity} what was asked for — a body thinner than "
+        "one cell has no interior. Use a finer grid or a thicker layer."
+    )
+
+
 @dataclass(frozen=True)
 class StepContext:
     """Everything a step is allowed to read (plan §5.1).

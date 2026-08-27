@@ -847,7 +847,7 @@ def test_an_inspection_shares_every_array_with_its_parent(grid, registry, librar
     )
 
     looked = apply_step(
-        registry["inspect.ellipsometer"],
+        registry["inspect.sem"],
         wafer.structure,
         {},
         index=1,

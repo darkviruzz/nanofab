@@ -296,6 +296,23 @@ class ParameterForm(QWidget):
 
     # -- presets (roadmap M7 item 2) -----------------------------------------
 
+    @property
+    def step_id(self) -> str:
+        """Which step this form belongs to — `""` when none is selected.
+
+        Public because a parameter set only means anything inside the step that
+        declared it: `material` on a substrate and `material` on a spin coat are
+        two different questions with one name, and writing one into the other by
+        name is roadmap §0.1's bug.
+        """
+        return self._step_id
+
+    def show_all_materials(self) -> None:
+        """Turn off every material filter on this form (E22's escape, from code)."""
+        for widget in self._widgets.values():
+            if isinstance(widget, MaterialBox):
+                widget.show_all.setChecked(True)
+
     def touched(self) -> frozenset[str]:
         """Parameters the operator edited by hand since this step was selected."""
         return frozenset(self._touched)
