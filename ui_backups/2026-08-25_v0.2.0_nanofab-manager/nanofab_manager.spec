@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='nanofab_manager',
+    name='nanofab_manager_v0_2_0',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

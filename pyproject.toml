@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanofab-v3"
+version = "0.3.0.dev0"
+description = "NanoFab structure model v2: per-material signed-distance fields on one grid"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE.md" }
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+]
+
+[project.optional-dependencies]
+# The kernel, the runtime and the exchange format need numpy and scipy only.
+# PySide6 is what `nanofab_v3.ui.window` needs, and deliberately an extra:
+# `ui.scene` and `ui.session` — everything that decides geometry or drives a run
+# — import without it, which is what keeps ADR-0001's rule checkable on a
+# headless runner (see `tests/test_ui.py`).
+dev = ["pytest>=8.0"]
+ui = ["PySide6>=6.6"]
+
+# Only the v2 package is installable; the v1 application and the prototype are
+# `ui_backups/` snapshots as of 2026-08-25 (plan §14, AGENTS.md §7).
+[tool.setuptools.packages.find]
+include = ["nanofab_v3*"]
+
+# The material library is data, not code (roadmap E14), and it lives *inside* the
+# package so that it travels with a wheel the same way it travels with a
+# checkout. A `data/` beside `nanofab_v3/` would be in git and absent from every
+# install — a library that loads from the source tree and is missing from the
+# distribution only shows up when somebody runs `--selftest` elsewhere.
+[tool.setuptools.package-data]
+nanofab_v3 = ["data/materials/*.json", "data/materials/README.md",
+              "data/demos/*.json", "data/demos/README.md",
+              "assets/nanofab.ico", "assets/nanofab.svg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+# `slow` marks the tests that build and install `examples/nanofab-plugin-example`
+# into a temp directory (~4 s each). They run by default — a discovery mechanism
+# nobody exercises is the thing they exist to prevent — and `-m "not slow"` is
+# there for a tight edit loop.
+markers = ["slow: builds and installs the example plugin (a few seconds)"]

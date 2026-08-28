@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "material_id": "chrome_redeposit",
+  "inherits": "chrome",
+  "name": "Chromium redeposit",
+  "display_color": "#69757a",
+  "notes": "Example inherited material for an explicitly characterised redeposited chromium film. It inherits bulk chromium until a lab supplies measured deviations; automatic ion-beam redeposition keeps the source identity 'chrome'."
+}

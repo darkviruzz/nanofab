@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "key": "spin_leveling",
+  "title": "Spin coating over a grating",
+  "summary": "feature width and film thickness decide how strongly a resist levels",
+  "watch_for": "The final resist top is neither a conformal offset nor a magically flat plane. Its 82 nm nominal volume is conserved, narrow relief levels strongly, and the 200 nm grating peaks receive the thinnest coverage. This is E41's frozen capillary-leveling model; it does not claim dewetting because the library has no surface energies.",
+  "grid": {
+    "origin": [0.0, 0.0],
+    "spacing": 2.0,
+    "shape": [351, 601],
+    "axes": ["y", "x"]
+  },
+  "steps": [
+    {
+      "step_id": "substrate.select",
+      "params": {
+        "preset": "wafer_fs_100",
+        "surface": 300.0,
+        "domain_width": 1200.0,
+        "headroom": 400.0,
+        "spacing": 2.0
+      }
+    },
+    {
+      "step_id": "deposit.sputter_rate",
+      "params": {"material": "chrome", "duration": 480.0}
+    },
+    {
+      "step_id": "resist.spin_coat_ideal",
+      "params": {"material": "resist", "thickness": 150.0},
+      "note": "The first coat is explicitly ideal: it is only the mask used to manufacture the grating."
+    },
+    {
+      "step_id": "litho.expose_ideal",
+      "params": {
+        "material": "resist",
+        "pattern": "grating",
+        "period": 300.0,
+        "duty": 0.5
+      }
+    },
+    {
+      "step_id": "develop.ideal",
+      "params": {"material": "resist"}
+    },
+    {
+      "step_id": "etch.rie_chlorine",
+      "params": {"duration": 60.0}
+    },
+    {
+      "step_id": "etch.rie_oxygen",
+      "params": {"duration": 150.0}
+    },
+    {
+      "step_id": "etch.icp_fluorine",
+      "params": {"duration": 240.0}
+    },
+    {
+      "step_id": "etch.wet_cr",
+      "params": {"duration": 4.0}
+    },
+    {
+      "step_id": "resist.spin_coat",
+      "params": {"material": "resist", "spin_speed": 3000.0},
+      "note": "82 nm comes from the resist's curve; that same length freezes the fourth-order leveling response."
+    }
+  ]
+}

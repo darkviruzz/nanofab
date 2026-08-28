@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "material_id": "alumina",
+  "name": "ALD alumina",
+  "display_color": "#9ccfd8",
+  "rates": {
+    "deposit": 1.0,
+    "dry_etch": 0.6,
+    "icp_fluorine": 0.02,
+    "ion_beam": 0.161,
+    "wet_etch": 0.2
+  },
+  "density": 3.0,
+  "optical_n": 1.77,
+  "optical_k": 0.0,
+  "rate_notes": {
+    "icp_fluorine": "Didactic, not from the process table (backlog B12). The table has no TiO2 or Al2O3 row, and M8's grating demo needs an etch stop, so the *ratio* was chosen and the reason it is this way round is real: a fluorine plasma makes AlF3, which is not volatile, so alumina stops a fluorine etch where titania does not. The numbers carry that contrast and nothing else.",
+    "ion_beam": "Didactic, not in the process table; the former ratio was scaled by 0.23 when M11 unified the ion-beam column."
+  },
+  "tags": [
+    "metal_oxide",
+    "dielectric"
+  ]
+}

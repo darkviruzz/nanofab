@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "key": "chrome_grating",
+  "title": "Fused-silica grating through a chromium hard mask",
+  "summary": "the photomask process: pattern the chromium, then let it hold the line",
+  "watch_for": "Why the chromium is there at all. The fluorine etch takes resist about 30 times faster than chromium, so a resist mask would be gone long before the grating was deep \u2014 and the flanks stay steep because that chemistry has a vertical rate and no lateral one. Compare the chromium etch itself, which is a wet bath and undercuts its resist by as much as it etches down.",
+  "grid": {
+    "origin": [
+      0.0,
+      0.0
+    ],
+    "spacing": 2.0,
+    "shape": [
+      351,
+      601
+    ],
+    "axes": [
+      "y",
+      "x"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "substrate.select",
+      "params": {
+        "preset": "wafer_fs_100",
+        "surface": 300.0,
+        "domain_width": 1200.0,
+        "headroom": 400.0,
+        "spacing": 2.0
+      }
+    },
+    {
+      "step_id": "deposit.sputter_rate",
+      "params": {
+        "material": "chrome",
+        "duration": 480.0
+      },
+      "note": "480 s at the table's 0.0833 nm/s is 40 nm of chromium."
+    },
+    {
+      "step_id": "resist.spin_coat",
+      "params": {
+        "material": "resist",
+        "spin_speed": 1000.0
+      }
+    },
+    {
+      "step_id": "litho.expose_ideal",
+      "params": {
+        "material": "resist",
+        "pattern": "grating",
+        "period": 300.0,
+        "duty": 0.5
+      }
+    },
+    {
+      "step_id": "develop.ideal",
+      "params": {
+        "material": "resist"
+      }
+    },
+    {
+      "step_id": "etch.rie_chlorine",
+      "params": {
+        "duration": 60.0
+      },
+      "note": "Chlorine takes the chromium and leaves the glass at exactly zero."
+    },
+    {
+      "step_id": "etch.rie_oxygen",
+      "params": {
+        "duration": 150.0
+      },
+      "note": "Oxygen takes the resist and leaves both the chromium and the glass."
+    },
+    {
+      "step_id": "etch.icp_fluorine",
+      "params": {
+        "duration": 240.0
+      },
+      "note": "Fluorine cuts 200 nm of grating; the chromium loses about 8."
+    },
+    {
+      "step_id": "etch.wet_cr",
+      "params": {
+        "duration": 4.0
+      },
+      "note": "And the mask comes off in a bath that attacks nothing else."
+    }
+  ]
+}

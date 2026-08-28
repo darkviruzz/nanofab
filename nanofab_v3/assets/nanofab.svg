@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>NanoFab</title>
+  <desc>A cross-section: a substrate slab with three patterned lines standing on it.
+    Roadmap E20 — the repository had no artwork at all, and a university logo would be
+    a claim about authorship that nobody has cleared. So: the one motif this whole
+    program is about, at the contrast a 16 px tab needs.</desc>
+  <rect x="8" y="8" width="240" height="240" rx="44" fill="#0f172a"/>
+  <rect x="32" y="168" width="192" height="56" rx="6" fill="#e2e8f0"/>
+  <rect x="32" y="92" width="40" height="76" rx="4" fill="#38bdf8"/>
+  <rect x="108" y="92" width="40" height="76" rx="4" fill="#38bdf8"/>
+  <rect x="184" y="92" width="40" height="76" rx="4" fill="#38bdf8"/>
+</svg>

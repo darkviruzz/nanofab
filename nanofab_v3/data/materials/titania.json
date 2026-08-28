@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "material_id": "titania",
+  "name": "Titanium dioxide",
+  "display_color": "#b9a7d9",
+  "rates": {
+    "deposit": 1.0,
+    "dry_etch": 0.8,
+    "icp_fluorine": 0.5,
+    "ion_beam": 0.207,
+    "wet_etch": 0.0
+  },
+  "sputter_response": {
+    "rise": 1.9,
+    "fall": 1.0
+  },
+  "density": 4.23,
+  "optical_n": 2.61,
+  "optical_k": 0.0,
+  "notes": "TiO2, the high-index layer of M8's grating demo (roadmap E16). The student table has no TiO2 row, so nothing here is table-derived: the four older process classes carry didactic values, and `icp_fluorine` was added in M8 for the etch-stop demo — also didactic, and marked as such per backlog B12, which asked for that decision to be made rather than guessed. Every other chemistry class is still absent, and a zero there means 'nobody stated one', not 'inert'.",
+  "rate_notes": {
+    "deposit": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
+    "dry_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
+    "icp_fluorine": "Didactic, not from the process table (backlog B12). The table has no TiO2 or Al2O3 row, and M8's grating demo needs an etch stop, so the *ratio* was chosen and the reason it is this way round is real: a fluorine plasma makes AlF3, which is not volatile, so alumina stops a fluorine etch where titania does not. The numbers carry that contrast and nothing else.",
+    "ion_beam": "Didactic, not in the process table; the former ratio was scaled by 0.23 when M11 unified the ion-beam column.",
+    "wet_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table."
+  },
+  "tags": [
+    "metal_oxide",
+    "dielectric"
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "key": "titania_stop",
+  "title": "TiO2 grating on an Al2O3 etch stop",
+  "summary": "a thin layer that decides where the etch ends",
+  "watch_for": "The floor of the grating is flat and sits exactly on the alumina, although nothing in the recipe says when to stop: the etch runs long on purpose. Alumina survives a fluorine plasma because AlF3 is not volatile, and the 25:1 that follows is what turns a timed etch into a self-limiting one. Take the alumina out and the same recipe cuts into the substrate.",
+  "grid": {
+    "origin": [
+      0.0,
+      0.0
+    ],
+    "spacing": 2.0,
+    "shape": [
+      451,
+      601
+    ],
+    "axes": [
+      "y",
+      "x"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "substrate.select",
+      "params": {
+        "preset": "wafer_fs_100",
+        "surface": 300.0,
+        "domain_width": 1200.0,
+        "headroom": 600.0,
+        "spacing": 2.0
+      }
+    },
+    {
+      "step_id": "deposit.ald",
+      "params": {
+        "material": "alumina",
+        "thickness": 30.0
+      }
+    },
+    {
+      "step_id": "deposit.conformal_offset",
+      "params": {
+        "material": "titania",
+        "thickness": 120.0
+      }
+    },
+    {
+      "step_id": "resist.spin_coat_ideal",
+      "params": {
+        "material": "resist",
+        "thickness": 400.0
+      },
+      "note": "400 nm of resist, typed rather than spun: the fluorine etch takes resist twice as fast as titania, so a 150 nm coat would be gone before the film was through and this demo would be about mask selectivity instead of about the etch stop. (Which is what the chromium demo is for.)"
+    },
+    {
+      "step_id": "litho.expose_ideal",
+      "params": {
+        "material": "resist",
+        "pattern": "grating",
+        "period": 300.0,
+        "duty": 0.5
+      }
+    },
+    {
+      "step_id": "develop.ideal",
+      "params": {
+        "material": "resist"
+      }
+    },
+    {
+      "step_id": "etch.icp_fluorine",
+      "params": {
+        "duration": 350.0
+      },
+      "note": "350 s is 175 nm of titania against a 120 nm film: deliberately long, because the point is that the alumina ends the etch and not the clock."
+    },
+    {
+      "step_id": "etch.rie_oxygen",
+      "params": {
+        "duration": 40.0
+      },
+      "note": "40 s, not 400: the fluorine step above already takes resist at 1 nm/s for 350 s, so what reaches the oxygen plasma is a thin remnant and 35 s clears it. Measured on this recipe \u2014 40 s leaves no resist cell, and so did the 400 s this used to run, which was six minutes of solving nothing."
+    }
+  ]
+}

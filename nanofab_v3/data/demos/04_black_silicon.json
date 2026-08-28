@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "key": "black_silicon",
+  "title": "Black silicon by micromasking",
+  "summary": "debris that masks its own pillars",
+  "watch_for": "Nothing here says 'make pillars'. Particles land, the etch cannot remove what they cover, and a forest is what is left over \u2014 which is exactly the S5 mechanism at a scale where it stops being a defect and becomes a surface. Run `clean.particles` before the etch instead of after and the surface comes out flat.",
+  "grid": {
+    "origin": [
+      0.0,
+      0.0
+    ],
+    "spacing": 1.0,
+    "shape": [
+      401,
+      601
+    ],
+    "axes": [
+      "y",
+      "x"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "substrate.select",
+      "params": {
+        "material": "silicon",
+        "surface": 200.0
+      }
+    },
+    {
+      "step_id": "particle.seed",
+      "params": {
+        "material": "particle",
+        "count": 12,
+        "radius": 14.0,
+        "radius_spread": 0.3
+      }
+    },
+    {
+      "step_id": "etch.icp_fluorine",
+      "params": {
+        "duration": 90.0
+      }
+    },
+    {
+      "step_id": "clean.particles",
+      "params": {
+        "material": "particle"
+      },
+      "note": "After, not before: a particle the etch has undercut is still there, and what it masked is still masked."
+    }
+  ]
+}
