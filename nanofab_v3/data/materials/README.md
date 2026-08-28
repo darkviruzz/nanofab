@@ -40,6 +40,12 @@ six materials the table does not name preserve their former didactic ratios,
 scaled by 0.23 and marked as didactic in `rate_notes`. The one affected scenario,
 S2c, compensates explicitly with its duration and scale.
 
+M12 adds `hard_bake` to the generic resist: the target identity
+`resist_hardbaked` is the semantic transition the process demonstrates, while
+the 150 C activation threshold is **didactic, not measured**. It is deliberately
+stored on the source material rather than typed into a bake recipe; a calibrated
+resist replaces that model in its own material file.
+
 `notes` says what an entry as a whole is; `rate_notes` says it per process class,
 and is where an **assumption** is recorded. The table names "silicon oxide" for
 ion-beam etching and "fused silica" for the plasma chemistries, and both are

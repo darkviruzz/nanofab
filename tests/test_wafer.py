@@ -22,7 +22,7 @@ import time
 import pytest
 
 from nanofab_v3.io import replay_cache_for
-from nanofab_v3.materials import RESIST, SILICON, didactic_library
+from nanofab_v3.materials import METAL, RESIST, SILICON, didactic_library
 from nanofab_v3.processes import ProcessRegistry, builtin_registry
 from nanofab_v3.processes.substrate import cross_section_grid
 from nanofab_v3.runtime import RadialProfile, Recipe, RecipeStep, Run
@@ -63,7 +63,7 @@ def graded() -> Recipe:
         (
             RecipeStep("substrate.select", {"material": SILICON, "surface": 30.0}),
             RecipeStep(
-                "resist.spin_coat",
+                "resist.spin_coat_ideal",
                 {
                     "material": RESIST,
                     "thickness": RadialProfile(radii=(0.0, 60.0), values=(50.0, 30.0)),
@@ -87,7 +87,7 @@ def test_a_fan_on_a_radius_is_the_centre_plus_a_ring(graded, registry, library) 
 
 
 def test_every_position_materializes_and_carries_its_own_chain(
-    graded, registry, library
+        graded, registry, library
 ) -> None:
     fan = WaferFan.on_radius(graded, 60.0, 4, registry=registry, library=library)
 
@@ -100,6 +100,41 @@ def test_every_position_materializes_and_carries_its_own_chain(
         assert status.steps_done == len(graded)
         assert status.fraction == 1.0
         assert status.structure is not None
+
+
+def test_uniformity_makes_the_five_position_fan_show_five_thicknesses(
+        registry, library
+) -> None:
+    grid = cross_section_grid(width=120.0, thickness=30.0, headroom=80.0)
+    recipe = Recipe(
+        grid,
+        (
+            RecipeStep(
+                "substrate.select", {"material": SILICON, "surface": 30.0}
+            ),
+            RecipeStep(
+                "deposit.evaporate",
+                {
+                    "material": METAL,
+                    "thickness": 20.0,
+                    "uniformity_percent": 20.0,
+                },
+            ),
+        ),
+        "uniformity",
+    )
+    fan = WaferFan.across_radius(
+        recipe, 150.0, 5, registry=registry, library=library
+    )
+    fan.run_blocking()
+    thicknesses = [
+        fan.status(position).chain[-1].measurements["thickness"].value
+        for position in fan.positions
+    ]
+
+    assert thicknesses[0] == pytest.approx(20.0)
+    assert len({round(value, 9) for value in thicknesses}) == 5
+    assert thicknesses == sorted(thicknesses, reverse=True)
 
 
 def test_the_edge_is_a_different_sample_from_the_centre(graded, registry, library) -> None:
@@ -119,7 +154,7 @@ def test_the_edge_is_a_different_sample_from_the_centre(graded, registry, librar
 
 
 def test_comparing_a_position_that_is_not_materialized_says_so(
-    graded, registry, library
+        graded, registry, library
 ) -> None:
     fan = WaferFan.on_radius(graded, 60.0, 4, registry=registry, library=library)
 
@@ -128,7 +163,7 @@ def test_comparing_a_position_that_is_not_materialized_says_so(
 
 
 def test_partial_results_are_readable_while_the_run_is_going(
-    graded, registry, library
+        graded, registry, library
 ) -> None:
     """Handoff §5: show partial results, do not block.
 
@@ -154,7 +189,7 @@ def test_partial_results_are_readable_while_the_run_is_going(
 
 
 def test_structures_answers_with_what_exists_rather_than_computing_more(
-    graded, registry, library
+        graded, registry, library
 ) -> None:
     """Deliberately not `Run.structures()`, which materializes and blocks."""
     fan = WaferFan.on_radius(graded, 60.0, 4, registry=registry, library=library)
@@ -196,7 +231,7 @@ def test_one_position_failing_costs_only_its_own_result(graded, registry, librar
 
 
 def test_a_second_fan_over_the_same_cache_replays_instead_of_solving(
-    graded, registry, library, tmp_path
+        graded, registry, library, tmp_path
 ) -> None:
     """The 68x the handoff calls "the whole feature", asserted as cache hits.
 
@@ -321,7 +356,7 @@ def test_the_panel_paints_whatever_the_fan_has(qt_app, graded, registry, library
 
 
 def test_clicking_a_position_emits_it_and_builds_no_scene(
-    qt_app, graded, registry, library
+        qt_app, graded, registry, library
 ) -> None:
     """Handoff §4, trap 4: one scene per selection, never one per position per paint.
 
@@ -393,5 +428,6 @@ def test_the_window_fans_out_and_shows_one_position(qt_app, monkeypatch, tmp_pat
     window._on_wafer_position(edge)
 
     assert window.canvas._scene is not None
-    assert window.canvas._scene.caption.startswith("(60, 0) mm")
+    expected = f"({edge[0]:.0f}, {edge[1]:.0f}) mm"
+    assert window.canvas._scene.caption.startswith(expected)
     assert list((tmp_path / "cache").iterdir())  # the fan wrote to the shared directory

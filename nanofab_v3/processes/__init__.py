@@ -38,6 +38,8 @@ from nanofab_v3.processes.contract import (
     ProcessStep,
     StepContext,
     StepResult,
+    UNIFORMITY_REFERENCE_RADIUS_MM,
+    process_uniformity_factor,
 )
 from nanofab_v3.processes.engine import StepOutcome, run_chain, run_step, step_seed
 from nanofab_v3.processes.plugins import (
@@ -72,10 +74,12 @@ __all__ = [
     "StepContext",
     "StepOutcome",
     "StepResult",
+    "UNIFORMITY_REFERENCE_RADIUS_MM",
     "application_registry",
     "builtin_registry",
     "discover_plugins",
     "implementation_digest",
+    "process_uniformity_factor",
     "run_chain",
     "run_step",
     "step_seed",

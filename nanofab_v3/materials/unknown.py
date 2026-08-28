@@ -72,12 +72,12 @@ class MissingMaterial:
         )
 
     def draft(
-        self,
-        *,
-        name: str | None = None,
-        display_color: str = "#808080",
-        rates: Mapping[str, float] | None = None,
-        notes: str = "",
+            self,
+            *,
+            name: str | None = None,
+            display_color: str = "#808080",
+            rates: Mapping[str, float] | None = None,
+            notes: str = "",
     ) -> MaterialType:
         """A `MaterialType` from the answers, ready for `store.save_material`.
 
@@ -91,10 +91,10 @@ class MissingMaterial:
             display_color=display_color,
             rates=dict(rates or {}),
             notes=notes
-            or (
-                "Added from the unknown-material prompt (roadmap E15). Uncalibrated: "
-                "nothing here came from a measurement or from the process table."
-            ),
+                  or (
+                      "Added from the unknown-material prompt (roadmap E15). Uncalibrated: "
+                      "nothing here came from a measurement or from the process table."
+                  ),
         )
 
 
@@ -147,11 +147,11 @@ class UnknownMaterials:
 
 
 def unknown_materials(
-    library: MaterialLibrary,
-    materials: Iterable[MaterialId],
-    *,
-    seen_in: str = "",
-    process_classes: Sequence[str] = PROCESS_CLASSES,
+        library: MaterialLibrary,
+        materials: Iterable[MaterialId],
+        *,
+        seen_in: str = "",
+        process_classes: Sequence[str] = PROCESS_CLASSES,
 ) -> UnknownMaterials:
     """Which of `materials` the library cannot answer for, in the order they came.
 
@@ -184,10 +184,9 @@ def declared_materials(step: object, params: Mapping[str, object]) -> tuple[Mate
     `material` means something else — or whose material lives under another name
     entirely — is answered correctly for free.
 
-    `anneal.thermal` is the case that made this necessary. It swaps a resist for
-    `resist_hardbaked` and nothing checked that the target exists, so a typo in
-    `becomes` produced a sample made of a material the library cannot answer for,
-    silently, one step before the strip that then did nothing.
+    The old generic anneal was the case that made this necessary: a typed target
+    could introduce an unknown material. `bake.hard` now derives its target from
+    the source library entry and performs the same check explicitly.
     """
     schema = getattr(step, "parameter_schema", None)
     if schema is None:
@@ -202,17 +201,12 @@ def declared_materials(step: object, params: Mapping[str, object]) -> tuple[Mate
     return tuple(named)
 
 
-_MATERIAL_NAMES = ("becomes",)
-"""Parameter names that hold a material without being *chosen* from a list.
-
-`anneal.thermal`'s `becomes` is the only one: it names what a material turns
-into, which is not a selection (E22's filters are about what a dropdown offers)
-but is very much a material the library has to know about.
-"""
+_MATERIAL_NAMES: tuple[str, ...] = ()
+"""Legacy non-filtered material parameter names; built-ins currently need none."""
 
 
 def missing_before_running(
-    step: object, params: Mapping[str, object], library: "MaterialLibrary"
+        step: object, params: Mapping[str, object], library: "MaterialLibrary"
 ) -> tuple[MissingMaterial, ...]:
     """The materials this step names that the library cannot answer for (E31).
 

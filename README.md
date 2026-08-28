@@ -30,7 +30,7 @@ recipe = Recipe(
     recipe_id="coat",
     steps=(
         RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
-        RecipeStep("resist.spin_coat", {"material": RESIST, "thickness": 90.0}),
+        RecipeStep("resist.spin_coat_ideal", {"material": RESIST, "thickness": 90.0}),
     ),
 )
 chain = run_recipe(recipe)

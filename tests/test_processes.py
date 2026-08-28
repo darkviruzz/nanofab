@@ -55,7 +55,7 @@ from nanofab_v3.processes import (
     step_seed,
 )
 from nanofab_v3.processes import (
-    anneal,
+    bake,
     contamination,
     deposition,
     inspection,
@@ -65,6 +65,7 @@ from nanofab_v3.processes import (
 )
 from nanofab_v3.materials import store as materials_store
 from nanofab_v3.processes.contract import validate_params
+
 
 # -- fixtures -----------------------------------------------------------------
 
@@ -183,7 +184,7 @@ def test_the_gate_retracts_a_capability_whose_material_is_gone(patterned: Struct
 
 
 def test_a_step_that_promises_a_field_and_does_not_deliver_it_fails_the_gate(
-    wafer: Structure,
+        wafer: Structure,
 ) -> None:
     """A broken promise is caught where it is made, not three steps later.
 
@@ -197,7 +198,7 @@ def test_a_step_that_promises_a_field_and_does_not_deliver_it_fails_the_gate(
 
 
 def test_a_free_form_capability_is_carried_through_and_can_be_retired(
-    wafer: Structure,
+        wafer: Structure,
 ) -> None:
     """What the geometry cannot see, it does not get to delete."""
     kept = commit_gate.commit(wafer, capabilities={"chamber_pumped"})
@@ -224,10 +225,10 @@ def test_the_registry_gates_on_capabilities_with_a_reason(library: MaterialLibra
 
     assert reason is not None and "resist.exposed" in reason
     assert (
-        registry.blocked_reason(
-            "develop.ideal", {capability.DOMAIN, capability.of_field(RESIST, "exposed")}
-        )
-        is None
+            registry.blocked_reason(
+                "develop.ideal", {capability.DOMAIN, capability.of_field(RESIST, "exposed")}
+            )
+            is None
     )
     runnable = {step.step_id for step in registry.runnable(on_a_sample)}
     assert "develop.ideal" not in runnable
@@ -307,7 +308,7 @@ def test_the_registry_groups_the_fidelity_tiers_of_one_technique() -> None:
 
 
 def test_running_a_step_without_its_capability_raises_before_anything_moves(
-    wafer: Structure, library: MaterialLibrary
+        wafer: Structure, library: MaterialLibrary
 ) -> None:
     """The gate is in front of the step, not behind it."""
     with pytest.raises(CapabilityError, match="resist.exposed"):
@@ -337,7 +338,7 @@ def test_a_chain_run_twice_produces_the_same_sample(library: MaterialLibrary) ->
     registry = builtin_registry()
     recipe = [
         (registry["substrate.select"], {"material": SILICON, "surface": 40.0}),
-        (registry["resist.spin_coat"], {"material": RESIST, "thickness": 60.0}),
+        (registry["resist.spin_coat_ideal"], {"material": RESIST, "thickness": 60.0}),
         (registry["litho.expose_ideal"], {"material": RESIST, "center": 100.0, "width": 60.0}),
         (registry["develop.ideal"], {"material": RESIST}),
     ]
@@ -354,7 +355,7 @@ def test_a_chain_run_twice_produces_the_same_sample(library: MaterialLibrary) ->
 
 
 def test_replaying_at_a_new_position_equals_a_fresh_run_at_that_position(
-    library: MaterialLibrary,
+        library: MaterialLibrary,
 ) -> None:
     """The property plan §8's materialization is, stated at the engine seam.
 
@@ -375,7 +376,7 @@ def test_replaying_at_a_new_position_equals_a_fresh_run_at_that_position(
     edge = (60.0, 0.0)
     recipe = [
         (registry["substrate.select"], {"material": SILICON, "surface": 40.0}),
-        (registry["resist.spin_coat"], {"material": RESIST, "thickness": 60.0}),
+        (registry["resist.spin_coat_ideal"], {"material": RESIST, "thickness": 60.0}),
         (registry["litho.expose_ideal"], {"material": RESIST, "center": 100.0, "width": 60.0}),
         (registry["develop.ideal"], {"material": RESIST}),
     ]
@@ -402,7 +403,7 @@ def test_a_chain_threads_capabilities_from_step_to_step(library: MaterialLibrary
     outcomes = run_chain(
         [
             (registry["substrate.select"], {"material": SILICON, "surface": 40.0}),
-            (registry["resist.spin_coat"], {"material": RESIST, "thickness": 60.0}),
+            (registry["resist.spin_coat_ideal"], {"material": RESIST, "thickness": 60.0}),
             (registry["litho.expose_ideal"], {"material": RESIST, "center": 100.0, "width": 60.0}),
         ],
         Structure(grid),
@@ -480,7 +481,7 @@ def test_ideal_development_cannot_reach_a_buried_exposed_pocket(wafer: Structure
 
 
 def test_the_dose_tier_writes_a_profile_where_the_ideal_tier_writes_a_step(
-    wafer: Structure, library: MaterialLibrary
+        wafer: Structure, library: MaterialLibrary
 ) -> None:
     """Plan §3.3's two exposure fields, next to each other.
 
@@ -500,13 +501,13 @@ def test_the_dose_tier_writes_a_profile_where_the_ideal_tier_writes_a_step(
     assert set(np.unique(exposed)) == {0, 1}
     edge = dose[110, 70:90]
     assert np.all(np.diff(edge) >= -1e-6)  # a gradient, not a step
-    assert 3 < np.count_nonzero((edge > 1.0) & (edge < 149.0)) # a real penumbra
+    assert 3 < np.count_nonzero((edge > 1.0) & (edge < 149.0))  # a real penumbra
     top, bottom = dose[118, 120], dose[102, 120]
     assert bottom < top  # Beer-Lambert: the dose is attenuated with depth
 
 
 def test_the_downgrade_adapter_says_what_it_throws_away(
-    wafer: Structure, library: MaterialLibrary
+        wafer: Structure, library: MaterialLibrary
 ) -> None:
     """Plan §5.3 allows downgrades and forbids upgrades; this is what one looks like."""
     grid = wafer.grid
@@ -529,7 +530,7 @@ def test_the_downgrade_adapter_says_what_it_throws_away(
 
 
 def test_development_at_a_rate_eats_downward_where_the_dose_is(
-    wafer: Structure, library: MaterialLibrary
+        wafer: Structure, library: MaterialLibrary
 ) -> None:
     """The physical tier: the front moves at `develop_rate(dose)` (plan §6).
 
@@ -568,7 +569,7 @@ def test_an_evaporated_film_leaves_a_vertical_sidewall_bare(patterned: Structure
 
 
 def test_a_sputtered_film_coats_the_sidewall_an_evaporation_leaves_bare(
-    patterned: Structure,
+        patterned: Structure,
 ) -> None:
     """The difference S4 rests on: a broad lobe sees what a point source cannot."""
     evaporated = deposition.evaporate(patterned, METAL, thickness=20.0).structure
@@ -598,7 +599,7 @@ def test_conformal_offset_and_gated_ald_are_two_answers_to_one_technique() -> No
 
 
 def test_a_wet_etch_is_selective_because_of_the_rate_table(
-    patterned: Structure, library: MaterialLibrary
+        patterned: Structure, library: MaterialLibrary
 ) -> None:
     """Plan §4.2: mask behaviour emerges from rates, and so does selectivity.
 
@@ -614,7 +615,7 @@ def test_a_wet_etch_is_selective_because_of_the_rate_table(
 
 
 def test_lift_off_dissolves_before_it_drops_and_the_order_is_the_physics(
-    patterned: Structure,
+        patterned: Structure,
 ) -> None:
     """Removing the unsupported metal first would make S3 succeed (plan §6).
 
@@ -632,7 +633,7 @@ def test_lift_off_dissolves_before_it_drops_and_the_order_is_the_physics(
 
 
 def test_an_unlisted_material_survives_a_bath_that_never_heard_of_it(
-    patterned: Structure, library: MaterialLibrary
+        patterned: Structure, library: MaterialLibrary
 ) -> None:
     """A bath is applied to the sample, not to a list of things to remove."""
     from nanofab_v3.processes.rates import dissolve_rates
@@ -645,7 +646,7 @@ def test_an_unlisted_material_survives_a_bath_that_never_heard_of_it(
 
 
 def test_the_release_map_stops_a_mask_redepositing_what_it_is_not_losing(
-    patterned: Structure, library: MaterialLibrary
+        patterned: Structure, library: MaterialLibrary
 ) -> None:
     """The seam where material knowledge enters a geometry-only module (M2 note 8)."""
     from nanofab_v3.materials import ION_BEAM
@@ -661,7 +662,7 @@ def test_the_release_map_stops_a_mask_redepositing_what_it_is_not_losing(
 
 
 def test_a_step_is_a_plain_function_before_it_is_a_registry_entry(
-    patterned: Structure,
+        patterned: Structure,
 ) -> None:
     """Interview decision I7, literally: the function is callable on its own."""
     direct = removal.dissolve(patterned, RESIST)
@@ -676,7 +677,7 @@ def test_a_step_is_a_plain_function_before_it_is_a_registry_entry(
 
 
 def test_a_declared_material_the_library_has_never_heard_of_is_refused(
-    patterned: Structure,
+        patterned: Structure,
 ) -> None:
     """E31 reverses E15 when the recipe names the material before execution."""
     sparse = MaterialLibrary.of(MaterialType(material_id=SILICON, name="Silicon"))
@@ -827,6 +828,7 @@ def test_a_blunt_stylus_under_reports_a_narrow_trench(patterned, library) -> Non
     80 nm of resist an ideal point stylus reads the full step; a 60 nm tip rolls
     across the mouth and reads a fraction of it. Both are the same surface.
     """
+
     def step_height(radius):
         outcome = run_step(
             inspection.PROFILOMETER, patterned, {"stylus_radius": radius}, library=library
@@ -859,7 +861,7 @@ def test_an_inspection_with_no_sink_still_measures_everything(patterned, library
 
 
 def test_an_inspection_with_a_sink_produces_a_reference_to_what_it_stored(
-    patterned, library
+        patterned, library
 ) -> None:
     sink = MemoryArtifactSink()
 
@@ -904,7 +906,7 @@ def test_etch_inspect_etch_inspect_is_four_plain_steps(wafer, library) -> None:
     assert second["mean_height"].value < first["mean_height"].value
 
 
-# -- 6. anneal (plan §6 row 15, §16, milestone M5) ----------------------------
+# -- M12: the bake trilogy (roadmap E31) --------------------------------------
 
 
 def _bake(temperature=200.0, duration=600.0, **overrides):
@@ -912,80 +914,121 @@ def _bake(temperature=200.0, duration=600.0, **overrides):
         "temperature": temperature,
         "duration": duration,
         "material": str(RESIST),
-        "becomes": str(HARD_RESIST),
-        "activation": 150.0,
     }
     params.update(overrides)
     return params
 
 
-def test_an_anneal_changes_the_material_and_not_the_geometry(patterned, library) -> None:
-    """Plan §21.2's decision: a property change is a change of library entry.
+def test_soft_bake_preserves_the_latent_image_bit_for_bit(patterned, library) -> None:
+    key = lithography.EXPOSED.key(RESIST)
+    before = patterned.field(key)
+    outcome = run_step(
+        bake.SOFT_BAKE,
+        patterned,
+        {"temperature": 90.0, "duration": 60.0},
+        library=library,
+    )
 
-    `StepContext.library` is passed in and never stored (plan §3.4), so an
-    anneal cannot hand back a modified one. It does not need to: the same `phi`
-    goes to a different `MaterialType`, and every rate downstream follows.
-    """
-    outcome = run_step(anneal.ANNEAL, patterned, _bake(), library=library)
+    assert np.array_equal(outcome.structure.field(key), before)
+    assert bake.THERMAL_BUDGET.key() in outcome.structure.fields
 
-    assert outcome.ok
+
+def test_post_exposure_bake_diffuses_but_retains_the_dose(wafer, library) -> None:
+    coated = lithography.spin_coat(wafer, RESIST, thickness=80.0)
+    exposed = lithography.expose_dose(
+        coated,
+        RESIST,
+        lithography.windows(wafer.grid, [(80.0, 160.0)]),
+        dose=150.0,
+        blur=0.0,
+        library=library,
+    )
+    exposed = commit_gate.commit(exposed).structure
+    key = lithography.DOSE.key(RESIST)
+    before = exposed.field(key).copy()
+    inside = exposed.inside(RESIST)
+    outcome = run_step(
+        bake.POST_EXPOSURE_BAKE,
+        exposed,
+        _bake(temperature=110.0, diffusion_length=8.0),
+        library=library,
+    )
+    after = outcome.structure.field(key)
+
+    assert key in outcome.structure.fields
+    assert not np.array_equal(after, before)
+    assert float(after[inside].sum()) == pytest.approx(
+        float(before[inside].sum()), rel=1e-4
+    )
+
+
+def test_hard_bake_changes_the_material_and_not_the_geometry(patterned, library) -> None:
+    result = bake.HARD_BAKE.run(
+        StepContext(
+            structure=patterned,
+            params=_bake(),
+            library=library,
+        )
+    )
+
+    assert result.swept is None
+    assert result.structure.phi_of(HARD_RESIST) is patterned.phi_of(RESIST)
+    outcome = run_step(bake.HARD_BAKE, patterned, _bake(), library=library)
     assert RESIST not in outcome.structure.phi
     assert HARD_RESIST in outcome.structure.phi
-    assert outcome.structure.measure(
-        outcome.structure.inside(HARD_RESIST)
-    ) == pytest.approx(patterned.measure(patterned.inside(RESIST)), rel=1e-3)
-
-
-def test_the_capabilities_swap_without_anything_being_told_to(patterned, library) -> None:
-    """The gate re-derives both halves from the structure it was handed."""
-    before = capability.derived(patterned)
-    outcome = run_step(anneal.ANNEAL, patterned, _bake(), library=library)
-
-    assert "material:resist" in before
     assert "material:resist" not in outcome.capabilities
     assert "material:resist_hardbaked" in outcome.capabilities
-    assert anneal.ANNEALED in outcome.capabilities
-    # a latent image in a resist that has been hard-baked is not a latent image
+    assert bake.ANNEALED in outcome.capabilities
     assert "resist.exposed" not in outcome.capabilities
 
 
-def test_a_bake_below_the_activation_leaves_the_material_alone(patterned, library) -> None:
-    """A soft bake is still a thermal budget, and still not a transformation."""
-    outcome = run_step(anneal.ANNEAL, patterned, _bake(temperature=90.0), library=library)
+def test_hard_bake_below_the_library_activation_leaves_the_material(patterned, library) -> None:
+    outcome = run_step(
+        bake.HARD_BAKE, patterned, _bake(temperature=90.0), library=library
+    )
 
     assert RESIST in outcome.structure.phi
     assert HARD_RESIST not in outcome.structure.phi
-    assert outcome.measurements["thermal_budget"].value > 0.0
     assert any("below" in line for line in outcome.logs)
 
 
-def test_the_thermal_budget_accumulates_over_bakes(patterned, library) -> None:
-    """A sample carries its whole thermal history, not its last bake.
+def test_hard_bake_refuses_a_missing_library_target(patterned, library) -> None:
+    incomplete = MaterialLibrary(
+        {key: entry for key, entry in library.entries.items() if key != HARD_RESIST}
+    )
 
-    Global, because a furnace heats the whole sample: two 300 s bakes and one
-    600 s bake leave the same number.
-    """
+    with pytest.raises(MissingMaterialsError, match="resist_hardbaked"):
+        run_step(bake.HARD_BAKE, patterned, _bake(), library=incomplete)
+
+
+def test_the_thermal_budget_accumulates_over_bakes(patterned, library) -> None:
     once = run_step(
-        anneal.ANNEAL, patterned, _bake(duration=600.0, material="", becomes=""),
+        bake.SOFT_BAKE,
+        patterned,
+        {"temperature": 90.0, "duration": 600.0},
         library=library,
     )
     first = run_step(
-        anneal.ANNEAL, patterned, _bake(duration=300.0, material="", becomes=""),
+        bake.SOFT_BAKE,
+        patterned,
+        {"temperature": 90.0, "duration": 300.0},
         library=library,
     )
     twice = run_step(
-        anneal.ANNEAL, first.structure, _bake(duration=300.0, material="", becomes=""),
-        library=library, index=1,
+        bake.SOFT_BAKE,
+        first.structure,
+        {"temperature": 90.0, "duration": 300.0},
+        library=library,
+        index=1,
     )
 
     assert twice.measurements["thermal_budget"].value == pytest.approx(
         once.measurements["thermal_budget"].value
     )
-    assert anneal.THERMAL_BUDGET.key() in twice.structure.fields
 
 
 def test_hard_baking_a_resist_is_a_resist_the_solvent_no_longer_takes(
-    wafer, library
+        wafer, library
 ) -> None:
     """The mechanism, and why it is worth a material rather than a footnote.
 
@@ -994,13 +1037,13 @@ def test_hard_baking_a_resist_is_a_resist_the_solvent_no_longer_takes(
     `DissolveModel` at all. Both runs are the same recipe with one step inserted.
     """
     registry = builtin_registry()
-    coat = (registry["resist.spin_coat"], {"material": RESIST, "thickness": 60.0})
+    coat = (registry["resist.spin_coat_ideal"], {"material": RESIST, "thickness": 60.0})
     strip = (registry["strip.rate"], {"solvent": "acetone", "duration": 3.0})
 
     coated = run_chain([coat], wafer, library=library)[-1].structure
     applied = coated.measure(coated.inside(RESIST))
     baked = run_chain(
-        [coat, (registry["anneal.thermal"], _bake()), strip], wafer, library=library
+        [coat, (registry["bake.hard"], _bake()), strip], wafer, library=library
     )
     control = run_chain([coat, strip], wafer, library=library)
 
@@ -1015,31 +1058,14 @@ def test_hard_baking_a_resist_is_a_resist_the_solvent_no_longer_takes(
     assert stripped.measure(stripped.inside(RESIST)) == 0.0
 
 
-def test_the_anneal_says_which_behaviour_changed(patterned, library) -> None:
+def test_the_hard_bake_says_which_behaviour_changed(patterned, library) -> None:
     """Behaviour lives in the library, so the log says which of it moved."""
-    outcome = run_step(anneal.ANNEAL, patterned, _bake(), library=library)
+    outcome = run_step(bake.HARD_BAKE, patterned, _bake(), library=library)
 
     line = next(line for line in outcome.logs if "->" in line)
     assert "no longer soluble" in line
     assert "no longer developable" in line
     assert "dry_etch 0.5 -> 0.25 nm/s" in line
-
-
-def test_an_anneal_moves_no_geometry_and_reflow_stays_open(patterned, library) -> None:
-    """Plan §16: curvature-driven reflow is deliberately not built.
-
-    The assertion that keeps it that way — an anneal sweeps no front, so it is
-    outside the balance check, and the transformed material's field is the very
-    array the old one had.
-    """
-    result = anneal.ANNEAL.run(
-        StepContext(structure=patterned, params={
-            spec.name: spec.default for spec in anneal.ANNEAL.parameter_schema()
-        } | _bake(), library=library)
-    )
-
-    assert result.swept is None
-    assert result.structure.phi_of(HARD_RESIST) is patterned.phi_of(RESIST)
 
 
 # -- E13: whose tone is it -----------------------------------------------------

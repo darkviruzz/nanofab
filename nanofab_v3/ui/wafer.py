@@ -53,7 +53,13 @@ from nanofab_v3.model.structure import Structure
 from nanofab_v3.processes.registry import ProcessRegistry
 from nanofab_v3.runtime.replay import Run
 from nanofab_v3.runtime.revision import CENTER, RevisionChain
-from nanofab_v3.runtime.run import Position, Recipe, ReplayStore, positions_on_radius
+from nanofab_v3.runtime.run import (
+    Position,
+    Recipe,
+    ReplayStore,
+    positions_across_radius,
+    positions_on_radius,
+)
 
 
 def cache_root() -> "Path":
@@ -223,17 +229,17 @@ class WaferFan:
 
     @classmethod
     def on_radius(
-        cls,
-        recipe: Recipe,
-        radius: float,
-        count: int,
-        *,
-        registry: ProcessRegistry | None = None,
-        library: MaterialLibrary | None = None,
-        cache: ReplayStore | None = None,
-        sink: ArtifactSink | None = None,
-        center: bool = True,
-        strict: bool = False,
+            cls,
+            recipe: Recipe,
+            radius: float,
+            count: int,
+            *,
+            registry: ProcessRegistry | None = None,
+            library: MaterialLibrary | None = None,
+            cache: ReplayStore | None = None,
+            sink: ArtifactSink | None = None,
+            center: bool = True,
+            strict: bool = False,
     ) -> "WaferFan":
         """A fan of `count` positions on a ring of `radius` mm, plus the centre.
 
@@ -259,6 +265,32 @@ class WaferFan:
                 cache=cache,
                 sink=sink,
                 positions=positions,
+                strict=strict,
+            )
+        )
+
+    @classmethod
+    def across_radius(
+            cls,
+            recipe: Recipe,
+            radius: float,
+            count: int,
+            *,
+            registry: ProcessRegistry | None = None,
+            library: MaterialLibrary | None = None,
+            cache: ReplayStore | None = None,
+            sink: ArtifactSink | None = None,
+            strict: bool = False,
+    ) -> "WaferFan":
+        """A fan with distinct radii, so E34's quadratic profile is visible."""
+        return cls(
+            Run(
+                recipe,
+                registry=registry,
+                library=library,
+                cache=cache,
+                sink=sink,
+                positions=positions_across_radius(radius, count),
                 strict=strict,
             )
         )
@@ -425,7 +457,7 @@ class WaferFan:
 
 
 def compare(
-    fan: WaferFan, left: Sequence[float], right: Sequence[float]
+        fan: WaferFan, left: Sequence[float], right: Sequence[float]
 ) -> dict[str, float]:
     """How two positions' final structures differ, per material, in nm^ndim.
 
@@ -444,8 +476,8 @@ def compare(
     materials = sorted({*first.materials, *second.materials})
     return {
         str(material): (
-            (second.measure(second.inside(material)) if material in second.phi else 0.0)
-            - (first.measure(first.inside(material)) if material in first.phi else 0.0)
+                (second.measure(second.inside(material)) if material in second.phi else 0.0)
+                - (first.measure(first.inside(material)) if material in first.phi else 0.0)
         )
         for material in materials
     }

@@ -20,7 +20,7 @@ edit-and-see loop: no checkout, no toolchain.
   "grid": {"origin": [0, 0], "spacing": 1.0, "shape": [241, 301], "axes": ["y", "x"]},
   "steps": [
     {
-      "step_id": "resist.spin_coat",
+      "step_id": "resist.spin_coat_ideal",
       "params": {"material": "resist", "thickness": 90.0},
       "note": "why this number is this number"
     }
@@ -38,7 +38,7 @@ a number lives, next to the number.
   demo that does the wrong thing without saying so.
 - **A file that does not parse costs that demo and nothing else.** The menu still
   opens, and `--version` lists what was skipped and why.
-- **The filename orders the menu**, which is why the shipped four are numbered. A
+- **The filename orders the menu**, which is why the shipped five are numbered. A
   file you add lands after them. A file whose `key` matches a shipped one
   *replaces* it and keeps its position.
 - **`step_id` and `params` belong to the process registry**, not to this file. Run

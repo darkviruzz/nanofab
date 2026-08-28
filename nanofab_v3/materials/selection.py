@@ -9,7 +9,7 @@ here", not one:
   `spin_curve is not None`; a wet chromium etch needs `rates["wet_etch_cr"] > 0`.
   This is the strongest form, because the criterion *is* the thing the step will
   go and look up — a material that passes it is a material the step can run on.
-- **Tags**, for a step that reads nothing. `resist.spin_coat` at ideal fidelity
+- **Tags**, for a step that reads nothing. `resist.spin_coat_ideal`
   takes a thickness and puts a layer down; it consults no curve and no rate, so
   by the first rule every material qualifies, and chromium is still nonsense.
   E21's substance classes answer that question and only that question.
@@ -39,7 +39,7 @@ from nanofab_v3.materials.material import MATERIAL_TAGS, PROCESS_CLASSES, Materi
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from nanofab_v3.materials.library import MaterialLibrary
 
-_SUBMODELS = ("spin_curve", "develop", "dissolve", "sputter_response")
+_SUBMODELS = ("spin_curve", "develop", "dissolve", "sputter_response", "hard_bake")
 """The `MaterialType` submodels a step can require the presence of."""
 
 _SUBMODEL_WORDS = {
@@ -47,6 +47,7 @@ _SUBMODEL_WORDS = {
     "develop": "have a develop model",
     "dissolve": "dissolve in a solvent",
     "sputter_response": "have an angular sputter yield",
+    "hard_bake": "have a library-backed hard-bake transition",
 }
 
 
@@ -123,10 +124,10 @@ class MaterialFilter:
 
 
 def filtered_choices(
-    filter_: MaterialFilter | None,
-    library: "MaterialLibrary",
-    *,
-    keep: Sequence[str] = (),
+        filter_: MaterialFilter | None,
+        library: "MaterialLibrary",
+        *,
+        keep: Sequence[str] = (),
 ) -> tuple[tuple[MaterialId, ...], str]:
     """`(ids, reason)` for one dropdown — everything the widget needs.
 

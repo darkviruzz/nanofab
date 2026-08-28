@@ -49,6 +49,7 @@ from nanofab_v3.materials import (
     WET_ETCH_OXIDE,
     DevelopModel,
     DissolveModel,
+    HardBakeModel,
     MaterialFileError,
     MaterialLibrary,
     MaterialType,
@@ -206,6 +207,15 @@ _M6_MODEL_ADDITIONS: dict[str, dict] = {
 }
 """Everything else M6 added to a migrated entry — one spin curve (E17, §3.1)."""
 
+_M12_MODEL_ADDITIONS: dict[str, dict] = {
+    "resist": {
+        "hard_bake": HardBakeModel(
+            target=HARD_RESIST, activation_temperature=150.0
+        )
+    },
+}
+"""E31: the hard-bake target and threshold belong to the source material."""
+
 _M8_RATE_ADDITIONS: dict[str, dict[str, float]] = {
     "alumina": {ICP_FLUORINE: 0.02},
 }
@@ -245,6 +255,7 @@ def _expected() -> MaterialLibrary:
                     **_M11_RATE_CHANGES.get(str(entry.material_id), {}),
                 },
                 **_M6_MODEL_ADDITIONS.get(str(entry.material_id), {}),
+                **_M12_MODEL_ADDITIONS.get(str(entry.material_id), {}),
             )
             for entry in _PRE_MIGRATION
         )
@@ -648,9 +659,8 @@ def test_material_inheritance_cycles_are_refused(tmp_path: Path) -> None:
 def test_the_spin_coat_offers_no_metals_and_says_what_it_filtered_by():
     """The DoD's sentence, at the level below the widget.
 
-    `resist.spin_coat` is *ideal*: it reads no spin curve, so no amount of
-    library data can rule chromium out — only E21's substance class can, which is
-    why E22 has two filter sources rather than one.
+    The didactic step requires both a resist tag and a measured spin curve. The
+    ideal sibling consults only the substance tag.
     """
     from nanofab_v3.materials.selection import filtered_choices
     from nanofab_v3.processes.registry import builtin_registry
@@ -663,7 +673,7 @@ def test_the_spin_coat_offers_no_metals_and_says_what_it_filtered_by():
     offered, why = filtered_choices(spec.material, didactic_library())
     assert "chrome" not in offered and "metal" not in offered
     assert "resist" in offered
-    assert "resist" in why and why.startswith("showing ")
+    assert "resist" in why and "spin curve" in why and why.startswith("showing ")
 
 
 def test_the_target_of_an_etch_is_never_filtered_because_it_is_never_chosen():

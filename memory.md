@@ -1808,3 +1808,57 @@ Known limitation:
 - The PyInstaller onedir artifact was not rebuilt for this internal milestone
   commit; the source-level packaged DoD path is green, while the last real-folder
   artifact check remains M10's.
+
+## Update 2026-08-28 (v2 M12: wafer uniformity, spin levelling and bake contracts)
+
+What changed:
+- Completed roadmap M12/E31/E32/E34 and recorded E41 before its implementation.
+  Didactic deposition and etch steps now expose process-class
+  `uniformity_percent` defaults. The execution seam converts wafer radius to a
+  local scalar rate while keeping coordinates out of the geometry kernels; the
+  ordinary UI fan samples five distinct radii through 150 mm.
+- Split spin coat into `resist.spin_coat_ideal` (typed thickness, legacy perfect
+  plane) and `resist.spin_coat` (library spin curve, no thickness override). The
+  didactic path uses E41's conservative fourth-order DCT levelling, restores film
+  volume, respects top reachability, preserves sealed cavities and takes the old
+  path bit-for-bit for a flat cavity-free surface. Added the shipped
+  `05_spin_leveling.json` grating demo.
+- Replaced the registered generic anneal with `bake.soft`,
+  `bake.post_exposure` and `bake.hard`. Soft bake preserves material fields; PEB
+  diffuses and retains dose while preserving its integral; hard bake alone swaps
+  material identity, with target and activation threshold supplied by the new
+  library `HardBakeModel`. The shipped resist's target is
+  `resist_hardbaked` at the explicitly didactic 150 C threshold.
+- Updated typed recipes to the ideal spin id, added the M12 contract tests and
+  documentation correction §28, and bumped the version to `0.5.0.dev0`.
+
+Why it changed:
+- M12's DoD requires visible position-dependent results without leaking wafer
+  coordinates into solvers, an honest ideal/didactic spin boundary with a
+  defensible topography model, and three thermal steps whose different latent-
+  image/material semantics cannot be confused by one generic name.
+
+What implementation measured:
+- A 20 nm evaporation with 20 % edge loss produces 20, 19.75, 19, 17.75 and
+  16 nm at radii 0, 37.5, 75, 112.5 and 150 mm.
+- Final state: **687 tests**, 0 skipped; **32** registered steps; **12**
+  materials; **5** demos; fingerprint `35fbb1b172cb`.
+
+Validation:
+- `.venv/Scripts/python.exe -m compileall nanofab_v3 tests`.
+- `.venv/Scripts/python.exe -m pytest` — **687 passed** in 202.61 s, 0 skipped.
+- Source `python -m nanofab_v3 --selftest` — 7/7 in 5.1 s.
+- Fresh `pyinstaller --noconfirm nanofab_v3.spec` onedir build and
+  `dist/nanofab_v3/nanofab_v3.exe --selftest` — 7/7 in 7.1 s; the folder contains
+  `nanofab_v3.exe`, `bin/`, `data/materials/`, `data/demos/` and `settings.ini`.
+
+Known boundaries:
+- No additional `ui_backups/` snapshot was created, by explicit user direction;
+  the committed M11 state remains the rollback point.
+- E41 deliberately does not model dewetting; that requires surface-energy or
+  contact-angle data the material library does not yet contain.
+- Spin time is recorded but does not alter the speed-only measured curve, and
+  PEB diffusion length is explicit because no calibrated temperature/time
+  diffusion kinetics exist in the library.
+- Uniformity is the fixed quadratic teaching profile for a 300 mm tool; the
+  class defaults are not calibrated machine data.

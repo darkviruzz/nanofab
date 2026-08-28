@@ -17,10 +17,10 @@ tiers is either complete or not runnable, and never silently wrong.
 
 **Where a resist's numbers live** is settled the same way in both directions
 (roadmap E13, E17): on the *material*. The develop step reads tone and clearing
-dose from the resist's `DevelopModel`, and the spin coat reads its thickness from
-the resist's `SpinCurve` at the speed the operator set. Both keep the typed value
-as an **override** rather than removing it, because "I know this resist spins to
-110 nm on our tool" is a legitimate thing to say — what ends is having to say it.
+dose from the resist's `DevelopModel`, and the didactic spin coat reads its
+thickness from the resist's `SpinCurve` at the speed the operator set. A separate
+ideal spin coat accepts a typed thickness, so a recipe never silently overrides
+library data while claiming to exercise it.
 
 The **exposure patterns** are constructors (plan §4.1): sampled onto the grid
 once, at exposure time, and then forgotten. `windows` and `grating` below return
@@ -34,6 +34,7 @@ import math
 from typing import Sequence
 
 import numpy as np
+from scipy import fft as sp_fft
 from scipy import ndimage
 
 from nanofab_v3.kernel import constructors as ctor
@@ -71,7 +72,7 @@ DOSE = FieldSpec(
 
 
 def windows(
-    grid: Grid, spans: Sequence[tuple[float, float]], *, axis: str | int = -1
+        grid: Grid, spans: Sequence[tuple[float, float]], *, axis: str | int = -1
 ) -> np.ndarray:
     """Signed-distance field of a set of open stripes along one lateral axis.
 
@@ -97,12 +98,12 @@ def windows(
 
 
 def grating(
-    grid: Grid,
-    *,
-    period: float,
-    duty: float = 0.5,
-    phase: float = 0.0,
-    axis: str | int = -1,
+        grid: Grid,
+        *,
+        period: float,
+        duty: float = 0.5,
+        phase: float = 0.0,
+        axis: str | int = -1,
 ) -> np.ndarray:
     """Signed-distance field of a periodic line/space pattern (plan §4.1, §6).
 
@@ -132,11 +133,11 @@ def grating(
 
 
 def spin_coat(
-    structure: Structure,
-    material: MaterialId,
-    *,
-    thickness: float,
-    level: float | None = None,
+        structure: Structure,
+        material: MaterialId,
+        *,
+        thickness: float,
+        level: float | None = None,
 ) -> Structure:
     """Fill everything below a level with `material` — a planarising coat (plan §6).
 
@@ -166,11 +167,127 @@ def spin_coat(
     return ctor.add_material(structure, material, ctor.box(grid, [None] * grid.ndim, upper))
 
 
+def _top_surface(structure: Structure) -> np.ndarray:
+    """Sub-cell top height per lateral column; E41 deliberately needs a height function."""
+    grid = structure.grid
+    solid = structure.solid_mask
+    if not solid.any():
+        raise ValueError("spin_coat needs something to coat")
+
+    top = np.empty(grid.shape[1:], dtype=np.float64)
+    vertical = grid.coordinates(0)
+    for lateral in np.ndindex(grid.shape[1:]):
+        column = solid[(slice(None),) + lateral]
+        occupied = np.flatnonzero(column)
+        if occupied.size == 0:
+            raise ValueError(
+                "didactic spin coating needs height-function topography: every lateral "
+                "column must contain a surface"
+            )
+        index = int(occupied[-1])
+        # A signed-distance sample says how far this point is below its zero
+        # crossing. This retains sub-cell surface height instead of snapping to
+        # the last occupied cell.
+        top[lateral] = vertical[index] - float(
+            structure.solid_phi[(index,) + lateral]
+        )
+    return top
+
+
+def _levelled_top(surface: np.ndarray, thickness: float, spacing: float) -> np.ndarray:
+    """Conservative frozen-time fourth-order leveling for E41."""
+    surface = np.asarray(surface, dtype=np.float64)
+    if surface.ndim == 0 or float(np.ptp(surface)) == 0.0:
+        return surface + thickness
+
+    spectrum = sp_fft.dctn(surface, type=2, norm="ortho")
+    wave_number_sq = np.zeros(surface.shape, dtype=np.float64)
+    for axis, size in enumerate(surface.shape):
+        frequency = np.pi * np.arange(size, dtype=np.float64) / (size * spacing)
+        shape = [1] * surface.ndim
+        shape[axis] = size
+        wave_number_sq += frequency.reshape(shape) ** 2
+
+    # Linearised capillary leveling damps a mode as exp(-C k^4 t). E41
+    # freezes the one physically interpretable length, C*t = thickness^4:
+    # long waves remain, features narrower than the film level strongly.
+    transfer = np.exp(-np.square(wave_number_sq * thickness ** 2))
+    smoothed = sp_fft.idctn(spectrum * transfer, type=2, norm="ortho")
+    base = smoothed + thickness
+
+    # Peaks cannot receive negative film. Moving the filtered profile vertically
+    # after clipping finds the unique non-negative coat whose mean thickness is
+    # exactly nominal, hence conserves cross-sectional volume.
+    difference = surface - base
+    low = float(np.min(difference) - thickness)
+    high = float(np.max(difference) + thickness)
+    for _ in range(64):
+        middle = 0.5 * (low + high)
+        mean_thickness = float(np.mean(np.maximum(surface, base + middle) - surface))
+        if mean_thickness < thickness:
+            low = middle
+        else:
+            high = middle
+    return np.maximum(surface, base + 0.5 * (low + high))
+
+
+def levelled_spin_coat(
+        structure: Structure,
+        material: MaterialId,
+        *,
+        thickness: float,
+) -> Structure:
+    """Spin coat with conservative feature-scale leveling (roadmap E41).
+
+    The model is intentionally narrower than a thin-film solver: it applies the
+    fourth-order mode dependence once, at a frozen lateral length equal to the
+    nominal film thickness. It has no fitted time or surface-energy knob and does
+    not claim to predict dewetting. Only top-reachable empty space may be filled,
+    so a sealed cavity stays empty.
+
+    A flat surface returns the legacy ideal constructor bit-for-bit.
+    """
+    thickness = float(thickness)
+    if not math.isfinite(thickness) or thickness <= 0.0:
+        raise ValueError(f"thickness must be positive and finite, got {thickness}")
+    surface = _top_surface(structure)
+    if float(np.ptp(surface)) == 0.0:
+        vertical_shape = (structure.grid.shape[0],) + (1,) * (
+                structure.grid.ndim - 1
+        )
+        vertical = structure.grid.coordinates(0).reshape(vertical_shape)
+        reachable = predicates.reachable_empty(
+            structure.grid, structure.solid_phi
+        )
+        sealed_below_top = (
+                (vertical < float(surface.flat[0]))
+                & ~structure.solid_mask
+                & ~reachable
+        )
+        if not sealed_below_top.any():
+            return spin_coat(structure, material, thickness=thickness)
+
+    grid = structure.grid
+    top = _levelled_top(surface, thickness, grid.spacing)
+    vertical_shape = (grid.shape[0],) + (1,) * (grid.ndim - 1)
+    vertical = grid.coordinates(0).reshape(vertical_shape)
+    coat = (vertical - top.reshape((1,) + top.shape)).astype(PHI_DTYPE)
+
+    reachable = predicates.reachable_empty(grid, structure.solid_phi)
+    collar = ndimage.binary_dilation(
+        reachable, structure=ndimage.generate_binary_structure(grid.ndim, 1)
+    )
+    accessible = regions.signed_distance_of(grid, collar)
+    return ctor.add_material(
+        structure, material, csg.intersection(coat, accessible)
+    )
+
+
 # -- exposure -----------------------------------------------------------------
 
 
 def expose_ideal(
-    structure: Structure, material: MaterialId, pattern: np.ndarray
+        structure: Structure, material: MaterialId, pattern: np.ndarray
 ) -> Structure:
     """Write the `exposed` field from a pattern — the ideal tier (plan §3.3).
 
@@ -197,14 +314,14 @@ def expose_ideal(
 
 
 def expose_dose(
-    structure: Structure,
-    material: MaterialId,
-    pattern: np.ndarray,
-    *,
-    dose: float,
-    blur: float = 0.0,
-    absorption: float | None = None,
-    library=None,
+        structure: Structure,
+        material: MaterialId,
+        pattern: np.ndarray,
+        *,
+        dose: float,
+        blur: float = 0.0,
+        absorption: float | None = None,
+        library=None,
 ) -> Structure:
     """Write the `dose` field: pattern * blur, with a Beer-Lambert depth term (plan §6).
 
@@ -247,7 +364,7 @@ def expose_dose(
 
 
 def threshold_dose(
-    structure: Structure, material: MaterialId, *, threshold: float
+        structure: Structure, material: MaterialId, *, threshold: float
 ) -> Structure:
     """The **downgrade adapter** of plan §5.3: `dose` -> `exposed`, information lost.
 
@@ -294,11 +411,11 @@ def developed_tone(library, material: MaterialId) -> str:
 
 
 def develop_ideal(
-    structure: Structure,
-    material: MaterialId,
-    *,
-    tone: str = "positive",
-    faces: tuple[tuple[str, str], ...] | None = None,
+        structure: Structure,
+        material: MaterialId,
+        *,
+        tone: str = "positive",
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> Structure:
     """Remove `resist & exposed` where the developer reaches it (plan §6).
 
@@ -334,13 +451,13 @@ def develop_ideal(
 
 
 def develop_at_rate(
-    structure: Structure,
-    material: MaterialId,
-    *,
-    duration: float,
-    library,
-    faces: tuple[tuple[str, str], ...] | None = None,
-    policy=None,
+        structure: Structure,
+        material: MaterialId,
+        *,
+        duration: float,
+        library,
+        faces: tuple[tuple[str, str], ...] | None = None,
+        policy=None,
 ) -> motion.MotionOutcome:
     """Advect the front through the resist at `develop_rate(dose)` (plan §6).
 
@@ -489,21 +606,21 @@ def spun_thickness(library, material: MaterialId, speed: float) -> tuple[float, 
     The seam between the step and the material's `SpinCurve`, and the place the
     two failures a spin coat can have get their sentences: a material the library
     does not know, and a material nobody measured a curve for. Both end in the
-    same instruction — give it one, or type a thickness — because both are the
-    same thing, which is that nothing on record says how thick this spins.
+    same instruction — add a curve or use the explicitly ideal step — because
+    both mean that nothing on record says how thick this spins.
     """
     entry = library.get(material)
     if entry is None:
         raise ValueError(
             f"no MaterialType {material!r} in this library, so a spin speed does not "
-            f"determine a thickness; add data/materials/{material}.json, or give this "
-            "step a thickness"
+            f"determine a thickness; add data/materials/{material}.json, or use "
+            "resist.spin_coat_ideal"
         )
     if entry.spin_curve is None:
         raise ValueError(
             f"material {material!r} has no spin curve, so a spin speed does not "
             f"determine a thickness; measure one into data/materials/{material}.json "
-            "(backlog B11), or give this step a thickness"
+            "(backlog B11), or use resist.spin_coat_ideal"
         )
     return entry.spin_thickness(speed), entry.spin_curve.clamps(speed)
 
@@ -511,29 +628,37 @@ def spun_thickness(library, material: MaterialId, speed: float) -> tuple[float, 
 def _run_spin_coat(ctx: StepContext) -> StepResult:
     material = MaterialId(str(ctx["material"]))
     speed = float(ctx["spin_speed"])
-    override = float(ctx["thickness"])
     notes: list[str] = []
-    if override > 0.0:
-        thickness = override
-        notes.append(f"thickness {thickness:.1f} nm (typed, overriding the spin curve)")
-    else:
-        thickness, clamped = spun_thickness(ctx.library, material, speed)
-        notes.append(f"{thickness:.1f} nm at {speed:.0f} rpm (from the resist's spin curve)")
-        if clamped:
-            low, high = ctx.library[material].spin_curve.speed_range
-            notes.append(
-                f"{speed:.0f} rpm is outside the measured {low:.0f}-{high:.0f} rpm; the "
-                "curve was clamped, not extrapolated"
-            )
-    structure = spin_coat(ctx.structure, material, thickness=thickness)
+    thickness, clamped = spun_thickness(ctx.library, material, speed)
+    notes.append(f"{thickness:.1f} nm at {speed:.0f} rpm (from the resist's spin curve)")
+    if clamped:
+        low, high = ctx.library[material].spin_curve.speed_range
+        notes.append(
+            f"{speed:.0f} rpm is outside the measured {low:.0f}-{high:.0f} rpm; the "
+            "curve was clamped, not extrapolated"
+        )
+    structure = levelled_spin_coat(ctx.structure, material, thickness=thickness)
     return StepResult(
         structure=structure,
         provides=frozenset({capability.of_material(material)}),
         measurements={
             "thickness": Quantity(thickness, "nm"),
             "spin_speed": Quantity(speed, "rpm"),
+            "leveling_length": Quantity(thickness, "nm"),
         },
-        logs=(f"spin-coated {material}: " + "; ".join(notes),),
+        logs=(f"spin-coated {material} (didactic leveling): " + "; ".join(notes),),
+    )
+
+
+def _run_spin_coat_ideal(ctx: StepContext) -> StepResult:
+    material = MaterialId(str(ctx["material"]))
+    thickness = float(ctx["thickness"])
+    structure = spin_coat(ctx.structure, material, thickness=thickness)
+    return StepResult(
+        structure=structure,
+        provides=frozenset({capability.of_material(material)}),
+        measurements={"thickness": Quantity(thickness, "nm")},
+        logs=(f"spin-coated {material}: {thickness:.1f} nm (ideal typed thickness)",),
     )
 
 
@@ -565,8 +690,8 @@ def _run_expose_ideal(ctx: StepContext) -> StepResult:
         provides=frozenset({capability.of_field(material, EXPOSED.name)}),
         field_specs={EXPOSED.name: EXPOSED},
         logs=(
-            f"exposed {material} through a {ctx['pattern']} pattern (ideal)",
-        ) + _cumulative_note(ctx.structure, material, EXPOSED.name),
+                 f"exposed {material} through a {ctx['pattern']} pattern (ideal)",
+             ) + _cumulative_note(ctx.structure, material, EXPOSED.name),
     )
 
 
@@ -587,8 +712,8 @@ def _run_expose_dose(ctx: StepContext) -> StepResult:
         field_specs={DOSE.name: DOSE},
         measurements={"dose": Quantity(ctx["dose"], "mJ/cm^2")},
         logs=(
-            f"exposed {material} at {ctx['dose']:.0f} mJ/cm^2, blur {ctx['blur']:.1f} nm",
-        ) + _cumulative_note(ctx.structure, material, DOSE.name),
+                 f"exposed {material} at {ctx['dose']:.0f} mJ/cm^2, blur {ctx['blur']:.1f} nm",
+             ) + _cumulative_note(ctx.structure, material, DOSE.name),
     )
 
 
@@ -644,6 +769,16 @@ _MATERIAL = ParamSpec(
     material=MaterialFilter(tags=("resist",), what="resists"),
 )
 
+_SPINNABLE = ParamSpec(
+    "material",
+    str,
+    default=str(RESIST),
+    description="Resist material with a measured spin curve",
+    material=MaterialFilter(
+        submodel="spin_curve", tags=("resist",), what="spinnable resists"
+    ),
+)
+
 _DEVELOPABLE = ParamSpec(
     "material",
     str,
@@ -654,12 +789,40 @@ _DEVELOPABLE = ParamSpec(
     material=MaterialFilter(submodel="develop", what="resists a developer attacks"),
 )
 
-SPIN_COAT = FunctionStep(
-    step_id="resist.spin_coat",
-    display_name="Spin-coat resist",
+SPIN_COAT_IDEAL = FunctionStep(
+    step_id="resist.spin_coat_ideal",
+    display_name="Spin-coat resist (ideal)",
     fidelity=IDEAL,
     schema=(
         _MATERIAL,
+        ParamSpec(
+            "thickness",
+            float,
+            unit="nm",
+            default=82.0,
+            minimum=0.0,
+            description="Typed planar film thickness above the highest topography",
+        ),
+    ),
+    required=frozenset(),
+    provided=frozenset(),
+    run_function=_run_spin_coat_ideal,
+    description=(
+        "The exact idealisation: type a thickness and receive a perfectly flat resist top. "
+        "No spin curve or feature-scale flow is consulted."
+        "\n\n"
+        "Use `resist.spin_coat` when speed and the shape underneath should determine the result."
+        "\n\n"
+        "Needs: something to coat."
+    ),
+)
+
+SPIN_COAT = FunctionStep(
+    step_id="resist.spin_coat",
+    display_name="Spin-coat resist",
+    fidelity=DIDACTIC,
+    schema=(
+        _SPINNABLE,
         ParamSpec(
             "spin_speed",
             float,
@@ -671,18 +834,6 @@ SPIN_COAT = FunctionStep(
                 "Spin speed. The thickness follows from the resist's own measured spin "
                 "curve; outside the measured range the curve is clamped rather than "
                 "extrapolated, and the run log says so."
-            ),
-        ),
-        ParamSpec(
-            "thickness",
-            float,
-            unit="nm",
-            default=0.0,
-            minimum=0.0,
-            description=(
-                "Override: film thickness above the highest topography. 0 means 'derive "
-                "it from spin_speed', which is the normal case — the thickness belongs to "
-                "the resist, not to this step (roadmap E17)."
             ),
         ),
         ParamSpec(
@@ -703,18 +854,18 @@ SPIN_COAT = FunctionStep(
     provided=frozenset(),
     run_function=_run_spin_coat,
     description=(
-        "Coats the sample with resist. The film is planarising — thick in a trench, thin over a "
-        "bump, and flat on top — which is what lithography depends on and what a spin coat "
-        "really does."
+        "Coats the sample with resist using conservative feature-scale leveling: narrow "
+        "topography levels more strongly than broad topography, peaks may receive a thin film, "
+        "and the deposited volume stays equal to the nominal film."
         "\n\n"
         "`spin_speed` decides the thickness, through the resist's own measured spin curve: at "
-        "3000 rpm the generic resist gives 82 nm. `thickness` overrides that when you know "
-        "better, and 0 means 'use the curve'. `spin_time` is recorded and does NOT enter the "
-        "thickness — the curve was measured against speed alone, and inventing a time "
-        "dependence would be inventing data."
+        "3000 rpm the generic resist gives 82 nm. There is deliberately no thickness override; "
+        "the separate ideal step accepts a typed thickness. `spin_time` is recorded and does "
+        "NOT enter the thickness because the measured curve parameterises speed alone."
         "\n\n"
         "Outside the measured 1000-5000 rpm the curve is clamped rather than extrapolated, and "
-        "the run log says so."
+        "the run log says so. The leveling model has no fitted time or surface-energy knob and "
+        "does not claim to predict dewetting."
         "\n\n"
         "Needs: something to coat."
     ),

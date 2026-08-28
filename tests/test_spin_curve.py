@@ -22,10 +22,15 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
+from nanofab_v3.kernel import constructors as ctor
+from nanofab_v3.kernel import csg, measures
 from nanofab_v3.materials import (
+    CHROME,
     RESIST,
+    SILICON,
     MaterialLibrary,
     MaterialType,
     SpinCurve,
@@ -33,7 +38,14 @@ from nanofab_v3.materials import (
 )
 from nanofab_v3.processes import ParameterError, builtin_registry, run_step
 from nanofab_v3.processes import substrate
-from nanofab_v3.processes.lithography import spun_thickness
+from nanofab_v3.model.structure import Structure
+from nanofab_v3.processes.lithography import (
+    _levelled_top,
+    _top_surface,
+    levelled_spin_coat,
+    spin_coat,
+    spun_thickness,
+)
 
 MEASURED = ((1000.0, 150.0), (2000.0, 99.8), (3000.0, 82.0), (4000.0, 74.0), (5000.0, 72.0))
 """The five points of roadmap §3.1, as the table gives them."""
@@ -125,7 +137,7 @@ def test_a_curve_that_cannot_be_read_as_pairs_is_refused() -> None:
 
 
 def test_a_material_with_no_curve_refuses_rather_than_guessing(
-    library: MaterialLibrary,
+        library: MaterialLibrary,
 ) -> None:
     """B11's rule: an invented curve is worse than none, because only none is visible."""
     with pytest.raises(ValueError, match="no spin curve"):
@@ -137,7 +149,7 @@ def test_a_material_with_no_curve_refuses_rather_than_guessing(
 
 
 def test_the_curve_belongs_to_the_generic_resist_and_says_so(
-    library: MaterialLibrary,
+        library: MaterialLibrary,
 ) -> None:
     """§3.1's first open point: the table says "photo resist" and names no product."""
     assert library[RESIST].spin_curve is not None
@@ -151,7 +163,7 @@ def test_the_curve_belongs_to_the_generic_resist_and_says_so(
 
 
 def test_a_spin_coat_at_3000_rpm_is_82_nm_without_anybody_typing_a_thickness(
-    wafer, library: MaterialLibrary
+        wafer, library: MaterialLibrary
 ) -> None:
     """M6's DoD sentence, as the test it is: no thickness in, 82 nm out."""
     outcome = run_step(builtin_registry()["resist.spin_coat"], wafer, {}, library=library)
@@ -172,25 +184,26 @@ def test_the_speed_moves_the_thickness(wafer, library: MaterialLibrary) -> None:
     assert fast.measurements["thickness"].value == 72.0
 
 
-def test_a_typed_thickness_is_still_an_override(wafer, library: MaterialLibrary) -> None:
-    """E17, the same shape as E13's tone: the typed value wins and is not removed.
+def test_typed_thickness_belongs_only_to_the_ideal_sibling(
+        wafer, library: MaterialLibrary
+) -> None:
+    registry = builtin_registry()
+    didactic = {spec.name for spec in registry["resist.spin_coat"].parameter_schema()}
+    ideal = {spec.name for spec in registry["resist.spin_coat_ideal"].parameter_schema()}
 
-    "I know this resist spins to 110 nm on our tool" stays sayable. What ends is
-    having to say it.
-    """
+    assert "thickness" not in didactic
+    assert ideal == {"material", "thickness"}
     outcome = run_step(
-        builtin_registry()["resist.spin_coat"],
+        registry["resist.spin_coat_ideal"],
         wafer,
-        {"spin_speed": 3000.0, "thickness": 110.0},
+        {"material": RESIST, "thickness": 110.0},
         library=library,
     )
-
     assert outcome.measurements["thickness"].value == 110.0
-    assert any("overriding the spin curve" in line for line in outcome.logs)
 
 
 def test_a_speed_outside_the_measured_range_is_reported_in_the_run_log(
-    wafer, library: MaterialLibrary
+        wafer, library: MaterialLibrary
 ) -> None:
     """The clamp is only honest if somebody is told about it."""
     outcome = run_step(
@@ -202,7 +215,7 @@ def test_a_speed_outside_the_measured_range_is_reported_in_the_run_log(
 
 
 def test_the_spin_time_is_recorded_and_does_not_touch_the_thickness(
-    wafer, library: MaterialLibrary
+        wafer, library: MaterialLibrary
 ) -> None:
     """§3.1's second open point, as a step contract rather than a silent convention.
 
@@ -223,11 +236,11 @@ def test_the_spin_time_is_recorded_and_does_not_touch_the_thickness(
     assert "does NOT enter the thickness" in help_text
 
 
-def test_a_thickness_is_no_longer_a_required_parameter() -> None:
-    """The DoD's "ohne dass jemand eine Dicke eintippt", at the schema."""
+def test_the_didactic_schema_has_speed_and_no_thickness() -> None:
+    """M12: a curve-driven step cannot silently become a typed ideal step."""
     schema = {spec.name: spec for spec in builtin_registry()["resist.spin_coat"].parameter_schema()}
 
-    assert not schema["thickness"].required
+    assert "thickness" not in schema
     assert not schema["spin_speed"].required
     with pytest.raises(ParameterError):
         schema["spin_speed"].validate(-5.0)
@@ -248,3 +261,68 @@ def test_the_coated_film_really_is_that_thick(wafer, library: MaterialLibrary) -
     )
 
     assert top == pytest.approx(40.0 + 82.0, abs=1.0)
+
+
+# -- M12 / E41: feature-scale planarisation ----------------------------------
+
+
+def test_flat_leveling_is_bit_identical_to_the_ideal_constructor(wafer) -> None:
+    ideal = spin_coat(wafer, RESIST, thickness=82.0)
+    levelled = levelled_spin_coat(wafer, RESIST, thickness=82.0)
+
+    assert np.array_equal(levelled.phi_of(RESIST), ideal.phi_of(RESIST))
+
+
+def test_fourth_order_leveling_conserves_volume_and_depends_on_feature_width() -> None:
+    narrow = np.zeros(201)
+    narrow[95:106] = 40.0
+    broad = np.zeros(201)
+    broad[60:141] = 40.0
+
+    narrow_top = _levelled_top(narrow, 20.0, 2.0)
+    broad_top = _levelled_top(broad, 20.0, 2.0)
+    narrow_film = narrow_top - narrow
+    broad_film = broad_top - broad
+
+    assert float(narrow_film.mean()) == pytest.approx(20.0, abs=1e-10)
+    assert float(broad_film.mean()) == pytest.approx(20.0, abs=1e-10)
+    assert np.all(narrow_film >= 0.0) and np.all(broad_film >= 0.0)
+    assert float(narrow_film.min()) < float(broad_film.min())
+
+
+def test_spin_coating_a_grating_levels_without_losing_film_volume() -> None:
+    grid = substrate.cross_section_grid(
+        width=400.0, thickness=40.0, headroom=180.0, spacing=2.0
+    )
+    wafer = substrate.select_substrate(grid, SILICON, surface=40.0)
+    topography = wafer
+    for left in (40.0, 140.0, 240.0, 340.0):
+        ridge = ctor.box(grid, lower=(40.0, left), upper=(80.0, left + 40.0))
+        topography = ctor.add_material(topography, CHROME, ridge)
+
+    reference = levelled_spin_coat(wafer, RESIST, thickness=40.0)
+    coated = levelled_spin_coat(topography, RESIST, thickness=40.0)
+    before_relief = float(np.ptp(_top_surface(topography)))
+    after_relief = float(np.ptp(_top_surface(coated)))
+    reference_volume = measures.enclosed_measure(grid, reference.phi_of(RESIST))
+    coated_volume = measures.enclosed_measure(grid, coated.phi_of(RESIST))
+
+    assert 0.0 < after_relief < before_relief
+    assert coated_volume == pytest.approx(reference_volume, rel=0.05)
+
+
+def test_didactic_spin_coat_does_not_fill_a_sealed_cavity() -> None:
+    grid = substrate.cross_section_grid(
+        width=240.0, thickness=40.0, headroom=120.0, spacing=2.0
+    )
+    wafer = substrate.select_substrate(grid, SILICON, surface=40.0)
+    cavity = ctor.box(grid, lower=(10.0, 90.0), upper=(30.0, 150.0))
+    holed = Structure(
+        grid,
+        {SILICON: csg.difference(wafer.phi_of(SILICON), cavity)},
+    )
+
+    coated = levelled_spin_coat(holed, RESIST, thickness=40.0)
+    y = int(round((20.0 - grid.origin[0]) / grid.spacing))
+    x = int(round((120.0 - grid.origin[1]) / grid.spacing))
+    assert not coated.inside(RESIST)[y, x]

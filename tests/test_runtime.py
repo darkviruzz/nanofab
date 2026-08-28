@@ -94,7 +94,7 @@ def litho(grid: Grid) -> Recipe:
         recipe_id="litho",
         steps=(
             RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
-            RecipeStep("resist.spin_coat", {"material": RESIST, "thickness": 60.0}),
+            RecipeStep("resist.spin_coat_ideal", {"material": RESIST, "thickness": 60.0}),
             RecipeStep(
                 "litho.expose_ideal", {"material": RESIST, "center": 100.0, "width": 60.0}
             ),
@@ -118,7 +118,7 @@ def graded(grid: Grid) -> Recipe:
         steps=(
             RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
             RecipeStep(
-                "resist.spin_coat",
+                "resist.spin_coat_ideal",
                 {
                     "material": RESIST,
                     "thickness": RadialProfile(radii=(0.0, 60.0), values=(60.0, 40.0)),
@@ -153,7 +153,7 @@ def _same_sample(a: RevisionChain, b: RevisionChain) -> bool:
             return False
         for key in first.structure.fields:
             if not np.array_equal(
-                np.asarray(first.structure.field(key)), np.asarray(second.structure.field(key))
+                    np.asarray(first.structure.field(key)), np.asarray(second.structure.field(key))
             ):
                 return False
     return True
@@ -169,7 +169,7 @@ def test_a_revision_wraps_the_outcome_and_adds_where_it_sits(litho, registry, li
     assert [r.index for r in chain.summaries] == [0, 1, 2, 3]
     assert chain[0].parent is None
     assert [chain[i].parent for i in range(1, 4)] == [0, 1, 2]
-    assert chain[1].history.step_id == "resist.spin_coat"
+    assert chain[1].history.step_id == "resist.spin_coat_ideal"
     assert chain[1].history.recipe_id == "litho"
     assert chain[1].history.position == CENTER
     assert chain[1].history.started_at
@@ -216,7 +216,7 @@ def test_a_chain_is_append_only(litho, registry, library) -> None:
 
 
 def test_rewinding_drops_what_no_longer_describes_what_happened(
-    litho, registry, library
+        litho, registry, library
 ) -> None:
     """The one deliberate truncation: re-running from the middle discards the tail."""
     chain = run_recipe(litho, registry=registry, library=library)
@@ -224,7 +224,7 @@ def test_rewinding_drops_what_no_longer_describes_what_happened(
     chain.rewind(2)
 
     assert len(chain) == 2
-    assert [entry.step_id for entry in chain] == ["substrate.select", "resist.spin_coat"]
+    assert [entry.step_id for entry in chain] == ["substrate.select", "resist.spin_coat_ideal"]
     with pytest.raises(IndexError):
         chain[2]
 
@@ -289,7 +289,7 @@ def test_a_failing_step_stops_a_strict_run(grid, registry, library) -> None:
         recipe_id="too-thick",
         steps=(
             RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
-            RecipeStep("resist.spin_coat", {"material": RESIST, "thickness": 400.0}),
+            RecipeStep("resist.spin_coat_ideal", {"material": RESIST, "thickness": 400.0}),
         ),
     )
 
@@ -390,8 +390,8 @@ def test_the_recipe_hash_sees_a_changed_parameter(litho) -> None:
         grid=litho.grid,
         recipe_id=litho.recipe_id,
         steps=litho.steps[:1]
-        + (RecipeStep("resist.spin_coat", {"material": RESIST, "thickness": 61.0}),)
-        + litho.steps[2:],
+              + (RecipeStep("resist.spin_coat_ideal", {"material": RESIST, "thickness": 61.0}),)
+              + litho.steps[2:],
     )
 
     assert recipe_hash(litho) == recipe_hash(litho)
@@ -405,31 +405,31 @@ def test_the_recipe_hash_sees_a_changed_wafer_profile(graded) -> None:
         grid=graded.grid,
         recipe_id=graded.recipe_id,
         steps=(
-            graded.steps[0],
-            RecipeStep(
-                "resist.spin_coat",
-                {
-                    "material": RESIST,
-                    "thickness": RadialProfile(radii=(0.0, 60.0), values=(60.0, 40.0)),
-                },
-            ),
-        )
-        + graded.steps[2:],
+                  graded.steps[0],
+                  RecipeStep(
+                      "resist.spin_coat_ideal",
+                      {
+                          "material": RESIST,
+                          "thickness": RadialProfile(radii=(0.0, 60.0), values=(60.0, 40.0)),
+                      },
+                  ),
+              )
+              + graded.steps[2:],
     )
     steeper = Recipe(
         grid=graded.grid,
         recipe_id=graded.recipe_id,
         steps=(
-            graded.steps[0],
-            RecipeStep(
-                "resist.spin_coat",
-                {
-                    "material": RESIST,
-                    "thickness": RadialProfile(radii=(0.0, 60.0), values=(60.0, 30.0)),
-                },
-            ),
-        )
-        + graded.steps[2:],
+                  graded.steps[0],
+                  RecipeStep(
+                      "resist.spin_coat_ideal",
+                      {
+                          "material": RESIST,
+                          "thickness": RadialProfile(radii=(0.0, 60.0), values=(60.0, 30.0)),
+                      },
+                  ),
+              )
+              + graded.steps[2:],
     )
 
     assert recipe_hash(same) == recipe_hash(graded)
@@ -468,7 +468,7 @@ def test_the_digest_moves_when_the_contract_moves(registry) -> None:
     retuned = replace(
         original,
         schema=original.schema[:-1]
-        + (ParamSpec("divergence", float, unit="deg", default=0.0, maximum=60.0),),
+               + (ParamSpec("divergence", float, unit="deg", default=0.0, maximum=60.0),),
     )
     repromised = replace(original, provided=frozenset({"metal.deposited"}))
     redeclared = replace(original, fidelity=PHYSICAL)
@@ -525,8 +525,7 @@ def test_the_recipe_hash_sees_an_edited_step_only_with_a_registry(litho, registr
     """
     edited = ProcessRegistry()
     for step in registry:
-        if step.step_id == "resist.spin_coat":
-
+        if step.step_id == "resist.spin_coat_ideal":
             def _thicker(ctx, _original=step.run_function):  # pragma: no cover
                 return _original(ctx)
 
@@ -572,7 +571,7 @@ def test_replaying_the_same_position_reproduces_it(litho, registry, library) -> 
 
 
 def test_replay_at_a_new_position_equals_a_fresh_run_at_that_position(
-    graded, registry, library, tmp_path
+        graded, registry, library, tmp_path
 ) -> None:
     """ADR-0004's whole promise, and the one thing M4 cannot be right without.
 
@@ -607,7 +606,7 @@ def test_replay_at_a_new_position_equals_a_fresh_run_at_that_position(
 
 
 def test_a_stochastic_step_replays_per_position_and_not_across_them(
-    grid, registry, library, tmp_path
+        grid, registry, library, tmp_path
 ) -> None:
     """Plan §5.2's contract at the one place randomness enters the model.
 
@@ -678,7 +677,7 @@ def test_a_warm_cache_serves_the_sample_it_computed(litho, registry, library, tm
 
 
 def test_a_cache_from_another_recipe_is_not_consulted(
-    litho, graded, registry, library, tmp_path
+        litho, graded, registry, library, tmp_path
 ) -> None:
     """One directory, two recipes: the key keeps them apart, not the filesystem."""
     directory = tmp_path / "cache"
@@ -738,7 +737,7 @@ def test_each_position_owns_an_independent_chain(graded, registry, library) -> N
 
 
 def test_a_run_spills_into_the_cache_it_already_writes(
-    graded, registry, library, tmp_path
+        graded, registry, library, tmp_path
 ) -> None:
     """One directory, not two: what a chain drops is what a replay wants back."""
     cache = ReplayCache(tmp_path / "cache", recipe_hash(graded))
@@ -760,7 +759,7 @@ def test_a_run_spills_into_the_cache_it_already_writes(
 
 
 def test_what_a_step_produced_lands_on_the_revision_that_produced_it(
-    grid, registry, library
+        grid, registry, library
 ) -> None:
     """The wire M4 left open on purpose (memory.md 2026-08-26, risk 3).
 
@@ -799,7 +798,7 @@ def test_what_a_step_produced_lands_on_the_revision_that_produced_it(
 
 
 def test_a_caller_can_add_an_artifact_of_its_own_alongside_the_step_s(
-    grid, registry, library
+        grid, registry, library
 ) -> None:
     """The pre-M5 argument still works, and the two do not displace each other."""
     sink = MemoryArtifactSink()
@@ -887,7 +886,7 @@ def test_a_run_hands_its_sink_to_every_position(grid, registry, library, tmp_pat
 
 
 def test_an_artifact_reference_survives_the_save_load_round_trip(
-    grid, registry, library, tmp_path
+        grid, registry, library, tmp_path
 ) -> None:
     """A revision carries where its artifact is, never the artifact (docs §4.2.2)."""
     sink = DirectoryArtifactSink(tmp_path / "artifacts")

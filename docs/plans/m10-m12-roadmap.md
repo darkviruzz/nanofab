@@ -55,14 +55,16 @@ an. Alles unten ist Bibliotheksdatum, Prozessschema oder UI.
 | Ebene | Änderung | wo |
 | --- | --- | --- |
 | `MaterialType` | `tags: tuple[str, ...]` (Stoffklasse) | M10 |
-| `MaterialType` | `inherits: MaterialId \| None` | M11 |
+| Materialdatei | `inherits: MaterialId \| None` | M11 |
+| `MaterialType` | `hard_bake: HardBakeModel \| None` | M12 |
 | `MaterialType.rates` | eine Ionenätz-Spalte statt zwei | M11 |
 | `ParamSpec` | Marker „Default aus der Domain" (`0`) | M10 |
 | `FunctionStep` | Materialparameter deklariert sein Filterkriterium | M10 |
+| `StepContext` | aufgelöster skalarer `rate_scale` | M12 |
 | `Structure.metadata` | `substrate.roughness_nm` | M10 |
 | Prozessschema | `uniformity_percent`; `angle` fällt bei ICP weg | M11/M12 |
 
-## 2. Entscheidungen E19–E40
+## 2. Entscheidungen E19–E41
 
 **E19 — Ein Verzeichnis, und die Bibliothek genau einmal.** PyInstaller
 `--onedir`, Layout `nanofab.exe · bin/ · data/materials/ · data/demos/ ·
@@ -366,6 +368,36 @@ wo er real längst aufgerissen wäre. Bei t = 0.5 h sind es 44 nm, bei t = 0.75 
 79 nm. Die Formel ist unterhalb t ≈ 0.5 h nicht ungenau, sondern **qualitativ
 falsch**.
 
+**E41 — Spin-Coat ist ein konservativer eingefrorener
+Vierte‑Ordnung‑Filter, kein zweiter Dünnfilmsolver.** Die linearisierte
+Dünnfilmgleichung dämpft eine laterale Fouriermode mit `exp(−C·k⁴·τ)`; genau diese
+`k⁴`-Abhängigkeit ist der Teil, den sowohl Experimente an gestuften Polymerfilmen
+als auch numerische Thin-Film-Arbeiten tragen
+([McGraw et al.](https://pubmed.ncbi.nlm.nih.gov/23005996/),
+[Salez et al.](https://pubmed.ncbi.nlm.nih.gov/23138477/)). M12 nimmt deshalb die
+Höhenfunktion der obersten erreichbaren Oberfläche, transformiert sie mit
+Neumann-Randbedingung per DCT und dämpft jede Mode um
+`exp(−(|k|·ℓ)⁴)`. Eingefroren wird bei **`ℓ = Nenndicke`**: eine physikalisch
+lesbare Länge, kein neuer Fitregler. Damit hängt die Planarisierung von
+Merkmalsbreite/Dicke ab und bleibt bei breiten Strukturen unvollständig.
+
+Nach dem Filter wird die Oberfläche an der ursprünglichen Topographie geklippt
+(keine negative Filmdicke) und nur vertikal so verschoben, dass die mittlere
+Filmdicke wieder exakt der Nenndicke entspricht. Das erhält im Höhenmodell das
+Volumen; der Geometrietest hält die Abweichung des gesampelten Level-Sets unter
+5 %. Nur vom oberen Domainrand erreichbarer Leerraum plus ein Kontaktkragen darf
+Lack werden, also bleiben geschlossene Hohlräume leer. Eine ebene, hohlraumfreie
+Oberfläche nimmt bitgleich den alten Konstruktorpfad.
+
+Die Grenze ist Teil der Entscheidung: Ohne Oberflächenenergien je Material kann
+das Modell weder Benetzungspaare noch Disjoining Pressure ableiten und behauptet
+deshalb **keine Entnetzung**. Kontaktwinkel, Filmabriss und Tropfen bleiben bis zu
+solchen Bibliotheksdaten außerhalb. Verworfen wurden (a) „höchster Punkt +
+Dicke“, weil es Volumen erzeugt, (b) ein exponentieller DOP nur aus `t/h`, weil
+ihm die laterale Länge fehlt, und (c) ein zeitintegrierter PDE-Solver, weil er
+Viskosität, Oberflächenspannung und Verfestigungszeit als unkalibrierbare Regler
+einführen würde.
+
 ## 4. Die Meilensteine
 
 ### M10 — Auslieferung und Auswahl ✅ *erledigt 2026-08-27*
@@ -449,16 +481,16 @@ fehlende Eltern und Zyklen brechen laut ab. Die Qt-freie Vorschau rechnet für S
 34.995 nm, reagiert auf Parameteränderungen und erklärt Pfeile unter 5 px. Nach
 der E31-Nachkorrektur ging die Suite **673 → 681**, 0 übersprungen.
 
-### M12 — Anlage und Prozessführung
+### M12 — Anlage und Prozessführung ✅ *erledigt 2026-08-28*
 
 **Fasst Demos und Didaktik an**, und beginnt mit einer Klärung.
 
-1. **Inhomogenität** (E34): `uniformity_percent` an den didaktischen Depo- und
+1. ✅ **Inhomogenität** (E34): `uniformity_percent` an den didaktischen Depo- und
    Ätzschritten, Defaults pro Prozessklasse, Positions-Fan zeigt sie.
-2. **Spin-Coat** (E32): Ideal/Didaktisch-Schnitt bauen; die Planarisierung
+2. ✅ **Spin-Coat** (E32): Ideal/Didaktisch-Schnitt bauen; die Planarisierung
    **zuerst gegen §3 klären** und die Entscheidung als E41 nachtragen, bevor eine
    Zeile Code entsteht.
-3. **Bake-Trilogie** (E31): `bake.soft` / `bake.post_exposure` / `bake.hard`, je
+3. ✅ **Bake-Trilogie** (E31): `bake.soft` / `bake.post_exposure` / `bake.hard`, je
    eigene Feldregel; nur der Hardbake tauscht das Material, und welches sagt die
    Bibliothek.
 
@@ -467,6 +499,18 @@ Dicken, in der Mitte den Nennwert; ein Spin-Coat auf ein Gitter zeigt etwas
 Verteidigbares und die Entscheidung dazu steht als E41 im Plan; ein
 Post-Exposure-Bake **erhält** das latente Bild und ein Hardbake tauscht das
 Material nur, wenn das Ziel existiert.
+
+**DoD — gemessen, alle erfüllt:** Eine 20-nm-Evaporation mit 20 % Randabfall
+liefert über 0 / 37.5 / 75 / 112.5 / 150 mm die fünf Dicken **20 / 19.75 / 19 /
+17.75 / 16 nm**. Der didaktische Spin-Coat nivelliert das ausgelieferte Gitter
+volumenerhaltend innerhalb der 5-%-Geometrietoleranz, lässt einen geschlossenen
+Hohlraum leer und bleibt auf einer ebenen, hohlraumfreien Fläche bitgleich zum
+idealen Konstruktor. PEB erhält das Dosisfeld samt Integral und die binäre
+Belichtung; Hardbake tauscht Identität und Level-Set erst ab der in der
+Bibliothek stehenden Aktivierungstemperatur und bricht bei fehlendem Ziel vor dem
+Commit ab. Gemessener Endstand: **32 Schritte, 12 Materialien, 5 Demos,
+`0.5.0.dev0`; 681 → 687 Tests**, 0 übersprungen; Source- und frisch gebauter
+Onedir-Selftest jeweils **7/7**.
 
 ## 5. Was diese Roadmap bewusst *nicht* umfasst
 

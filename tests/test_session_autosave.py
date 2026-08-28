@@ -57,7 +57,7 @@ def test_windows_gets_local_appdata_before_a_dot_directory_in_the_profile(monkey
 def test_every_step_writes_the_recipe_and_no_structures(cache):
     session = Session(autosave=autosaved_recipe_path())
     session.run("substrate.select", {"preset": "wafer_fs_100"})
-    session.run("resist.spin_coat", {"material": "resist", "thickness": 90.0})
+    session.run("resist.spin_coat_ideal", {"material": "resist", "thickness": 90.0})
 
     path = autosaved_recipe_path()
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -78,7 +78,7 @@ def test_the_write_is_atomic_so_a_half_written_recipe_cannot_be_offered(cache, m
         raise OSError("interrupted")
 
     monkeypatch.setattr(os, "replace", explode)
-    session.run("resist.spin_coat", {"material": "resist", "thickness": 90.0})
+    session.run("resist.spin_coat_ideal", {"material": "resist", "thickness": 90.0})
 
     assert autosaved_recipe_path().read_text(encoding="utf-8") == good
 
@@ -88,7 +88,7 @@ def test_rewinding_shortens_the_autosave_too(cache):
     somebody deliberately threw away."""
     session = Session(autosave=autosaved_recipe_path())
     session.run("substrate.select", {"preset": "wafer_fs_100"})
-    session.run("resist.spin_coat", {"material": "resist", "thickness": 90.0})
+    session.run("resist.spin_coat_ideal", {"material": "resist", "thickness": 90.0})
     session.rewind(1)
 
     payload = json.loads(autosaved_recipe_path().read_text(encoding="utf-8"))
@@ -119,7 +119,7 @@ def test_loading_a_restored_recipe_computes_nothing(cache):
     stop the program from starting."""
     session = Session(autosave=autosaved_recipe_path())
     session.run("substrate.select", {"preset": "wafer_fs_100"})
-    session.run("resist.spin_coat", {"material": "resist", "thickness": 90.0})
+    session.run("resist.spin_coat_ideal", {"material": "resist", "thickness": 90.0})
 
     fresh = Session()
     steps = fresh.load_recipe(autosaved_recipe_path())

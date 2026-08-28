@@ -1,11 +1,10 @@
 """What a parameter's marker value resolves to, and where it came from (handoff R1).
 
-Four places in this repository now use the same convention — a parameter whose
+Three places in this repository now use the same convention — a parameter whose
 default is a real number cannot say *"I did not choose"*, so a marker says it:
 
 | marker | means |
 | --- | --- |
-| `thickness = 0` | from the resist's spin curve (E17) |
 | `tone = ""` | from the resist's develop model (E13) |
 | `material = ""`, `surface = 0`, `roughness = 0` | from the substrate preset (E2, E30) |
 | `center = 0`, `period = 0`, `grating_center = 0` | from the domain (E33) |
@@ -35,11 +34,11 @@ from nanofab_v3.model.grid import Grid
 
 
 def derived_hints(
-    step_id: str,
-    params: Mapping[str, Any],
-    *,
-    library: MaterialLibrary | None = None,
-    grid: Grid | None = None,
+        step_id: str,
+        params: Mapping[str, Any],
+        *,
+        library: MaterialLibrary | None = None,
+        grid: Grid | None = None,
 ) -> dict[str, str]:
     """`{parameter: what it resolves to and why}` for the markers in `params`.
 
@@ -54,10 +53,10 @@ def derived_hints(
 
 
 def _hints(
-    step_id: str,
-    params: dict[str, Any],
-    library: MaterialLibrary | None,
-    grid: Grid | None,
+        step_id: str,
+        params: dict[str, Any],
+        library: MaterialLibrary | None,
+        grid: Grid | None,
 ) -> dict[str, str]:
     hints: dict[str, str] = {}
     if step_id == "resist.spin_coat":
@@ -78,15 +77,15 @@ def _spin_coat(params: dict[str, Any], library: MaterialLibrary | None) -> dict[
     finding: a spin speed outside the measured range reached the operator *after*
     the step, which is after the mistake.
     """
-    if library is None or float(params.get("thickness", 0.0) or 0.0) > 0.0:
+    if library is None:
         return {}
     material = MaterialId(str(params.get("material", "") or ""))
     entry = library.get(material)
     if entry is None or entry.spin_curve is None:
         return {
-            "thickness": (
-                f"no spin curve for {material or 'this material'} — type a thickness, "
-                "or add one to its file"
+            "spin_speed": (
+                f"no spin curve for {material or 'this material'} — add one to its file, "
+                "or choose the ideal spin-coat step"
             )
         }
     speed = float(params.get("spin_speed", 0.0) or 0.0)
@@ -97,12 +96,12 @@ def _spin_coat(params: dict[str, Any], library: MaterialLibrary | None) -> dict[
     if clamped:
         low, high = entry.spin_curve.speed_range
         return {
-            "thickness": (
+            "spin_speed": (
                 f"{thickness:.1f} nm, {where} — **clamped**: the curve was measured "
                 f"between {low:.0f} and {high:.0f} rpm"
             )
         }
-    return {"thickness": f"{thickness:.1f} nm, {where}"}
+    return {"spin_speed": f"{thickness:.1f} nm, {where}"}
 
 
 def _develop(params: dict[str, Any], library: MaterialLibrary | None) -> dict[str, str]:

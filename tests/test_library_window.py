@@ -204,5 +204,5 @@ def test_the_demo_tab_lists_the_demos_and_their_files(qt_app, room):
     from nanofab_v3.ui.library_window import LibraryWindow
 
     window = LibraryWindow()
-    assert window.demos.list.count() == 4
+    assert window.demos.list.count() == 5
     assert ".json" in window.demos.source.text()

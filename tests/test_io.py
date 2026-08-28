@@ -70,7 +70,7 @@ def chain(tmp_path) -> RevisionChain:
         grid=cross_section_grid(width=200.0, thickness=40.0, headroom=140.0),
         steps=(
             RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
-            RecipeStep("resist.spin_coat", {"material": RESIST, "thickness": 60.0}),
+            RecipeStep("resist.spin_coat_ideal", {"material": RESIST, "thickness": 60.0}),
             RecipeStep(
                 "litho.expose_ideal", {"material": RESIST, "center": 100.0, "width": 60.0}
             ),

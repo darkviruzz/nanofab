@@ -65,6 +65,18 @@ the axis the step registry is organised on (`etch_isotropic` / `etch_anisotropic
 `deposit_conformal` / `deposit_directional`), so getting them backwards inverts the
 model.
 
+**Uniformity**:
+Spatial change *across the wafer*, separate from directionality and conformality in the cross-section. Didactic deposition and etch steps expose `uniformity_percent` as the loss at the 150 mm reference radius; execution turns it into the quadratic local factor `1 - u(r/150 mm)²` before the process wrapper runs. The class-specific default is a teaching assumption, not a material constant.
+_Avoid_: "conformality" for wafer-scale variation, passing wafer coordinates into a geometry solver.
+
+**Spin coat**:
+Two explicit fidelities of one technique. `resist.spin_coat_ideal` takes a typed thickness and constructs the perfect plane used by controlled recipes. `resist.spin_coat` takes spin speed, derives nominal thickness from the selected resist's library curve, and freezes topographic levelling with E41's conservative fourth-order filter. The didactic step has no thickness override.
+_Avoid_: silently treating a speed-derived film as ideal, using a geometric `t/h` rule as a dewetting model.
+
+**Bake**:
+Three steps with different field contracts, not one temperature-labelled anneal. Soft bake accumulates thermal budget without changing material fields; post-exposure bake diffuses the latent dose but retains it; hard bake alone may replace the resist identity, using target and activation temperature from that resist's library entry.
+_Avoid_: `anneal.thermal` as a generic substitute, putting the hard-bake target in a recipe.
+
 **Isotropic**:
 Direction-independent: the process acts at the same rate on a surface regardless of
 that surface's orientation. Isotropic removal undercuts a mask; isotropic arrival
@@ -159,7 +171,7 @@ A named promise about sample state that a process requires or provides (e.g. `re
 _Avoid_: "prerequisite" (v1's step-id gating), "dependency".
 
 **Materialization**:
-Evaluating a Run at one wafer position by deterministic replay with position-resolved parameters; the solver itself stays position-blind. `effective_params(recipe, position, step)` is the seam: a recipe parameter may vary over the wafer up to that call and may not past it, so nothing downstream can tell one position from another. The one place a position legitimately reaches the kernel is the RNG seed, and it arrives as a seed rather than as a coordinate.
+Evaluating a Run at one wafer position by deterministic replay with position-resolved parameters; the solver itself stays position-blind. `effective_params(recipe, position, step)` resolves recipe profiles, then the execution seam resolves the reserved `uniformity_percent` into `StepContext.rate_scale`. Past that seam a wrapper sees a scalar factor, never wafer coordinates. The RNG is the only other position-derived input, and it likewise arrives as a seed rather than as a coordinate.
 _Avoid_: "sampling" (collides with grid sampling), "instantiation".
 
 **Scene snapshot**:

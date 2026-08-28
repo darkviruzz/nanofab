@@ -28,7 +28,7 @@ def qt_app():
 def test_selecting_a_foreign_revision_no_longer_writes_into_the_visible_form(qt_app):
     """The measurement, reproduced: `material` and `thickness` collide by name.
 
-    `substrate.select` has both, and so does `resist.spin_coat`. Selecting
+    `substrate.select` has both, and so does `resist.spin_coat_ideal`. Selecting
     revision #0 while the spin coat's form is open used to write `silicon` /
     `0.0` over `resist` / `90.0`, because the write was by parameter name into
     whatever form was on screen.
@@ -37,10 +37,10 @@ def test_selecting_a_foreign_revision_no_longer_writes_into_the_visible_form(qt_
 
     window = MainWindow()
     window.session.run("substrate.select", {"material": "silicon", "surface": 40.0})
-    window.session.run("resist.spin_coat", {"material": "resist", "thickness": 90.0})
+    window.session.run("resist.spin_coat_ideal", {"material": "resist", "thickness": 90.0})
 
-    window.steps.select_step("resist.spin_coat")
-    window._on_step_chosen("resist.spin_coat")
+    window.steps.select_step("resist.spin_coat_ideal")
+    window._on_step_chosen("resist.spin_coat_ideal")
     window.form.apply_values({"material": "resist", "thickness": 90.0})
 
     window._on_revision_chosen(0)  # the substrate revision, a different step
@@ -72,11 +72,11 @@ def test_adjust_loads_the_values_that_ran_even_when_the_filter_would_hide_them(q
         MaterialType(material_id="unobtainium", name="Unobtainium")
     )
     window.session.run("substrate.select", {"material": "silicon", "surface": 40.0})
-    window.session.run("resist.spin_coat", {"material": "unobtainium", "thickness": 80.0})
+    window.session.run("resist.spin_coat_ideal", {"material": "unobtainium", "thickness": 80.0})
 
     window._on_adjust(1)
 
-    assert window.form.step_id == "resist.spin_coat"
+    assert window.form.step_id == "resist.spin_coat_ideal"
     assert window.form.values()["material"] == "unobtainium"
     assert window.form.values()["thickness"] == pytest.approx(80.0)
 

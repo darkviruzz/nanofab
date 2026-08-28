@@ -54,6 +54,7 @@ from nanofab_v3.runtime.run import (
     as_positions,
     effective_params,
     positions_on_radius,
+    positions_across_radius,
 )
 
 __all__ = [
@@ -82,5 +83,6 @@ __all__ = [
     "materialize",
     "now_iso",
     "positions_on_radius",
+    "positions_across_radius",
     "run_recipe",
 ]

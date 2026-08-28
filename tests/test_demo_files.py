@@ -62,6 +62,7 @@ def test_every_shipped_demo_is_a_file(shipped) -> None:
         "chrome_grating",
         "titania_stop",
         "black_silicon",
+        "spin_leveling",
     }
     assert [entry.key for entry in shipped] == [entry.key for entry in demos()]
 
@@ -83,6 +84,7 @@ def test_the_filename_orders_the_menu(shipped) -> None:
         "02_chrome_grating.json",
         "03_titania_stop.json",
         "04_black_silicon.json",
+        "05_spin_leveling.json",
     ]
 
 

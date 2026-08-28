@@ -29,6 +29,10 @@
     "rate": 40.0,
     "swells": true
   },
+  "hard_bake": {
+    "target": "resist_hardbaked",
+    "activation_temperature": 150.0
+  },
   "spin_curve": {
     "points": [
       [
@@ -57,7 +61,7 @@
   "optical_n": 1.51,
   "optical_k": 0.0,
   "absorption": 0.0015,
-  "notes": "The generic photo resist. The spin curve is the five measured points of the student process table (roadmap §3.1, row 11) and belongs to *this* entry: the table says only \"photo resist\", so the named presets FEP171, AZ10XT and EN038 need curves and develop models of their own, which nobody has measured yet (backlog B11). The curve has no time axis, so a spin time is recorded by the step and does not enter the thickness.",
+  "notes": "The generic photo resist. The spin curve is the five measured points of the student process table (roadmap §3.1, row 11) and belongs to *this* entry: the table says only \"photo resist\", so the named presets FEP171, AZ10XT and EN038 need curves and develop models of their own, which nobody has measured yet (backlog B11). The curve has no time axis, so a spin time is recorded by the step and does not enter the thickness. The hard-bake target is the didactic identity transition used by M12; its 150 C activation is illustrative, not a measured resist specification.",
   "rate_notes": {
     "icp_fluorine": "Student process table, roadmap §3 row 2 (60 nm/min).",
     "ion_beam": "Student process table, roadmap §3 row 1 (15 nm/min).",

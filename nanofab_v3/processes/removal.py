@@ -45,10 +45,10 @@ from nanofab_v3.processes.rates import dissolve_rates
 
 
 def dissolve(
-    structure: Structure,
-    material: MaterialId,
-    *,
-    faces: tuple[tuple[str, str], ...] | None = None,
+        structure: Structure,
+        material: MaterialId,
+        *,
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> Structure:
     """Remove every occurrence of `material` the solvent can reach (plan §6, §4.4).
 
@@ -68,12 +68,12 @@ def dissolve(
 
 
 def dissolve_at_rate(
-    structure: Structure,
-    *,
-    duration: float,
-    library,
-    solvent: str = "acetone",
-    faces: tuple[tuple[str, str], ...] | None = None,
+        structure: Structure,
+        *,
+        duration: float,
+        library,
+        solvent: str = "acetone",
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> motion.MotionOutcome:
     """Recede every soluble surface the bath reaches, at the material's own rate.
 
@@ -96,10 +96,10 @@ def dissolve_at_rate(
 
 
 def remove_unsupported(
-    structure: Structure,
-    *,
-    faces: tuple[tuple[str, str], ...] | None = None,
-    anchor: MaterialId | None = None,
+        structure: Structure,
+        *,
+        faces: tuple[tuple[str, str], ...] | None = None,
+        anchor: MaterialId | None = None,
 ) -> Structure:
     """Carry away every solid component the wafer no longer holds (plan §4.4).
 
@@ -117,11 +117,11 @@ def remove_unsupported(
 
 
 def lift_off(
-    structure: Structure,
-    resist: MaterialId = RESIST,
-    *,
-    faces: tuple[tuple[str, str], ...] | None = None,
-    anchor: MaterialId | None = None,
+        structure: Structure,
+        resist: MaterialId = RESIST,
+        *,
+        faces: tuple[tuple[str, str], ...] | None = None,
+        anchor: MaterialId | None = None,
 ) -> Structure:
     """Dissolve the resist, then drop what is no longer supported (plan §6).
 
@@ -217,7 +217,7 @@ DISSOLVE = FunctionStep(
         "\n\n"
         "At this tier naming the material IS the statement that the bath attacks it; no rate "
         "table is consulted. Which also means a recipe that keeps asking for `resist` after a "
-        "hard bake finds none and quietly does nothing, because `anneal.thermal` turned it into "
+        "hard bake finds none and quietly does nothing, because `bake.hard` turned it into "
         "a different material."
         "\n\n"
         "Needs: the material you name."

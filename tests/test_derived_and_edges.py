@@ -37,30 +37,25 @@ def library():
 # -- R1: what a marker resolves to, before the step runs ----------------------
 
 
-def test_a_thickness_of_zero_says_what_the_spin_curve_gives_and_where_from(library):
+def test_spin_speed_says_what_thickness_the_curve_gives_and_where_from(library):
     """E17's UI half. The number *and* its source: "90 nm" is a number, and
     "90 nm, from the resist's spin curve at 3000 rpm" is diagnosable."""
     hints = derived_hints(
         "resist.spin_coat",
-        {"material": "resist", "thickness": 0.0, "spin_speed": 3000.0},
+        {"material": "resist", "spin_speed": 3000.0},
         library=library,
     )
-    assert "spin curve" in hints["thickness"]
-    assert "3000 rpm" in hints["thickness"]
-    assert hints["thickness"].startswith("8")  # the curve's own answer, in nm
+    assert "spin curve" in hints["spin_speed"]
+    assert "3000 rpm" in hints["spin_speed"]
+    assert hints["spin_speed"].startswith("8")  # the curve's own answer, in nm
 
 
-def test_a_stated_thickness_gets_no_hint(library):
-    """A value somebody typed needs no explanation, and hinting at one would
-    suggest it was about to be replaced."""
-    assert (
-        derived_hints(
-            "resist.spin_coat",
-            {"material": "resist", "thickness": 120.0, "spin_speed": 3000.0},
-            library=library,
-        )
-        == {}
-    )
+def test_the_ideal_typed_thickness_gets_no_derived_hint(library):
+    assert derived_hints(
+        "resist.spin_coat_ideal",
+        {"material": "resist", "thickness": 120.0},
+        library=library,
+    ) == {}
 
 
 def test_a_spin_speed_outside_the_measured_range_says_so_before_the_step(library):
@@ -68,19 +63,19 @@ def test_a_spin_speed_outside_the_measured_range_says_so_before_the_step(library
     the run log, i.e. after the mistake."""
     hint = derived_hints(
         "resist.spin_coat",
-        {"material": "resist", "thickness": 0.0, "spin_speed": 9000.0},
+        {"material": "resist", "spin_speed": 9000.0},
         library=library,
-    )["thickness"]
+    )["spin_speed"]
     assert "clamped" in hint and "1000" in hint and "5000" in hint
 
 
 def test_a_material_with_no_curve_says_what_to_do_about_it(library):
     hint = derived_hints(
         "resist.spin_coat",
-        {"material": "chrome", "thickness": 0.0, "spin_speed": 3000.0},
+        {"material": "chrome", "spin_speed": 3000.0},
         library=library,
-    )["thickness"]
-    assert "no spin curve" in hint and "type a thickness" in hint
+    )["spin_speed"]
+    assert "no spin curve" in hint and "ideal" in hint
 
 
 def test_an_empty_tone_names_the_resist_that_decided_it(library):
@@ -117,11 +112,13 @@ def test_a_hint_is_never_worth_an_exception(library):
     """A half-typed value in a spin box is a normal state for a form to be in."""
     # A blank material is answerable — it says what to do — and neither of these
     # may raise, which is the property being pinned.
-    assert "type a thickness" in derived_hints(
+    assert "ideal" in derived_hints(
         "resist.spin_coat", {"material": None}, library=library
-    )["thickness"]
+    )["spin_speed"]
     assert derived_hints("litho.expose_ideal", {}, grid=None) == {}
-    assert derived_hints("resist.spin_coat", {"thickness": "not a number"}) == {}
+    assert "spin_speed" in derived_hints(
+        "resist.spin_coat", {"spin_speed": "not a number"}, library=library
+    )
 
 
 def test_the_form_shows_the_hint_and_hides_it_again(qt_app):
@@ -135,11 +132,11 @@ def test_the_form_shows_the_hint_and_hides_it_again(qt_app):
         "resist.spin_coat", "Spin coat", registry["resist.spin_coat"].parameter_schema()
     )
 
-    assert form._hints["thickness"].isVisible() or form._hints["thickness"].text()
-    assert "spin curve" in form._hints["thickness"].text()
+    assert form._hints["spin_speed"].isVisible() or form._hints["spin_speed"].text()
+    assert "spin curve" in form._hints["spin_speed"].text()
 
-    form.apply_values({"thickness": 120.0})
-    assert form._hints["thickness"].text() == ""
+    form.apply_values({"spin_speed": 4000.0})
+    assert form._hints["spin_speed"].text().startswith("74")
 
 
 # -- R8: the two other edges --------------------------------------------------

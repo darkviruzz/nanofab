@@ -2629,3 +2629,80 @@ deterministic raster.
 | materials | 11 | **12** (`chrome_redeposit`) |
 | ion-beam rate keys | 2 | **1** |
 | version | `0.3.0.dev0` | **`0.4.0.dev0`** |
+
+## 28. Corrections from implementation (M12)
+
+Written 2026-08-28 at the end of the plant/process-guidance milestone in
+`docs/plans/m10-m12-roadmap.md`. E41 was fixed in that roadmap before the E32
+implementation; this section records what the implementation then measured.
+
+### 28.1 E34 is resolved by execution, but the kernel still sees no wafer
+
+`uniformity_percent` is a reserved parameter of the didactic deposition and etch
+contracts. It means fractional loss at the 150 mm radius of a 300 mm tool, with
+
+`rate_scale = max(0, 1 - uniformity_percent/100 · (r/150 mm)²)`.
+
+The execution seam computes that scalar from `StepContext.position` after normal
+recipe-parameter resolution and before the wrapper calls a kernel. Deposition
+multiplies requested thickness or rate by it; etch multiplies rate. No geometry
+solver receives a coordinate, and the centre remains exactly nominal. The values
+are measurements and log entries as well, so a wafer-fan result explains itself.
+
+Defaults live in `settings.ini` by process class — assumptions about tools, not
+properties of materials. `positions_across_radius(150, 5)` deliberately samples
+five different radii rather than one centre plus four points on the same ring.
+For the DoD's 20 nm / 20 % evaporation those are 20, 19.75, 19, 17.75 and 16 nm.
+
+### 28.2 E32 is two contracts; E41 is the didactic one's closed model
+
+`resist.spin_coat_ideal` takes a material and typed thickness and retains the old
+perfect-plane constructor. `resist.spin_coat` is now didactic: it requires a
+resist with a spin curve, takes speed and recorded time, derives thickness from
+the curve, and exposes no thickness override. Typed recipes and S1–S5 use the
+ideal id; the speed-based demo and UI path use the didactic id.
+
+The E41 implementation extracts the top reachable height function, applies a DCT
+with Neumann boundaries and multiplier `exp(-(|k|·thickness)⁴)`, clips the result
+above the original topography, then finds the vertical offset that restores the
+nominal mean film thickness. Only top-reachable void plus a one-cell contact
+collar can become resist. Consequently a sealed cavity stays empty, the result is
+a height function, and the grating test keeps discretised volume within 5 %. A
+flat cavity-free surface takes the legacy constructor path bit-for-bit.
+
+This is a conservative frozen levelling model, not dewetting. Without
+surface-energy data it has no defensible contact angle or rupture threshold, so
+it asserts neither. Demo `05_spin_leveling.json` makes that boundary visible on a
+grating instead of hiding it in a unit test.
+
+### 28.3 E31 replaces one generic thermal label with three field contracts
+
+All three bake steps add the global `thermal_budget` in K·s. Beyond that they are
+deliberately different:
+
+- `bake.soft` leaves every material-scoped field bit-identical.
+- `bake.post_exposure` Gaussian-diffuses an existing dose only inside its resist,
+  rescales it to preserve the integral, retains the dose field, and leaves a
+  binary `exposed` field untouched. With no dose it creates none.
+- `bake.hard` reads both target and activation temperature from the source
+  material's `HardBakeModel`. Below activation it does not transform; at or
+  above activation it moves the exact level set to the target identity and lets
+  material-scoped source fields retire. A missing target raises
+  `MissingMaterialsError` before a result exists.
+
+`anneal.thermal` is no longer registered. Old recipes naming it fail loudly
+rather than being silently mapped onto one of three incompatible meanings. The
+shipped resist's 150 °C transition to `resist_hardbaked` is explicitly marked as
+a didactic assumption in the material file and its provenance README.
+
+### 28.4 Measured M12 state
+
+| | end of M11 | end of M12 |
+| --- | --- | --- |
+| tests | 681, 0 skipped | **687**, 0 skipped |
+| registered steps | 29 | **32** |
+| materials | 12 | **12** |
+| demos | 4 | **5** |
+| version | `0.4.0.dev0` | **`0.5.0.dev0`** |
+| library fingerprint | — | **`35fbb1b172cb`** |
+| `--selftest` | 7/7 | **7/7 source; 7/7 fresh onedir (7.1 s)** |

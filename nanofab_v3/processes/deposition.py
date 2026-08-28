@@ -194,13 +194,19 @@ def _deposit_result(ctx: StepContext, material: MaterialId, outcome, note: str) 
     warning that has to be remembered in four places is a warning that is missing
     from one of them.
     """
-    warning = sub_cell_warning(float(ctx["thickness"]), ctx.grid.spacing, str(material))
+    actual = float(ctx["thickness"]) * ctx.rate_scale
+    warning = sub_cell_warning(actual, ctx.grid.spacing, str(material))
+    position_note = _uniformity_note(ctx)
     return StepResult(
         structure=outcome.structure,
         swept=outcome.swept,
         provides=frozenset({capability.of_material(material)}),
-        measurements={"thickness": Quantity(ctx["thickness"], "nm")},
-        logs=(note,) + ((warning,) if warning else ()),
+        measurements={
+            "thickness": Quantity(actual, "nm"),
+            "nominal_thickness": Quantity(ctx["thickness"], "nm"),
+            "uniformity_factor": Quantity(ctx.rate_scale, ""),
+        },
+        logs=(note,) + ((position_note,) if position_note else ()) + ((warning,) if warning else ()),
     )
 
 
@@ -211,12 +217,28 @@ def _rate_of(ctx: StepContext, material: MaterialId, fallback: float = 1.0) -> f
     return rate if rate > 0.0 else fallback
 
 
+def _uniformity_note(ctx: StepContext) -> str:
+    percent = float(ctx.params.get("uniformity_percent", 0.0))
+    if percent == 0.0:
+        return ""
+    radius = math.hypot(*ctx.position)
+    return (
+        f"tool uniformity: {percent:g}% loss at 150 mm -> local rate "
+        f"{100.0 * ctx.rate_scale:.2f}% at r={radius:.1f} mm"
+    )
+
+
+def _local_thickness(ctx: StepContext) -> float:
+    return float(ctx["thickness"]) * ctx.rate_scale
+
+
 def _run_evaporate(ctx: StepContext) -> StepResult:
     material = MaterialId(str(ctx["material"]))
+    thickness = _local_thickness(ctx)
     outcome = evaporate(
         ctx.structure,
         material,
-        thickness=ctx["thickness"],
+        thickness=thickness,
         angle=math.radians(ctx["angle"]),
         divergence=math.radians(ctx["divergence"]),
         rate=_rate_of(ctx, material),
@@ -225,16 +247,17 @@ def _run_evaporate(ctx: StepContext) -> StepResult:
         ctx,
         material,
         outcome,
-        f"evaporated {ctx['thickness']:.1f} nm of {material} at {ctx['angle']:.0f} deg",
+        f"evaporated {thickness:.1f} nm of {material} at {ctx['angle']:.0f} deg",
     )
 
 
 def _run_sputter(ctx: StepContext) -> StepResult:
     material = MaterialId(str(ctx["material"]))
+    thickness = _local_thickness(ctx)
     outcome = sputter_deposit(
         ctx.structure,
         material,
-        thickness=ctx["thickness"],
+        thickness=thickness,
         exponent=ctx["exponent"],
         angle=math.radians(ctx["angle"]),
         mobility_length=ctx["mobility_length"],
@@ -244,7 +267,7 @@ def _run_sputter(ctx: StepContext) -> StepResult:
         ctx,
         material,
         outcome,
-        f"sputtered {ctx['thickness']:.1f} nm of {material} "
+        f"sputtered {thickness:.1f} nm of {material} "
         f"(cos^{ctx['exponent']:.1f}, mobility {ctx['mobility_length']:.0f} nm)",
     )
 
@@ -262,14 +285,15 @@ def _run_conformal(ctx: StepContext) -> StepResult:
 
 def _run_ald(ctx: StepContext) -> StepResult:
     material = MaterialId(str(ctx["material"]))
+    thickness = _local_thickness(ctx)
     outcome = atomic_layer_deposition(
-        ctx.structure, material, thickness=ctx["thickness"], rate=_rate_of(ctx, material)
+        ctx.structure, material, thickness=thickness, rate=_rate_of(ctx, material)
     )
     return _deposit_result(
         ctx,
         material,
         outcome,
-        f"deposited {ctx['thickness']:.1f} nm of {material} conformally, where reachable",
+        f"deposited {thickness:.1f} nm of {material} conformally, where reachable",
     )
 
 
@@ -282,14 +306,15 @@ def _run_sputter_rate(ctx: StepContext) -> StepResult:
             "deposition rate to run at; add data/materials/"
             f"{material}.json or pick a material the library knows"
         )
-    rate = entry.rate_for(SPUTTER_DEPOSIT)
-    if rate <= 0.0:
+    nominal_rate = entry.rate_for(SPUTTER_DEPOSIT)
+    if nominal_rate <= 0.0:
         raise ValueError(
             f"material {material!r} has no {SPUTTER_DEPOSIT!r} rate, so this step would "
             "deposit nothing. That zero means 'nobody stated a rate', not 'it does not "
             f"grow' — give it one in data/materials/{material}.json, or use "
             "deposit.sputter, which takes a thickness instead"
         )
+    rate = nominal_rate * ctx.rate_scale
     duration = float(ctx["duration"])
     thickness = rate * duration
     outcome = sputter_deposit(
@@ -309,11 +334,13 @@ def _run_sputter_rate(ctx: StepContext) -> StepResult:
             "thickness": Quantity(thickness, "nm"),
             "duration": Quantity(duration, "s"),
             "rate": Quantity(rate, "nm/s"),
+            "nominal_rate": Quantity(nominal_rate, "nm/s"),
+            "uniformity_factor": Quantity(ctx.rate_scale, ""),
         },
         logs=(
-            f"sputtered {material} for {duration:.1f} s at {rate:.4f} nm/s "
-            f"-> {thickness:.1f} nm",
-        ),
+                 f"sputtered {material} for {duration:.1f} s at {rate:.4f} nm/s "
+                 f"-> {thickness:.1f} nm",
+             ) + ((_uniformity_note(ctx),) if _uniformity_note(ctx) else ()),
     )
 
 
@@ -337,6 +364,27 @@ _THICKNESS = ParamSpec(
     description="Thickness on an open, normal-facing surface",
 )
 
+
+def _uniformity(default: float, process: str) -> ParamSpec:
+    return ParamSpec(
+        "uniformity_percent",
+        float,
+        unit="%",
+        default=default,
+        minimum=0.0,
+        maximum=100.0,
+        description=(
+            f"{process} rate loss at 150 mm from the chamber centre. Between centre "
+            "and that reference radius the local rate falls quadratically; the centre "
+            "always receives the nominal value (roadmap E34)."
+        ),
+    )
+
+
+_EVAPORATION_UNIFORMITY = _uniformity(5.0, "Evaporation")
+_SPUTTER_UNIFORMITY = _uniformity(8.0, "Sputter")
+_ALD_UNIFORMITY = _uniformity(2.0, "ALD")
+
 EVAPORATE = FunctionStep(
     step_id="deposit.evaporate",
     display_name="Evaporation",
@@ -348,6 +396,7 @@ EVAPORATE = FunctionStep(
                   description="Source tilt from the surface normal"),
         ParamSpec("divergence", float, unit="deg", default=0.0, minimum=0.0, maximum=45.0,
                   description="Angular half-width of the source"),
+        _EVAPORATION_UNIFORMITY,
     ),
     required=frozenset(),
     provided=frozenset(),
@@ -380,6 +429,7 @@ SPUTTER = FunctionStep(
                   description="Source tilt from the surface normal"),
         ParamSpec("mobility_length", float, unit="nm", default=0.0, minimum=0.0,
                   description="Surface diffusion length of the arriving material"),
+        _SPUTTER_UNIFORMITY,
     ),
     required=frozenset(),
     provided=frozenset(),
@@ -425,7 +475,7 @@ ALD = FunctionStep(
     step_id="deposit.ald",
     display_name="Atomic layer deposition",
     fidelity=DIDACTIC,
-    schema=(_MATERIAL, _THICKNESS),
+    schema=(_MATERIAL, _THICKNESS, _ALD_UNIFORMITY),
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_ald,
@@ -464,6 +514,7 @@ SPUTTER_RATE = FunctionStep(
                   description="Source tilt from the surface normal"),
         ParamSpec("mobility_length", float, unit="nm", default=0.0, minimum=0.0,
                   description="Surface diffusion length of the arriving material"),
+        _SPUTTER_UNIFORMITY,
     ),
     required=frozenset(),
     provided=frozenset(),

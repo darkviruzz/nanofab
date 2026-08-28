@@ -293,6 +293,27 @@ class DissolveModel:
 
 
 @dataclass(frozen=True)
+class HardBakeModel:
+    """Material identity and threshold produced by a hard bake (roadmap E31)."""
+
+    target: MaterialId
+    activation_temperature: float
+
+    def __post_init__(self) -> None:
+        target = MaterialId(str(self.target).strip())
+        if not target:
+            raise ValueError("hard-bake target must be a non-empty material id")
+        temperature = float(self.activation_temperature)
+        if not math.isfinite(temperature) or temperature < -273.15:
+            raise ValueError(
+                "hard-bake activation_temperature must be finite and at or above "
+                f"absolute zero, got {self.activation_temperature}"
+            )
+        object.__setattr__(self, "target", target)
+        object.__setattr__(self, "activation_temperature", temperature)
+
+
+@dataclass(frozen=True)
 class SpinCurve:
     """Film thickness over spin speed, as measured points — not a fitted law.
 
@@ -407,9 +428,10 @@ class MaterialType:
             `None` means the projected area and nothing else.
         develop: `develop_rate(dose)` — present on resists only.
         dissolve: Which solvent removes it, and how fast; `None` = insoluble.
+        hard_bake: Target identity and activation temperature for a hard bake;
+            `None` means no library-backed transition is known.
         spin_curve: Thickness over spin speed, measured (E17); `None` when nobody
-            measured one, which is what makes `resist.spin_coat` ask for a
-            thickness instead of deriving one.
+            measured one, which excludes it from the didactic spin-coat step.
         density: g/cm^3, for later mass balances. Not read by the kernel.
         optical_n / optical_k: Refractive index and extinction coefficient at the
             exposure wavelength. `optical_k` is what a Beer-Lambert dose depth
@@ -431,8 +453,8 @@ class MaterialType:
             note nobody will ever see.
         tags: Substance classes from `MATERIAL_TAGS` (roadmap E21) — what this
             material *is*, never what it is for. Read by the material dropdowns
-            of steps that consult no rate (E22): `resist.spin_coat` at ideal
-            fidelity reads no spin curve, and chromium is still nonsense in it.
+            of steps that consult no rate (E22): `resist.spin_coat_ideal` reads no
+            spin curve, and chromium is still nonsense in it.
     """
 
     material_id: MaterialId
@@ -442,6 +464,7 @@ class MaterialType:
     sputter_response: SputterResponse | None = None
     develop: DevelopModel | None = None
     dissolve: DissolveModel | None = None
+    hard_bake: HardBakeModel | None = None
     spin_curve: SpinCurve | None = None
     density: float | None = None
     optical_n: float | None = None

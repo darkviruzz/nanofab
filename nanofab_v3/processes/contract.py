@@ -53,6 +53,35 @@ PHYSICAL = "physical"
 
 FIDELITIES = (IDEAL, DIDACTIC, PHYSICAL)
 
+UNIFORMITY_REFERENCE_RADIUS_MM = 150.0
+"""Where ``uniformity_percent`` is quoted (roadmap E34): a 300 mm tool edge."""
+
+
+def process_uniformity_factor(
+        uniformity_percent: float, position: tuple[float, float]
+) -> float:
+    """Local rate divided by the centre rate for E34's quadratic tool profile.
+
+    ``uniformity_percent`` is the loss at 150 mm from the chamber centre.  The
+    runner resolves it before a process wrapper calls the kernel, so the kernel
+    still receives one local scalar and never a wafer coordinate.  The floor at
+    zero only protects deliberately out-of-tool positions; ordinary wafer
+    positions (``r <= 150 mm``) never reach it for a validated percentage.
+    """
+    loss = float(uniformity_percent)
+    if not math.isfinite(loss) or not 0.0 <= loss <= 100.0:
+        raise ParameterError(
+            f"uniformity_percent: expected a finite percentage in [0, 100], got {loss!r}"
+        )
+    radius = math.hypot(float(position[0]), float(position[1]))
+    return max(
+        0.0,
+        1.0
+        - loss
+        / 100.0
+        * (radius / UNIFORMITY_REFERENCE_RADIUS_MM) ** 2,
+    )
+
 
 class ParameterError(ValueError):
     """A step parameter is missing, of the wrong type, or out of range."""
@@ -158,7 +187,7 @@ class ParamSpec:
 
 
 def validate_params(
-    schema: Sequence[ParamSpec], params: Mapping[str, Any] | None
+        schema: Sequence[ParamSpec], params: Mapping[str, Any] | None
 ) -> dict[str, Any]:
     """Check a recipe's parameters against a schema, filling in the defaults.
 
@@ -227,6 +256,11 @@ class StepContext:
             makes replay materialization sound (ADR-0004, §5.2).
         position: The wafer position this chain belongs to, in mm; `(0.0, 0.0)`
             is the default "center" of interview decision I2.
+        rate_scale: The already resolved local multiplier for E34's
+            ``uniformity_percent`` convention.  Process wrappers apply it once;
+            kernels receive the resulting local thickness/rate and stay
+            position-blind.  The recipe parameter itself remains unchanged in
+            revision history, where it still means "loss at 150 mm".
         artifacts: Where a step may put a heavy output, or `None` when there is
             nowhere (`model.artifact`). A step with no sink emits no
             `ArtifactRef` and still measures everything it measured — a ref to
@@ -241,6 +275,7 @@ class StepContext:
         default_factory=lambda: np.random.default_rng(0)
     )
     position: tuple[float, float] = (0.0, 0.0)
+    rate_scale: float = 1.0
     artifacts: ArtifactSink | None = None
 
     def __getitem__(self, name: str) -> Any:

@@ -19,7 +19,7 @@ from nanofab_v3.ui.session import Session
 def coated():
     session = Session()
     session.run("substrate.select", {"preset": "wafer_fs_100"})
-    session.run("resist.spin_coat", {"material": "resist", "thickness": 90.0})
+    session.run("resist.spin_coat_ideal", {"material": "resist", "thickness": 90.0})
     return session
 
 

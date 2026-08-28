@@ -63,7 +63,7 @@ def _present(session: Session, material: str) -> bool:
 
 def test_every_demo_carries_the_sentence_that_makes_it_worth_running() -> None:
     """A screenshot would do as much as a demo without one."""
-    assert len(DEMOS) == 4
+    assert len(DEMOS) == 5
     for entry in DEMOS:
         assert entry.summary and entry.watch_for
         assert len(entry.watch_for) > 120, entry.key

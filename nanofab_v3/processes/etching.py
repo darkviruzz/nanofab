@@ -250,17 +250,32 @@ def ion_beam_etch(
 
 
 def _etch_result(ctx: StepContext, outcome, note: str) -> StepResult:
+    percent = float(ctx.params.get("uniformity_percent", 0.0))
+    radius = math.hypot(*ctx.position)
+    uniformity = (
+        f"tool uniformity: {percent:g}% loss at 150 mm -> local rate "
+        f"{100.0 * ctx.rate_scale:.2f}% at r={radius:.1f} mm"
+        if percent
+        else ""
+    )
     return StepResult(
         structure=outcome.structure,
         swept=outcome.swept,
-        measurements={"duration": Quantity(ctx["duration"], "s")},
-        logs=(note,),
+        measurements={
+            "duration": Quantity(ctx["duration"], "s"),
+            "uniformity_factor": Quantity(ctx.rate_scale, ""),
+        },
+        logs=(note,) + ((uniformity,) if uniformity else ()),
     )
+
+
+def _local_scale(ctx: StepContext) -> float:
+    return float(ctx["scale"]) * ctx.rate_scale
 
 
 def _run_wet(ctx: StepContext) -> StepResult:
     outcome = wet_etch(
-        ctx.structure, duration=ctx["duration"], library=ctx.library, scale=ctx["scale"]
+        ctx.structure, duration=ctx["duration"], library=ctx.library, scale=_local_scale(ctx)
     )
     return _etch_result(ctx, outcome, f"wet etch, {ctx['duration']:.1f} s (reachability-gated)")
 
@@ -273,7 +288,7 @@ def _run_rie(ctx: StepContext) -> StepResult:
         angle=math.radians(ctx["angle"]),
         divergence=math.radians(ctx["divergence"]),
         chemical_fraction=ctx["chemical_fraction"],
-        scale=ctx["scale"],
+        scale=_local_scale(ctx),
     )
     return _etch_result(
         ctx,
@@ -290,7 +305,7 @@ def _run_ibe(ctx: StepContext) -> StepResult:
         angle=math.radians(ctx["angle"]),
         divergence=math.radians(ctx["divergence"]),
         redeposition_yield=ctx["redeposition_yield"],
-        scale=ctx["scale"],
+        scale=_local_scale(ctx),
     )
     return _etch_result(
         ctx,
@@ -310,11 +325,32 @@ _SCALE = ParamSpec(
     description="Machine setting as a factor on every material's blanket rate",
 )
 
+
+def _uniformity(default: float, process: str) -> ParamSpec:
+    return ParamSpec(
+        "uniformity_percent",
+        float,
+        unit="%",
+        default=default,
+        minimum=0.0,
+        maximum=100.0,
+        description=(
+            f"{process} rate loss at 150 mm from the chamber centre. The local rate "
+            "falls quadratically with radius and equals the nominal rate at the centre "
+            "(roadmap E34)."
+        ),
+    )
+
+
+_WET_UNIFORMITY = _uniformity(2.0, "Wet-process")
+_PLASMA_UNIFORMITY = _uniformity(5.0, "Plasma")
+_ION_UNIFORMITY = _uniformity(8.0, "Ion-beam")
+
 WET_ETCH_STEP = FunctionStep(
     step_id="etch.wet",
     display_name="Wet / chemical etch",
     fidelity=DIDACTIC,
-    schema=(_DURATION, _SCALE),
+    schema=(_DURATION, _SCALE, _WET_UNIFORMITY),
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_wet,
@@ -349,6 +385,7 @@ RIE_STEP = FunctionStep(
                   description="Angular half-width of the ion lobe"),
         ParamSpec("chemical_fraction", float, default=0.2, minimum=0.0, maximum=0.95,
                   description="Share of the etch carried by orientation-blind chemistry"),
+        _PLASMA_UNIFORMITY,
     ),
     required=frozenset(),
     provided=frozenset(),
@@ -390,7 +427,7 @@ def _run_rie_chlorine(ctx: StepContext) -> StepResult:
         duration=ctx["duration"],
         library=ctx.library,
         process_class=RIE_CHLORINE,
-        scale=ctx["scale"],
+        scale=_local_scale(ctx),
     )
     return _etch_result(
         ctx, outcome, f"RIE in chlorine, {ctx['duration']:.1f} s (isotropic, gated)"
@@ -403,7 +440,7 @@ def _run_rie_oxygen(ctx: StepContext) -> StepResult:
         duration=ctx["duration"],
         library=ctx.library,
         process_class=RIE_OXYGEN,
-        scale=ctx["scale"],
+        scale=_local_scale(ctx),
     )
     return _etch_result(
         ctx, outcome, f"RIE in oxygen, {ctx['duration']:.1f} s (isotropic, gated)"
@@ -416,7 +453,7 @@ def _run_wet_cr(ctx: StepContext) -> StepResult:
         duration=ctx["duration"],
         library=ctx.library,
         process_class=WET_ETCH_CR,
-        scale=ctx["scale"],
+        scale=_local_scale(ctx),
     )
     return _etch_result(
         ctx, outcome, f"chromium wet etch, {ctx['duration']:.1f} s (isotropic, gated)"
@@ -429,7 +466,7 @@ def _run_wet_oxide(ctx: StepContext) -> StepResult:
         duration=ctx["duration"],
         library=ctx.library,
         process_class=WET_ETCH_OXIDE,
-        scale=ctx["scale"],
+        scale=_local_scale(ctx),
     )
     return _etch_result(
         ctx, outcome, f"buffered oxide etch, {ctx['duration']:.1f} s (isotropic, gated)"
@@ -445,7 +482,7 @@ def _run_icp_fluorine(ctx: StepContext) -> StepResult:
         angle=0.0,
         divergence=math.radians(3.0),
         chemical_fraction=ctx["chemical_fraction"],
-        scale=ctx["scale"],
+        scale=_local_scale(ctx),
     )
     return _etch_result(
         ctx,
@@ -479,6 +516,7 @@ ICP_FLUORINE_STEP = FunctionStep(
                 "lateral one. Raise it to see the vertical wall become an undercut one."
             ),
         ),
+        _PLASMA_UNIFORMITY,
     ),
     required=frozenset(),
     provided=frozenset(),
@@ -501,7 +539,7 @@ RIE_CHLORINE_STEP = FunctionStep(
     step_id="etch.rie_chlorine",
     display_name="RIE (chlorine)",
     fidelity=DIDACTIC,
-    schema=(_DURATION, _SCALE),
+    schema=(_DURATION, _SCALE, _PLASMA_UNIFORMITY),
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_rie_chlorine,
@@ -522,7 +560,7 @@ RIE_OXYGEN_STEP = FunctionStep(
     step_id="etch.rie_oxygen",
     display_name="RIE (oxygen)",
     fidelity=DIDACTIC,
-    schema=(_DURATION, _SCALE),
+    schema=(_DURATION, _SCALE, _PLASMA_UNIFORMITY),
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_rie_oxygen,
@@ -542,7 +580,7 @@ WET_CR_STEP = FunctionStep(
     step_id="etch.wet_cr",
     display_name="Chromium etch (wet)",
     fidelity=DIDACTIC,
-    schema=(_DURATION, _SCALE),
+    schema=(_DURATION, _SCALE, _WET_UNIFORMITY),
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_wet_cr,
@@ -562,7 +600,7 @@ WET_OXIDE_STEP = FunctionStep(
     step_id="etch.wet_oxide",
     display_name="Buffered oxide etch (wet)",
     fidelity=DIDACTIC,
-    schema=(_DURATION, _SCALE),
+    schema=(_DURATION, _SCALE, _WET_UNIFORMITY),
     required=frozenset(),
     provided=frozenset(),
     run_function=_run_wet_oxide,
@@ -591,6 +629,7 @@ ION_BEAM_STEP = FunctionStep(
                   description="Angular half-width of the ion lobe"),
         ParamSpec("redeposition_yield", float, default=0.0, minimum=0.0, maximum=1.0,
                   description="Fraction of removed material that lands again"),
+        _ION_UNIFORMITY,
     ),
     required=frozenset(),
     provided=frozenset(),

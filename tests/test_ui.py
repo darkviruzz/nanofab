@@ -76,7 +76,7 @@ def buried(registry, library):
             steps=(
                 RecipeStep("substrate.select", {"material": SILICON, "surface": 40.0}),
                 RecipeStep("deposit.conformal_offset", {"material": OXIDE, "thickness": 60.0}),
-                RecipeStep("resist.spin_coat", {"material": RESIST, "thickness": 80.0}),
+                RecipeStep("resist.spin_coat_ideal", {"material": RESIST, "thickness": 80.0}),
             ),
         ),
         registry=registry,
@@ -291,7 +291,7 @@ def test_a_session_gates_on_capabilities_with_the_sentence(registry, library) ->
     session.run("substrate.select", {"material": SILICON, "surface": 40.0})
     assert "resist.exposed" in (session.blocked_reason("develop.ideal") or "")
     assert "develop.ideal" not in session.runnable_steps()
-    session.run("resist.spin_coat", {"material": RESIST, "thickness": 90.0})
+    session.run("resist.spin_coat_ideal", {"material": RESIST, "thickness": 90.0})
 
     assert session.blocked_reason("develop.ideal") is not None
     session.run(
@@ -337,7 +337,7 @@ def test_a_session_shows_a_failing_gate_rather_than_raising(registry, library) -
     )
     session.run("substrate.select", {"material": SILICON, "surface": 40.0})
 
-    revision = session.run("resist.spin_coat", {"material": RESIST, "thickness": 400.0})
+    revision = session.run("resist.spin_coat_ideal", {"material": RESIST, "thickness": 400.0})
 
     assert not revision.ok
     assert len(session.chain) == 2
@@ -413,7 +413,7 @@ def test_a_session_replays_at_another_wafer_position(registry, library) -> None:
 
 
 def test_a_scene_is_derived_and_the_v1_layer_list_does_not_come_back(
-    registry, library
+        registry, library
 ) -> None:
     """Plan §3.6: where the UI wants a stack summary, it is derived."""
     grid, steps = demo_recipe()

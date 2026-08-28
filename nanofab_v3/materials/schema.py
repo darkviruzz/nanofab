@@ -44,6 +44,7 @@ from typing import Any, Mapping
 from nanofab_v3.materials.material import (
     DevelopModel,
     DissolveModel,
+    HardBakeModel,
     MaterialId,
     MaterialType,
     SpinCurve,
@@ -57,6 +58,7 @@ _SUBMODELS: dict[str, Any] = {
     "sputter_response": SputterResponse,
     "develop": DevelopModel,
     "dissolve": DissolveModel,
+    "hard_bake": HardBakeModel,
     "spin_curve": SpinCurve,
 }
 """Fields of `MaterialType` that are themselves dataclasses of scalars.

@@ -91,6 +91,7 @@ from nanofab_v3.processes.contract import (
     CapabilityError,
     ProcessStep,
     StepContext,
+    process_uniformity_factor,
     validate_params,
 )
 from nanofab_v3.processes.substrate import through_etched
@@ -154,19 +155,19 @@ class StepOutcome:
 
 
 def run_step(
-    step: ProcessStep,
-    structure: Structure,
-    params: Mapping[str, Any] | None = None,
-    *,
-    library: MaterialLibrary | None = None,
-    capabilities: Iterable[str] = (),
-    recipe_id: str = "recipe",
-    position: tuple[float, float] = (0.0, 0.0),
-    index: int = 0,
-    artifacts: ArtifactSink | None = None,
-    policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
-    tolerances: commit_gate.GateTolerances = commit_gate.GateTolerances(),
-    domain: domain_kernel.DomainPolicy | None = None,
+        step: ProcessStep,
+        structure: Structure,
+        params: Mapping[str, Any] | None = None,
+        *,
+        library: MaterialLibrary | None = None,
+        capabilities: Iterable[str] = (),
+        recipe_id: str = "recipe",
+        position: tuple[float, float] = (0.0, 0.0),
+        index: int = 0,
+        artifacts: ArtifactSink | None = None,
+        policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
+        tolerances: commit_gate.GateTolerances = commit_gate.GateTolerances(),
+        domain: domain_kernel.DomainPolicy | None = None,
 ) -> StepOutcome:
     """Validate, gate, run and commit one process step.
 
@@ -184,6 +185,9 @@ def run_step(
         )
 
     resolved = validate_params(step.parameter_schema(), params)
+    rate_scale = process_uniformity_factor(
+        float(resolved.get("uniformity_percent", 0.0)), position
+    )
     declared_missing = missing_before_running(step, resolved, library)
     if declared_missing:
         raise MissingMaterialsError(declared_missing)
@@ -199,6 +203,7 @@ def run_step(
             capabilities=available,
             rng=np.random.default_rng(step_seed(recipe_id, position, index)),
             position=position,
+            rate_scale=rate_scale,
             artifacts=artifacts,
         )
         result = step.run(context)
@@ -247,10 +252,10 @@ def run_step(
         measurements=result.measurements,
         artifacts=tuple(result.artifacts),
         logs=(
-            tuple(result.logs)
-            + report.describe()
-            + unknown.describe()
-            + change.describe(outcome.structure.grid)
+                tuple(result.logs)
+                + report.describe()
+                + unknown.describe()
+                + change.describe(outcome.structure.grid)
         ),
         unknown=unknown,
         domain=change,
@@ -259,7 +264,7 @@ def run_step(
 
 
 def _merged_change(
-    first: domain_kernel.DomainChange, second: domain_kernel.DomainChange
+        first: domain_kernel.DomainChange, second: domain_kernel.DomainChange
 ) -> domain_kernel.DomainChange:
     """One `DomainChange` describing both, so the log line counts the whole step."""
     return domain_kernel.DomainChange(
@@ -271,14 +276,14 @@ def _merged_change(
 
 
 def run_chain(
-    steps: Sequence[tuple[ProcessStep, Mapping[str, Any]]],
-    structure: Structure,
-    *,
-    library: MaterialLibrary | None = None,
-    recipe_id: str = "recipe",
-    position: tuple[float, float] = (0.0, 0.0),
-    strict: bool = True,
-    **kwargs: Any,
+        steps: Sequence[tuple[ProcessStep, Mapping[str, Any]]],
+        structure: Structure,
+        *,
+        library: MaterialLibrary | None = None,
+        recipe_id: str = "recipe",
+        position: tuple[float, float] = (0.0, 0.0),
+        strict: bool = True,
+        **kwargs: Any,
 ) -> tuple[StepOutcome, ...]:
     """Run a whole recipe, threading structure and capabilities through it.
 

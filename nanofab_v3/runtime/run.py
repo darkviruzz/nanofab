@@ -11,10 +11,11 @@ been had it been there from the start.
 
 *The solver never sees a wafer position.* A recipe parameter may be a function
 over the wafer — a rate radial profile, a bow-induced incidence-angle offset —
-and `effective_params` resolves it **before** anything reaches `StepContext`. Past
-that call a parameter is a plain number and the process cannot tell one position
-from another. That is what ADR-0004 buys: the 2D solver stays a 2D solver, and
-"which position" is a property of materialization rather than of the structure.
+and `effective_params` resolves it before the process runs. E34's reserved
+`uniformity_percent` convention is resolved one boundary later by the process
+engine into a scalar `StepContext.rate_scale`; wrappers and kernels receive only
+that scalar. The 2D solver therefore stays a 2D solver, and "which position" is a
+property of materialization rather than of the structure.
 
 The one place a position legitimately reaches the kernel is the RNG seed
 (`engine.step_seed`), and it reaches it as a seed rather than as a coordinate:
@@ -226,7 +227,7 @@ class Recipe:
 
 
 def effective_params(
-    recipe: Recipe, position: Position, step: int | RecipeStep
+        recipe: Recipe, position: Position, step: int | RecipeStep
 ) -> dict[str, Any]:
     """Plan §8's resolution: one step's parameters at one wafer position.
 
@@ -269,6 +270,34 @@ def positions_on_radius(radius: float, count: int, *, start: float = 0.0) -> tup
     return tuple(
         (round(radius * math.cos(a), 9), round(radius * math.sin(a), 9)) for a in angles
     )
+
+
+def positions_across_radius(radius: float, count: int) -> tuple[Position, ...]:
+    """Centre plus positions at distinct radii, distributed around the wafer.
+
+    E34 needs the ordinary five-position fan to *show* a radial process profile.
+    A centre plus four points on one ring has five positions but only two local
+    rates.  This deterministic fan uses radii ``0 .. radius`` and rotates each
+    non-centre point around the four quadrants, giving five distinct rates when
+    ``count == 5`` without inventing an azimuthal dependence.
+    """
+    if count < 1:
+        raise ValueError("a position fan needs at least one position")
+    if radius < 0.0:
+        raise ValueError("a position fan radius must be non-negative")
+    if count == 1:
+        return (CENTER,)
+    points: list[Position] = [CENTER]
+    for index in range(1, count):
+        local_radius = float(radius) * index / (count - 1)
+        angle = 2.0 * math.pi * (index - 1) / (count - 1)
+        points.append(
+            (
+                round(local_radius * math.cos(angle), 9),
+                round(local_radius * math.sin(angle), 9),
+            )
+        )
+    return tuple(points)
 
 
 def as_positions(positions: Iterable[Sequence[float]] | None) -> tuple[Position, ...]:

@@ -91,7 +91,7 @@ def lift_off_steps(*, metal_thickness: float = 20.0, resist_thickness: float = 9
     """substrate -> resist -> ideal exposure -> ideal development -> evaporation."""
     return (
         ("substrate.select", {"material": SILICON, "surface": SURFACE}),
-        ("resist.spin_coat", {"material": RESIST, "thickness": resist_thickness}),
+        ("resist.spin_coat_ideal", {"material": RESIST, "thickness": resist_thickness}),
         (
             "litho.expose_ideal",
             {"material": RESIST, "pattern": "window", "center": CENTRE, "width": WINDOW},
@@ -114,8 +114,8 @@ def bilayer_steps(
     """
     return (
         ("substrate.select", {"material": SILICON, "surface": SURFACE}),
-        ("resist.spin_coat", {"material": UNDERLAYER, "thickness": under}),
-        ("resist.spin_coat", {"material": RESIST, "thickness": imaging}),
+        ("resist.spin_coat_ideal", {"material": UNDERLAYER, "thickness": under}),
+        ("resist.spin_coat_ideal", {"material": RESIST, "thickness": imaging}),
         (
             "litho.expose_ideal",
             {"material": RESIST, "pattern": "window", "center": CENTRE, "width": mouth},
@@ -134,7 +134,7 @@ def masked_oxide_steps(*, window: float = 80.0) -> Steps:
     return (
         ("substrate.select", {"material": SILICON, "surface": SURFACE}),
         ("deposit.conformal_offset", {"material": OXIDE, "thickness": 60.0}),
-        ("resist.spin_coat", {"material": RESIST, "thickness": 60.0}),
+        ("resist.spin_coat_ideal", {"material": RESIST, "thickness": 60.0}),
         (
             "litho.expose_ideal",
             {"material": RESIST, "pattern": "window", "center": CENTRE, "width": window},

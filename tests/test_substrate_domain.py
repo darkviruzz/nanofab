@@ -237,7 +237,7 @@ def test_the_domain_capability_is_derived_rather_than_declared(library, registry
 
 
 def test_a_coat_taller_than_the_headroom_grows_the_domain_instead_of_failing(
-    library, registry
+        library, registry
 ) -> None:
     """The DoD's second sentence, from the top. Before M7 this was a FAIL."""
     grid = cross_section_grid(width=240.0, thickness=40.0, headroom=100.0)
@@ -287,7 +287,7 @@ def test_hitting_the_cap_says_what_raising_it_would_cost(library, registry) -> N
     wafer = substrate.select_substrate(grid, SILICON, surface=40.0)
 
     outcome = run_step(
-        registry["resist.spin_coat"],
+        registry["resist.spin_coat_ideal"],
         wafer,
         {"thickness": 900.0},
         library=library,
@@ -304,7 +304,7 @@ def test_hitting_the_cap_says_what_raising_it_would_cost(library, registry) -> N
 
 
 def test_etching_through_the_substrate_says_so_rather_than_computing_something(
-    library, registry
+        library, registry
 ) -> None:
     """The DoD's fourth sentence. B2 turns this into a via; the data is already right."""
     grid = cross_section_grid(width=200.0, thickness=60.0, headroom=200.0)
@@ -326,7 +326,7 @@ def test_etching_through_the_substrate_says_so_rather_than_computing_something(
 
 
 def test_a_substrate_nobody_described_is_not_measured_against_an_invented_thickness(
-    library, registry
+        library, registry
 ) -> None:
     """No metadata, no verdict — the same rule `semi_infinite` states out loud."""
     grid = cross_section_grid(width=200.0, thickness=60.0, headroom=200.0)

@@ -363,13 +363,12 @@ def builtin_registry() -> ProcessRegistry:
     importable without pulling in every process — which is what a plugin host
     needs, and what keeps the import graph a tree.
 
-    Complete as of M5 for plan §6, and extended in M6 by the seven steps of
-    roadmap §3's process table. What M3 left out with a milestone against it —
-    inspection, particles and clean, anneal — is in the last block, and
-    `discover_plugins` is what adds anything else (plan §5.4, §11).
+    Complete as of M5 for plan §6, extended in M6 by the process table, and in
+    M12 by the explicit ideal spin coat and bake trilogy. `discover_plugins` is
+    what adds anything else (plan §5.4, §11).
     """
     from nanofab_v3.processes import (
-        anneal,
+        bake,
         contamination,
         deposition,
         etching,
@@ -382,6 +381,7 @@ def builtin_registry() -> ProcessRegistry:
     registry = ProcessRegistry()
     for step in (
             substrate.SELECT_SUBSTRATE,
+            lithography.SPIN_COAT_IDEAL,
             lithography.SPIN_COAT,
             lithography.EXPOSE_IDEAL,
             lithography.EXPOSE_DOSE,
@@ -410,7 +410,9 @@ def builtin_registry() -> ProcessRegistry:
             contamination.CLEAN,
             inspection.SEM,
             inspection.PROFILOMETER,
-            anneal.ANNEAL,
+            bake.SOFT_BAKE,
+            bake.POST_EXPOSURE_BAKE,
+            bake.HARD_BAKE,
     ):
         registry.register(step)
     return registry

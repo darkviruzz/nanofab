@@ -211,7 +211,7 @@ def test_s1_control_without_a_window_the_solvent_has_no_way_in(registry, library
     outcomes = run_chain(
         [
             (registry["substrate.select"], {"material": SILICON, "surface": SURFACE}),
-            (registry["resist.spin_coat"], {"material": RESIST, "thickness": 90.0}),
+            (registry["resist.spin_coat_ideal"], {"material": RESIST, "thickness": 90.0}),
             (registry["deposit.evaporate"], {"material": METAL, "thickness": 20.0}),
             (registry["strip.lift_off"], {"material": RESIST}),
         ],

@@ -310,9 +310,9 @@ class MainWindow(QMainWindow):
         wafer_menu = self.menuBar().addMenu("&Wafer")
         fan = QAction("&Fan this recipe over the wafer", self)
         fan.setToolTip(
-            "Replay the current recipe at the centre and four edge positions "
-            "(plan §8): each one is an independent chain, materialized in the "
-            "background and cached per position."
+            "Replay the current recipe at five radii from the chamber centre to "
+            "150 mm (plan §8, roadmap E34): each one is an independent chain, "
+            "materialized in the background and cached per position."
         )
         fan.triggered.connect(self._on_fan_out)
         wafer_menu.addAction(fan)
@@ -506,10 +506,10 @@ class MainWindow(QMainWindow):
         form *does* name is knowable now, and asking afterwards means the step has
         already run at rate zero and the answer only helps the next one.
 
-        `anneal.thermal` is why this is not optional: it swaps a resist for
-        `resist_hardbaked` and nothing checked that the target existed, so a typo
-        in `becomes` produced a sample made of a material the library cannot
-        answer for — silently, one step before the strip that then did nothing.
+        The old generic anneal is why this is not optional: its typed target could
+        produce a sample made of a material the library could not answer for.
+        `bake.hard` derives that target from the library and checks it before the
+        transition, while this preflight remains the generic rule for typed input.
 
         Cancelling means the step does not run. That is the point of asking
         first: the alternative is a revision somebody has to go and remove.
@@ -791,7 +791,7 @@ class MainWindow(QMainWindow):
     # -- the wafer fan (plan §8, §14) ----------------------------------------
 
     def _on_fan_out(self) -> None:
-        """Materialize the current recipe at the centre and four edge positions.
+        """Materialize the current recipe at five distinct chamber radii.
 
         The engine has been able to do this since M4; what happens here is a
         `WaferFan` over the session's own recipe, sharing the one cache directory
@@ -806,10 +806,10 @@ class MainWindow(QMainWindow):
         cache = replay_cache_for(
             default_cache_dir(), self.session.recipe, registry=self.session.registry
         )
-        fan = WaferFan.on_radius(
+        fan = WaferFan.across_radius(
             self.session.recipe,
-            radius=60.0,
-            count=4,
+            radius=150.0,
+            count=5,
             registry=self.session.registry,
             library=self.session.library,
             cache=cache,

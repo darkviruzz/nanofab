@@ -45,7 +45,7 @@
       }
     },
     {
-      "step_id": "resist.spin_coat",
+      "step_id": "resist.spin_coat_ideal",
       "params": {
         "material": "resist",
         "thickness": 400.0
