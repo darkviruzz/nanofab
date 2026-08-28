@@ -224,9 +224,9 @@ def commit(
         lineage = occurrences.match_lineage(
             occurrences.label_occurrences(parent), occurrences.label_occurrences(committed)
         )
-        for entry in lineage.entries:
-            if entry.kind in ("split", "merged", "vanished"):
-                warnings.append(entry.describe())
+        # Splitting, merging and vanishing are ordinary process outcomes. Lineage
+        # keeps them visible as information; putting them in `warnings` made a
+        # successful etch/develop/lift-off revision orange in the UI.
 
     # 6. Capability updates (plan §5.3).
     granted, lost, broken = _update_capabilities(committed, capabilities, provides, retires)

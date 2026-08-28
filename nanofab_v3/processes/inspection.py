@@ -21,7 +21,7 @@ answer, dressed in the units the instrument reports it in:
 
 - **SEM** sees the cross-section: which materials are present, how many separate
   pieces of the one being looked at, how wide and how tall it is. The artifact is
-  the material index map — the same exclusive partition `ui.scene` draws from
+  the material cell grid — the same exclusive partition `ui.scene` draws from
   (plan §20.6), which is what makes "what the SEM saw" and "what the picture
   shows" the same array rather than two renderings that could drift.
 - **The profilometer** drags a stylus across the surface and reports its trace,
@@ -261,7 +261,7 @@ SEM = FunctionStep(
     run_function=_run_sem,
     description=(
         "A look at the sample **in cross-section**: the connected pieces of each material, "
-        "counted and measured, with the material index map saved as an artifact when there is "
+        "counted and measured, with the material cell grid saved as an artifact when there is "
         "somewhere to put one."
         "\n\n"
         "The name says cross-section because that is what this view is (roadmap E35): the plane "
@@ -307,4 +307,3 @@ PROFILOMETER = FunctionStep(
         "Changes nothing on the sample. Needs: a sample."
     ),
 )
-

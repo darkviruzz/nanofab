@@ -4,7 +4,7 @@ Successor of `nanofab_modular`, implementing `docs/plans/v2-structure-model.md`.
 The sample's geometry is one signed-distance field per material on one shared
 `Grid` (ADR-0002) — the single stored truth. Analytic primitives exist only as
 constructors; set operations are pointwise min/max; everything else (solid union,
-material index map, contours, `Occurrence`s) is derived per revision.
+material cell grid, contours, `Occurrence`s) is derived per revision.
 
 Package layout (plan §14):
 
@@ -34,7 +34,7 @@ from __future__ import annotations
 from nanofab_v3.materials import MaterialId, MaterialType
 from nanofab_v3.model import EMPTY, PHI_DTYPE, FieldKey, FieldSpec, Grid, Structure
 
-__version__ = "0.5.0.dev0"
+__version__ = "0.5.0a1"
 
 __all__ = [
     "EMPTY",

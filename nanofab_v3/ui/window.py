@@ -50,7 +50,7 @@ from nanofab_v3.ui.panels import (
     RunLogPanel,
     StepListPanel,
 )
-from nanofab_v3.ui.scene import ALWAYS_ON, OVERLAY_KINDS, light_preview
+from nanofab_v3.ui.scene import OVERLAY_KINDS, light_preview
 from nanofab_v3.ui.scene import build as build_scene
 from nanofab_v3.ui.preview import build_step_preview
 from nanofab_v3.ui.demos import demo, demos as all_demos
@@ -153,12 +153,13 @@ class MainWindow(QMainWindow):
 
     def _build_view_controls(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.addWidget(QLabel("Overlays:"))
+        overlays_label = QLabel("Overlays:")
+        row.addWidget(overlays_label)
+        enabled_overlays = set(app_settings.overlay_names(self.settings, OVERLAY_KINDS))
+        any_overlay_control = False
         for kind in OVERLAY_KINDS:
             box = QCheckBox(kind)
-            if kind in app_settings.overlay_names(self.settings, OVERLAY_KINDS) or (
-                    kind in ALWAYS_ON and not self.settings.get("view.overlays")
-            ):
+            if kind in enabled_overlays:
                 # Roadmap E9: the exposure *result* colours without being asked,
                 # because a latent image you have to remember to look for is a
                 # latent image nobody looks at. Not free — the outline costs
@@ -176,8 +177,12 @@ class MainWindow(QMainWindow):
                 # every frame (handoff §4.3).
                 box.setToolTip(f"Compute the {kind} predicate for the shown revision")
             box.stateChanged.connect(self._refresh_canvas)
+            hidden = bool(self.settings.get(f"view.overlay_{kind}_hidden", False))
+            box.setVisible(not hidden)
+            any_overlay_control = any_overlay_control or not hidden
             self._overlays[kind] = box
             row.addWidget(box)
+        overlays_label.setVisible(any_overlay_control)
         self.light_box = QCheckBox("light preview")
         self.light_box.setChecked(bool(self.settings.get("view.light_preview", False)))
         self.light_box.setToolTip(
@@ -186,6 +191,9 @@ class MainWindow(QMainWindow):
             "overlay is the aerial image."
         )
         self.light_box.stateChanged.connect(self._refresh_canvas)
+        self.light_box.setVisible(
+            not bool(self.settings.get("view.light_preview_hidden", False))
+        )
         row.addWidget(self.light_box)
         row.addStretch(1)
         self.true_to_scale_box = QCheckBox("true to scale")
@@ -198,31 +206,41 @@ class MainWindow(QMainWindow):
         self.true_to_scale_box.stateChanged.connect(
             lambda _state: self.canvas.set_true_to_scale(self.true_to_scale_box.isChecked())
         )
+        self.canvas.set_true_to_scale(self.true_to_scale_box.isChecked())
+        self.true_to_scale_box.setVisible(
+            not bool(self.settings.get("view.true_to_scale_hidden", False))
+        )
         # Two pictures of one revision, so two radio buttons rather than a tick
-        # box: the contours and the index map are alternatives, and a checkbox
+        # box: the contours and the cell grid are alternatives, and a checkbox
         # said "and also" about something that is "instead". Which one starts
         # selected is `[view] picture` in settings.ini (E39).
-        row.addWidget(QLabel("  picture:"))
+        picture_label = QLabel("  picture:")
+        row.addWidget(picture_label)
         self.contour_radio = QRadioButton("contours")
         self.contour_radio.setToolTip(
             "The sub-cell outline the renderer derives from each phi — what the "
             "geometry is, at better than one-cell resolution"
         )
-        self.index_map_radio = QRadioButton("index map")
-        self.index_map_radio.setToolTip(
+        self.cell_grid_radio = QRadioButton("cell grid")
+        self.cell_grid_radio.setToolTip(
             "Paint material_index directly — one pixel per cell, the honest "
             "picture of what the model stores"
         )
         self._picture_group = QButtonGroup(self)
         self._picture_group.addButton(self.contour_radio)
-        self._picture_group.addButton(self.index_map_radio)
+        self._picture_group.addButton(self.cell_grid_radio)
         wanted = str(self.settings.get("view.picture", "contours"))
-        (self.index_map_radio if wanted == "index_map" else self.contour_radio).setChecked(True)
-        self.canvas.set_index_map_visible(wanted == "index_map")
-        self.index_map_radio.toggled.connect(self.canvas.set_index_map_visible)
+        cell_grid = wanted == "cell_grid"
+        (self.cell_grid_radio if cell_grid else self.contour_radio).setChecked(True)
+        self.canvas.set_index_map_visible(cell_grid)
+        self.cell_grid_radio.toggled.connect(self.canvas.set_index_map_visible)
+        picture_hidden = bool(self.settings.get("view.picture_hidden", False))
+        picture_label.setVisible(not picture_hidden)
+        self.contour_radio.setVisible(not picture_hidden)
+        self.cell_grid_radio.setVisible(not picture_hidden)
         row.addWidget(self.true_to_scale_box)
         row.addWidget(self.contour_radio)
-        row.addWidget(self.index_map_radio)
+        row.addWidget(self.cell_grid_radio)
         return row
 
     def _build_menu(self) -> None:
@@ -318,6 +336,8 @@ class MainWindow(QMainWindow):
         wafer_menu.addAction(fan)
         show = QAction("Show the wafer &map", self, checkable=True)
         show.toggled.connect(self.wafer.setVisible)
+        show.setChecked(bool(self.settings.get("view.wafer_map", False)))
+        show.setVisible(not bool(self.settings.get("view.wafer_map_hidden", False)))
         wafer_menu.addAction(show)
         self._wafer_visible_action = show
 

@@ -263,7 +263,7 @@ def test_normals_are_read_off_the_union_front_not_the_solid_field(buried, librar
     assert float(np.max(starts)) == pytest.approx(180.0, abs=1.0)
 
 
-def test_the_index_map_is_the_partition_the_canvas_rasterises(lift_off, library) -> None:
+def test_the_cell_grid_is_the_partition_the_canvas_rasterises(lift_off, library) -> None:
     snapshot = scene_builder.build(lift_off[4].structure, library=library)
 
     assert snapshot.index_map is not None
@@ -492,7 +492,7 @@ def test_the_step_list_greys_out_what_the_revision_cannot_run(qt_app, library) -
     assert ready == ["develop.ideal: ready"]
 
 
-def test_the_canvas_paints_the_sample_and_the_index_map(qt_app, lift_off, library) -> None:
+def test_the_canvas_paints_the_sample_and_the_cell_grid(qt_app, lift_off, library) -> None:
     """Both of plan §10's paths, rendered offscreen and checked for content."""
     from PySide6.QtGui import QImage
 
@@ -538,6 +538,28 @@ def test_the_canvas_says_what_is_under_the_cursor(qt_app, lift_off, library) -> 
     )
 
     assert seen and "nm" in seen[0]
+
+
+def test_lineage_information_does_not_mark_a_revision_as_a_warning(qt_app):
+    from nanofab_v3.runtime.revision import RevisionSummary
+    from nanofab_v3.ui.panels import RevisionListPanel
+
+    panel = RevisionListPanel()
+    summary = RevisionSummary(
+        index=1,
+        parent=0,
+        step_id="etch.wet",
+        display_name="Wet etch",
+        capabilities=frozenset(),
+        ok=True,
+        information=("chrome #1 split into #1, #2",),
+    )
+
+    panel.refresh((summary,))  # type: ignore[arg-type]
+
+    item = panel.list.item(0)
+    assert item.text().startswith("  #1")
+    assert "split into" in item.toolTip()
 
 
 def _render(widget, QImage) -> np.ndarray:

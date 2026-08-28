@@ -312,6 +312,12 @@ Rechner dasselbe (§5.2, ADR-0004). Die Datei wird mit **allen** Defaults und
 Kommentaren erzeugt, dokumentiert sich selbst, und wird **nie zurückgeschrieben**
 — zur Laufzeit umgeschaltete Toggles bleiben zur Laufzeit.
 
+Alpha-Korrektur: Jeder View-Toggle und jedes Overlay hat zwei unabhängige
+Schalter: den Startwert und `<name>_hidden`. Ein versteckter Schalter wendet den
+Startwert weiterhin an, entfernt aber seine Bedienung aus dem UI und sperrt ihn
+damit. Der Bildselector folgt derselben Regel mit `picture` und
+`picture_hidden`.
+
 **E40 — Artefakte in den Speicher, beim Speichern in den Ordner.** Ein
 Verzeichnis-Sink zwänge eine noch nicht gespeicherte Sitzung, sich einen Pfad
 auszudenken. Also `MemoryArtifactSink` (existiert bereits, kostet nichts), und

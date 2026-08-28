@@ -154,7 +154,7 @@ A named per-cell quantity on the `Grid` (dose, damage, temperature history), eit
 _Avoid_: "facet", "map" alone, "property" (that's on `MaterialType`).
 
 **Occurrence** (Materialvorkommen):
-A connected region of one material, derived per revision by connected-component labelling; identity across revisions is reconstructed by overlap matching, never stored.
+A connected region of one material, derived per revision by connected-component labelling; identity across revisions is reconstructed by overlap matching, never stored. Split, merge, appearance and disappearance are ordinary lineage information: they remain in logs and tooltips but do not turn a successful revision into an orange warning.
 _Avoid_: "layer" for this, "segment", "island".
 
 **Arrival** (per unit front):
@@ -175,8 +175,12 @@ Evaluating a Run at one wafer position by deterministic replay with position-res
 _Avoid_: "sampling" (collides with grid sampling), "instantiation".
 
 **Scene snapshot**:
-Everything a picture of one revision needs — per-material outlines in nm, the material index map, inspect overlays — derived from a `Structure` and holding no Qt. The boundary ADR-0001 exists to draw: anything that decides geometry is on this side of it, and the canvas only maps nm to pixels. Built when the revision changes, not per frame (107 ms against a 12 ms repaint).
+Everything a picture of one revision needs — per-material outlines in nm, the material cell grid, inspect overlays — derived from a `Structure` and holding no Qt. The boundary ADR-0001 exists to draw: anything that decides geometry is on this side of it, and the canvas only maps nm to pixels. Built when the revision changes, not per frame (107 ms against a 12 ms repaint).
 _Avoid_: "scene" alone (that was v1's monolithic `build_scene`), "render state".
+
+**View lock**:
+Every UI view toggle and overlay has two `[view]` settings: its startup value and a matching `_hidden` boolean. Hiding a control does not disable its value; it locks the application to that configured choice by removing the way to change it. The contours/cell-grid selector uses `picture` plus `picture_hidden` for the same reason.
+_Avoid_: treating "hidden" as "off", one comma-separated overlay setting that cannot lock controls independently.
 
 **Predicate**:
 A named question asked of one revision's geometry, answered without changing it — reachability, support, enclosed voids, undercut ratio, step coverage. The analysis vocabulary and the didactic payload: the UI renders their results and the acceptance tests assert them. Reachability and support are predicates *and* kernel steps, which is why they are the same functions.

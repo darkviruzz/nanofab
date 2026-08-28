@@ -250,7 +250,7 @@ class SceneSnapshot:
         overlays: The inspect overlays that were asked for.
         index_map: `structure.material_index` — the raster fast path, `EMPTY`
             (-1) where a cell is empty.
-        palette: Colour per material, for the index map and the legend.
+        palette: Colour per material, for the cell grid and the legend.
         caption: One line naming the revision.
         light: Where the light would go, when a shell has asked for the preview
             (roadmap E9). Empty otherwise, and never computed from the structure

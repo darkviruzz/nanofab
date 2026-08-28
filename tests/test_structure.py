@@ -41,7 +41,7 @@ def test_structure_is_a_value_object(grid_2d: Grid) -> None:
 
 
 def test_derived_views_follow_the_materials(grid_2d: Grid) -> None:
-    """Solid union, empty space and index map are derived per revision."""
+    """Solid union, empty space and cell grid are derived per revision."""
     structure = _two_material_structure(grid_2d)
 
     expected_solid = np.minimum(structure.phi_of("silicon"), structure.phi_of("metal"))

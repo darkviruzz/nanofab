@@ -1862,3 +1862,40 @@ Known boundaries:
   diffusion kinetics exist in the library.
 - Uniformity is the fixed quadratic teaching profile for a 300 mm tool; the
   class defaults are not calibrated machine data.
+
+## Update 2026-08-28 (0.5.0a1 student-alpha presentation fixes)
+
+What changed:
+- Renamed the user-facing "index map" picture to **cell grid**. The radio choice
+  now reaches the canvas as a strict either/or: cell-grid pixels disable all
+  material-contour painting instead of receiving dark outlines over their cell
+  boundaries.
+- Removed occurrence split/merge/vanish entries from commit-gate warnings. The
+  same lineage remains in revision summaries, logs and tooltips as `info`, but no
+  longer gives an otherwise successful process the orange `~` mark.
+- Replaced `[view] overlays = ...` with one boolean startup value and one
+  `<name>_hidden` boolean for each of the six actual overlays. Added the same
+  value/visibility pair for `true_to_scale`, `light_preview` and `wafer_map`, plus
+  `picture_hidden` for the contours/cell-grid selector. Hidden controls still
+  apply their configured value and therefore lock it.
+- Bumped the application from `0.5.0.dev0` to the first student alpha,
+  `0.5.0a1`.
+
+Why it changed:
+- Pixel boundaries were unreadable under overlaid contours, normal topology
+  changes looked like suspicious runs, and the settings file could choose only
+  startup values—not whether students were allowed to change those choices.
+
+Validation:
+- Targeted UI/settings/gate/persistence suite: **89 passed**.
+- `.venv/Scripts/python.exe -m compileall nanofab_v3 tests`.
+- `.venv/Scripts/python.exe -m pytest` — **690 passed** in 129.48 s, 0 skipped.
+- Source `python -m nanofab_v3 --selftest` — 7/7 in 3.6 s.
+- Fresh PyInstaller onedir: generated `settings.ini` inspected with all value /
+  visibility pairs; packaged `nanofab_v3.exe --selftest` passed 7/7 in 3.6 s.
+
+Commit scope:
+- `nanofab_v3/processes/bake.py` and `data/demos/05_spin_leveling.json`, omitted
+  from the preceding M12 commit because they were still untracked, belong to this
+  commit. The unrelated local `cross_section_general_prototype.spec`, `keks.zip`
+  and `keks/` remain untracked and must not be staged.

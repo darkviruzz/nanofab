@@ -8,7 +8,7 @@ Everything else is **derived, never stored as truth**:
 
 - solid union `solid_phi = min_m phi[m]`,
 - empty space `empty_phi = -solid_phi`,
-- the material index map `argmin_m phi[m]`,
+- the material cell grid `argmin_m phi[m]`,
 - contours (`nanofab_v3.kernel.contours`) and `Occurrence`s (M3).
 
 Analytic primitives exist only as constructors (ADR-0002): once sampled onto the

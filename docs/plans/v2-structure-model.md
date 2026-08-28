@@ -2706,3 +2706,25 @@ a didactic assumption in the material file and its provenance README.
 | version | `0.4.0.dev0` | **`0.5.0.dev0`** |
 | library fingerprint | — | **`35fbb1b172cb`** |
 | `--selftest` | 7/7 | **7/7 source; 7/7 fresh onedir (7.1 s)** |
+
+### 28.5 Alpha correction: picture modes, lineage severity and locked views
+
+The first student-facing pass exposed three presentation contracts that M12's
+green physics tests could not:
+
+- The UI term is **cell grid**, not index map. Contours and the cell grid are
+  exclusive picture modes all the way down to the canvas; selecting pixels also
+  disables outline painting, so sub-cell contours cannot cover cell boundaries.
+- Split, merge, appearance and disappearance of occurrences remain stored and
+  visible as lineage information, but are not validation warnings. They appear in
+  logs and tooltips without the orange `~` revision mark. Actual balance,
+  boundary, capability and invariant warnings retain their severity.
+- Every checkbox-like view and every overlay now has a startup-value key and an
+  independent `<name>_hidden` key. A hidden control still applies its configured
+  value and is therefore locked, rather than being treated as off. The picture
+  selector follows the same contract through `picture` / `picture_hidden`; the
+  wafer-map action is included as a view toggle.
+
+The fresh onedir's generated `settings.ini` contains every value/visibility pair.
+The alpha identifier is `0.5.0a1`; the complete suite is **690 passed, 0 skipped**
+and both source and rebuilt onedir acceptance paths pass 7/7.

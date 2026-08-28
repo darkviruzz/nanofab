@@ -19,6 +19,9 @@ Three rules, and each is a decision:
 - **Never written back.** Toggles flipped at runtime stay at runtime. A file that
   rewrote itself would lose its comments the first time somebody ticked a box,
   and the comments are most of what it is for.
+- **Value and visibility are separate.** Every view toggle and overlay has its
+  startup value plus a `_hidden` switch. Hidden controls still apply their value;
+  they merely stop the UI from changing it.
 - **Complete and self-documenting.** `default_ini_text()` renders **every**
   setting with its default and a sentence about it, from the same table
   `parse()` reads, so the file cannot drift from the code that consumes it. The
@@ -100,16 +103,53 @@ class SettingSpec:
         return text
 
 
+def _view_toggle(key: str, default: bool, comment: str) -> tuple[SettingSpec, SettingSpec]:
+    """A view value and the independent switch that removes its UI control."""
+    return (
+        SettingSpec("view", key, bool, default, comment),
+        SettingSpec(
+            "view",
+            f"{key}_hidden",
+            bool,
+            False,
+            f"Hide the '{key}' control while still applying its configured value.\n"
+            "True locks the view to that value; false lets the UI change it.",
+        ),
+    )
+
+
 KEYS: tuple[SettingSpec, ...] = (
-    SettingSpec(
-        "view",
-        "overlays",
-        tuple,
-        ("exposed", "dose"),
-        "Overlays ticked at startup, comma separated. The exposure result is on by\n"
-        "default (roadmap E9): a latent image you have to switch on is one nobody\n"
-        "looks at. The predicates cost 3-12 ms each when ticked, so they are not.\n"
-        "Available: exposed, dose, reachable, support, undercut, voids.",
+    *_view_toggle(
+        "overlay_exposed",
+        True,
+        "Show the binary exposed-field overlay at startup. On by default because\n"
+        "an exposure result should not need a second action to become visible.",
+    ),
+    *_view_toggle(
+        "overlay_dose",
+        True,
+        "Show the continuous dose-field overlay at startup. On by default because\n"
+        "it is the didactic result of dose-based exposure.",
+    ),
+    *_view_toggle(
+        "overlay_reachable",
+        False,
+        "Compute and show the reachability predicate overlay at startup.",
+    ),
+    *_view_toggle(
+        "overlay_unsupported",
+        False,
+        "Compute and show the unsupported-material predicate overlay at startup.",
+    ),
+    *_view_toggle(
+        "overlay_normals",
+        False,
+        "Compute and show surface-normal vectors at startup.",
+    ),
+    *_view_toggle(
+        "overlay_voids",
+        False,
+        "Compute and show the enclosed-void predicate overlay at startup.",
     ),
     SettingSpec(
         "view",
@@ -117,26 +157,35 @@ KEYS: tuple[SettingSpec, ...] = (
         str,
         "contours",
         "Which picture of the sample to start with. 'contours' is the sub-cell\n"
-        "outline the renderer derives; 'index_map' paints material_index directly,\n"
+        "outline the renderer derives; 'cell_grid' paints material_index directly,\n"
         "one pixel per cell — the honest picture of what the model stores.",
-        choices=("contours", "index_map"),
+        choices=("contours", "cell_grid"),
     ),
     SettingSpec(
         "view",
-        "true_to_scale",
+        "picture_hidden",
         bool,
+        False,
+        "Hide the contours/cell-grid selector while still applying `picture`.\n"
+        "True locks the application to the configured picture mode.",
+    ),
+    *_view_toggle(
+        "true_to_scale",
         False,
         "Draw the domain 1:1 whatever its aspect ratio. Off by default because a\n"
         "very deep or very narrow domain is otherwise a sliver; the compression\n"
         "factor is shown in the picture either way, so it is never silent.",
     ),
-    SettingSpec(
-        "view",
+    *_view_toggle(
         "light_preview",
-        bool,
         False,
         "Draw where the light would fall, from the mask parameters in the form,\n"
         "before the exposure runs. Only while a litho step is selected.",
+    ),
+    *_view_toggle(
+        "wafer_map",
+        False,
+        "Show the wafer-position map at startup.",
     ),
     SettingSpec(
         "view",
@@ -408,9 +457,12 @@ def invalidate_cache() -> None:
 
 
 def overlay_names(settings: Settings, known: Sequence[str]) -> tuple[str, ...]:
-    """The `[view] overlays` entries that this build actually has, in file order."""
-    wanted = settings.get("view.overlays", ())
-    return tuple(name for name in wanted if name in known)
+    """Known overlays whose independent `[view]` startup switches are on."""
+    return tuple(
+        name
+        for name in known
+        if bool(settings.get(f"view.overlay_{name}", name in ("exposed", "dose")))
+    )
 
 
 __all__ = [

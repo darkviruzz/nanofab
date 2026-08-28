@@ -16,7 +16,7 @@ Two paths to a picture, both from the same snapshot:
 
 - **Outlines** — filled polygons from `marching_squares` over each `phi_m`.
   Sub-cell smooth, and the default.
-- **Index map** — a `QImage` straight off `structure.material_index`, one pixel
+- **Cell grid** — a `QImage` straight off `structure.material_index`, one pixel
   per cell. The fast fallback and the debug view plan §10 asks for; it is also
   the honest picture of what the model actually stores, which is why the toggle
   is in the UI rather than hidden.
@@ -92,12 +92,15 @@ class CrossSectionCanvas(QWidget):
         return self._scene
 
     def set_index_map_visible(self, visible: bool) -> None:
-        """Switch to the raster view of `material_index` (plan §10's fast path)."""
+        """Switch exclusively to the cell-grid view of `material_index`."""
         self._show_index_map = bool(visible)
+        self._show_outlines = not self._show_index_map
         self.update()
 
     def set_outlines_visible(self, visible: bool) -> None:
         self._show_outlines = bool(visible)
+        if self._show_outlines:
+            self._show_index_map = False
         self.update()
 
     # -- the nm <-> pixel map ------------------------------------------------
@@ -179,14 +182,14 @@ class CrossSectionCanvas(QWidget):
                     )
                 ),
             )
-        if self._show_outlines:
+        if self._show_outlines and not self._show_index_map:
             for shape in scene.shapes:
                 path = self._path(shape.outlines)
                 if path is None:
                     continue
                 color = QColor(shape.color)
                 painter.setPen(QPen(color.darker(150), 1.2))
-                painter.fillPath(path, color if not self._show_index_map else Qt.NoBrush)
+                painter.fillPath(path, color)
                 painter.drawPath(path)
 
         # The light preview goes under the overlays: it is what the mask would do,
@@ -332,7 +335,7 @@ class CrossSectionCanvas(QWidget):
         if point is None:
             return
         # The hit test is `SceneSnapshot`'s, not this widget's: it reads the
-        # index map, which is an exclusive partition. Asking a QPainterPath
+        # cell grid, which is an exclusive partition. Asking a QPainterPath
         # `contains()` would be v1's mistake in miniature — two overlapping
         # filled paths both claim the point, and the answer would depend on
         # paint order.

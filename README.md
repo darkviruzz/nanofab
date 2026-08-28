@@ -6,7 +6,7 @@ A digital twin for nanofabrication process runs: each process step (lithography,
 
 ## Structure model v2 (`nanofab_v3/`)
 
-Geometry is one signed-distance field per material on one shared `Grid` — the single stored truth (ADR-0002). Set operations are pointwise min/max; solid union, material index map, contours and occurrences are all derived per revision. Complexity lives in the **process**, never in the structure model.
+Geometry is one signed-distance field per material on one shared `Grid` — the single stored truth (ADR-0002). Set operations are pointwise min/max; solid union, material cell grid, contours and occurrences are all derived per revision. Complexity lives in the **process**, never in the structure model.
 
 ```bash
 pip install -e ".[dev,ui]"   # numpy + scipy; pytest and PySide6 as extras

@@ -82,14 +82,52 @@ def test_adjust_loads_the_values_that_ran_even_when_the_filter_would_hide_them(q
 
 
 def test_the_picture_is_a_pair_of_alternatives_not_a_tick_box(qt_app):
-    """Contours and the index map are two pictures of one revision, not a stack."""
+    """Contours and the cell grid are alternatives, never a stacked picture."""
     from nanofab_v3.ui.window import MainWindow
 
     window = MainWindow()
-    assert window.contour_radio.isChecked() and not window.index_map_radio.isChecked()
-    window.index_map_radio.setChecked(True)
+    assert window.contour_radio.isChecked() and not window.cell_grid_radio.isChecked()
+    assert window.cell_grid_radio.text() == "cell grid"
+    window.cell_grid_radio.setChecked(True)
     assert not window.contour_radio.isChecked()
     assert window.canvas._show_index_map is True
+    assert window.canvas._show_outlines is False
+
+
+def test_hidden_view_controls_lock_their_configured_values(qt_app):
+    from nanofab_v3 import settings as app_settings
+    from nanofab_v3.ui.window import MainWindow
+
+    values = dict(app_settings.defaults().values)
+    values.update(
+        {
+            "view.true_to_scale": True,
+            "view.true_to_scale_hidden": True,
+            "view.picture": "cell_grid",
+            "view.picture_hidden": True,
+            "view.overlay_exposed": True,
+            "view.overlay_exposed_hidden": True,
+            "view.light_preview": True,
+            "view.light_preview_hidden": True,
+            "view.wafer_map": True,
+            "view.wafer_map_hidden": True,
+        }
+    )
+    window = MainWindow(settings=app_settings.Settings(values=values))
+
+    assert window.true_to_scale_box.isChecked()
+    assert window.true_to_scale_box.isHidden()
+    assert window.canvas._true_to_scale is True
+    assert window.cell_grid_radio.isChecked()
+    assert window.cell_grid_radio.isHidden()
+    assert window.canvas._show_index_map is True
+    assert window.canvas._show_outlines is False
+    assert window._overlays["exposed"].isChecked()
+    assert window._overlays["exposed"].isHidden()
+    assert window.light_box.isChecked() and window.light_box.isHidden()
+    assert not window.wafer.isHidden()
+    assert window._wafer_visible_action.isChecked()
+    assert not window._wafer_visible_action.isVisible()
 
 
 # -- E35: the ellipsometer is gone, the SEM says what it shows ----------------

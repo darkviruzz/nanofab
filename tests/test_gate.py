@@ -225,7 +225,7 @@ def test_cutting_a_film_in_two_is_reported_as_a_split(grid_2d: Grid) -> None:
     assert committed.lineage.topology_changed
     assert [entry.kind for entry in committed.lineage.entries] == ["split"]
     assert "split into" in committed.lineage.describe()[0]
-    assert any("split" in warning for warning in committed.report.warnings)
+    assert not any("split" in warning for warning in committed.report.warnings)
 
 
 def test_an_untouched_scene_reports_no_lineage_change(masked: Structure) -> None:

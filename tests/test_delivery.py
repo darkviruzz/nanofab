@@ -180,6 +180,20 @@ def test_the_generated_ini_parses_back_to_exactly_the_defaults():
     assert parsed.problems == ()
 
 
+def test_every_view_toggle_and_overlay_has_value_and_visibility_settings():
+    from nanofab_v3.ui.scene import OVERLAY_KINDS
+
+    defaults = app_settings.defaults()
+    for kind in OVERLAY_KINDS:
+        assert f"view.overlay_{kind}" in defaults.values
+        assert defaults[f"view.overlay_{kind}_hidden"] is False
+    for name in ("true_to_scale", "light_preview", "wafer_map"):
+        assert f"view.{name}" in defaults.values
+        assert defaults[f"view.{name}_hidden"] is False
+    assert defaults["view.picture"] == "contours"
+    assert defaults["view.picture_hidden"] is False
+
+
 def test_every_setting_is_in_the_file_with_a_comment():
     text = app_settings.default_ini_text()
     for spec in app_settings.KEYS:

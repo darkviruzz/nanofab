@@ -206,7 +206,7 @@ class DirectoryArtifactSink:
     somewhere else.
 
     `.npy` rather than PNG or CSV, deliberately: the payloads the inspection
-    steps produce are arrays (a profilometer trace, a material index map), and
+    steps produce are arrays (a profilometer trace, a material cell grid), and
     `numpy.save` is lossless, self-describing and already a dependency.
     Rendering one as a picture is a consumer's job, exactly as plan §10 has it
     for every other array in the model.

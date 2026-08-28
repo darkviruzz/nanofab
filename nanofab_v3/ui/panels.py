@@ -717,7 +717,7 @@ class RevisionListPanel(QWidget):
             mark = "!" if not entry.ok else ("~" if entry.warnings else " ")
             item = QListWidgetItem(f"{mark} #{entry.index}  {entry.display_name}")
             item.setToolTip(
-                "\n".join(entry.failures + entry.warnings)
+                "\n".join(entry.failures + entry.warnings + entry.information)
                 or f"materials: {', '.join(entry.materials)}"
             )
             if not entry.ok:

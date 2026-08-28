@@ -203,6 +203,7 @@ class Revision:
             ok=self.ok,
             warnings=self.validation.warnings,
             failures=self.validation.failures,
+            information=self.lineage.describe(),
             materials=self.structure.materials,
         )
 
@@ -224,6 +225,7 @@ class RevisionSummary:
     ok: bool
     warnings: tuple[str, ...] = ()
     failures: tuple[str, ...] = ()
+    information: tuple[str, ...] = ()
     materials: tuple[str, ...] = ()
 
 
@@ -365,7 +367,7 @@ class RevisionChain:
         return self._resolve(index) in self._held
 
     def logs(self) -> tuple[str, ...]:
-        """The run log: every revision's history line, warnings and failures.
+        """The run log: every revision's history line, findings and failures.
 
         Built from summaries, so showing a run log never faults a structure back
         in. The per-step log *lines* live on the revision itself, where they cost
@@ -376,6 +378,7 @@ class RevisionChain:
             lines.append(f"#{entry.index} {entry.display_name}")
             lines += [f"    FAIL {message}" for message in entry.failures]
             lines += [f"    warn {message}" for message in entry.warnings]
+            lines += [f"    info {message}" for message in entry.information]
         return tuple(lines)
 
     # -- residency -----------------------------------------------------------

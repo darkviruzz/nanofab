@@ -137,7 +137,7 @@ def test_without_carving_the_overlap_is_real(grid_2d: Grid) -> None:
 
 
 def test_material_index_partitions_the_solid(grid_2d: Grid) -> None:
-    """The derived index map gives every solid cell to exactly one material.
+    """The derived cell grid gives every solid cell to exactly one material.
 
     Ownership is a partition, interiors are strict: a cell sitting exactly on the
     interface between two materials is interior to neither but is owned by one,
