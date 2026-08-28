@@ -59,8 +59,10 @@ def build_step_preview(
 ) -> StepPreview:
     """Build a cheap geometric preview; no flux or motion solver is evaluated."""
     scale = float(pixels_per_nm)
-    if not math.isfinite(scale) or scale <= 0.0:
+    if not math.isfinite(scale) or scale < 0.0:
         scale = 20.0
+    if scale == 0.0:
+        return StepPreview(pixels_per_nm=0.0)
     if not structure.materials:
         return StepPreview(pixels_per_nm=scale)
 

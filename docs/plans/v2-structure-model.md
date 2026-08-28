@@ -2612,7 +2612,9 @@ the naive `rate * duration * scale`, or the requested deposition thickness, and
 the independent `view.preview_scale_px_per_nm` converts that length to pixels.
 That absolute scale is intentional: arrows may leave the sample picture, because
 their length is a setting aid rather than a fitted legend. Below 5 px the arrow
-is replaced by a numeric note instead of becoming invisible.
+is replaced by a numeric note instead of becoming invisible. The exact value
+`0.0` is the explicit off state: it suppresses the complete process-preview
+geometry, including growth and redeposition arrows, without changing the process.
 
 `ParameterForm.valueChanged` rebuilds the preview from the values currently in
 the form, including half-edited safe defaults. Directed steps show ray fans,
@@ -2728,3 +2730,14 @@ green physics tests could not:
 The fresh onedir's generated `settings.ini` contains every value/visibility pair.
 The alpha identifier is `0.5.0a1`; the complete suite is **690 passed, 0 skipped**
 and both source and rebuilt onedir acceptance paths pass 7/7.
+
+### 28.6 Alpha correction: process-preview off state
+
+`view.preview_scale_px_per_nm = 0.0` now means **do not build process-preview
+geometry**. Earlier it was treated like an invalid scale and silently replaced by
+20 px/nm, so the apparent off value still drew growth and redeposition arrows.
+Negative and non-finite scales remain invalid and fall back to 20 px/nm. This is a
+presentation-only switch; process execution and its physics are unchanged.
+
+The correction is `0.5.0a2`; the complete suite is **691 passed, 0 skipped** and
+the source acceptance path passes 7/7.

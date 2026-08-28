@@ -1899,3 +1899,29 @@ Commit scope:
   from the preceding M12 commit because they were still untracked, belong to this
   commit. The unrelated local `cross_section_general_prototype.spec`, `keks.zip`
   and `keks/` remain untracked and must not be staged.
+
+## Update 2026-08-28 (0.5.0a2 process-preview off switch)
+
+What changed:
+- Defined `view.preview_scale_px_per_nm = 0.0` as the explicit off state for all
+  process-preview geometry. Growth, etch, redeposition and mobility arrows, plus
+  particle preview circles and preview notes, are not built at that value.
+- Kept positive scales unchanged. Negative and non-finite values still fall back
+  to the 20 px/nm default instead of becoming an accidental off state.
+- Added a regression test with an ion-beam/redeposition preview and bumped the
+  student alpha to `0.5.0a2`.
+
+Why it changed:
+- The settings comment presented the value as an absolute scale, but `0.0` was
+  silently normalized back to 20 px/nm. A zero value is the simplest unambiguous
+  way to lock the didactic process arrows off without adding another UI control.
+
+Validation:
+- Targeted preview suite: **4 passed**.
+- `.venv/Scripts/python.exe -m compileall nanofab_v3 tests`.
+- `.venv/Scripts/python.exe -m pytest` — **691 passed** in 115.56 s, 0 skipped.
+- Source `python -m nanofab_v3 --selftest` — 7/7 in 3.3 s.
+
+Commit scope:
+- The unrelated local `cross_section_general_prototype.spec`, `keks.zip` and
+  `keks/` remain untracked and must not be staged.

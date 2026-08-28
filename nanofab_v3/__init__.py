@@ -34,7 +34,7 @@ from __future__ import annotations
 from nanofab_v3.materials import MaterialId, MaterialType
 from nanofab_v3.model import EMPTY, PHI_DTYPE, FieldKey, FieldSpec, Grid, Structure
 
-__version__ = "0.5.0a1"
+__version__ = "0.5.0a2"
 
 __all__ = [
     "EMPTY",

@@ -48,6 +48,19 @@ def test_sub_five_pixel_preview_reports_why_it_has_no_arrow(sample: Structure) -
     assert "4.67 px" in preview.note
 
 
+def test_zero_preview_scale_disables_growth_and_redeposit_arrows(sample: Structure) -> None:
+    preview = build_step_preview(
+        sample,
+        "etch.ion_beam",
+        {"duration": 120.0, "scale": 1.25, "redeposition_yield": 0.5},
+        didactic_library(),
+        pixels_per_nm=0.0,
+    )
+
+    assert not preview
+    assert preview.pixels_per_nm == 0.0
+
+
 def test_release_fields_keep_each_sputtered_material_separate(sample: Structure) -> None:
     structure = ctor.add_material(
         sample,

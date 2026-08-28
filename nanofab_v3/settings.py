@@ -194,7 +194,8 @@ KEYS: tuple[SettingSpec, ...] = (
         20.0,
         "Absolute scale for process-preview arrows in pixels per nanometre. The\n"
         "same value applies to every step, so arrow lengths remain comparable;\n"
-        "arrows shorter than 5 px become a note instead of being exaggerated.",
+        "arrows shorter than 5 px become a note instead of being exaggerated.\n"
+        "Set this to 0.0 to disable process-preview geometry completely.",
     ),
     SettingSpec(
         "session",
