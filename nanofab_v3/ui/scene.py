@@ -205,13 +205,24 @@ state of a resist and a picture where nothing happened should look like it."""
 
 @dataclass(frozen=True)
 class PreviewArrow:
-    """One process-preview vector in nm, with a presentation-scaled length."""
+    """One process-preview vector in the sample's physical nm coordinates."""
 
     start: tuple[float, float]
     direction: tuple[float, float]
     length_nm: float
     color: str
     dashed: bool = False
+
+    def tip(self, thickness_scale: float = 1.0) -> tuple[float, float]:
+        """Physical endpoint after applying the dimensionless preview multiplier."""
+        direction = np.asarray(self.direction, dtype=float)
+        norm = float(np.linalg.norm(direction))
+        if norm <= 0.0:
+            return self.start
+        point = np.asarray(self.start, dtype=float) + (
+            direction / norm * self.length_nm * float(thickness_scale)
+        )
+        return float(point[0]), float(point[1])
 
 
 @dataclass(frozen=True)
@@ -232,7 +243,7 @@ class StepPreview:
     circles: tuple[PreviewCircle, ...] = ()
     note: str = ""
     physical_length_nm: float = 0.0
-    pixels_per_nm: float = 20.0
+    thickness_scale: float = 1.0
 
     def __bool__(self) -> bool:
         return bool(self.arrows or self.circles or self.note)
@@ -810,7 +821,9 @@ def _mask_outlines(grid: Grid, mask: np.ndarray) -> tuple[np.ndarray, ...]:
     return tuple(contour_kernel.marching_squares(grid, field))
 
 
-def surface_normals(structure: Structure, *, samples: int = 48) -> np.ndarray | None:
+def surface_normals(
+        structure: Structure, *, samples: int = 48, reachable_only: bool = False
+) -> np.ndarray | None:
     """Outward normals sampled along the solid front, as `(N, 2, 2)` segments in nm.
 
     Read off `motion.union_front` rather than `structure.solid_phi`: where two
@@ -822,7 +835,8 @@ def surface_normals(structure: Structure, *, samples: int = 48) -> np.ndarray | 
     Sampled rather than dense, and that is handoff §4.3's finding applied: the
     front is a curve and the domain is an area, so an arrow per front cell is
     thousands of arrows nobody can read and 650 000 cells of gradient nobody
-    needed.
+    needed. `reachable_only` keeps only the front connected to the open top face;
+    preview arrows use it so sealed cavities do not acquire process vectors.
     """
     from nanofab_v3.kernel import motion
 
@@ -833,17 +847,24 @@ def surface_normals(structure: Structure, *, samples: int = 48) -> np.ndarray | 
     outlines = contour_kernel.marching_squares(grid, front)
     if not outlines:
         return None
-    gradients = np.gradient(np.asarray(front, dtype=np.float64), grid.spacing)
     points = np.concatenate([line[:-1] for line in outlines if len(line) > 1], axis=0)
     if len(points) == 0:
         return None
-    take = max(1, len(points) // max(1, samples))
-    points = points[::take]
     cells = np.clip(
         np.round((points - np.asarray(grid.origin)) / grid.spacing).astype(int),
         0,
         np.asarray(grid.shape) - 1,
     )
+    if reachable_only:
+        reachable = predicates.reachable_surface(grid, structure.solid_phi)
+        keep = reachable[cells[:, 0], cells[:, 1]]
+        points, cells = points[keep], cells[keep]
+        if len(points) == 0:
+            return None
+    count = min(len(points), max(1, int(samples)))
+    selected = np.linspace(0, len(points) - 1, count).round().astype(int)
+    points, cells = points[selected], cells[selected]
+    gradients = np.gradient(np.asarray(front, dtype=np.float64), grid.spacing)
     normal = np.stack([g[cells[:, 0], cells[:, 1]] for g in gradients], axis=1)
     length = np.linalg.norm(normal, axis=1, keepdims=True)
     normal = np.divide(normal, np.where(length == 0.0, 1.0, length))

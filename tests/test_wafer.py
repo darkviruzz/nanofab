@@ -425,9 +425,23 @@ def test_the_window_fans_out_and_shows_one_position(qt_app, monkeypatch, tmp_pat
     assert window.wafer.isVisible() or window._wafer_visible_action.isChecked()
 
     edge = window.wafer.fan.positions[1]
+    window.revisions.list.setCurrentRow(0)
     window._on_wafer_position(edge)
 
     assert window.canvas._scene is not None
     expected = f"({edge[0]:.0f}, {edge[1]:.0f}) mm"
     assert window.canvas._scene.caption.startswith(expected)
+    assert "#0" in window.canvas._scene.caption
+    assert window.wafer.map.selected == edge
+
+    window.revisions.list.setCurrentRow(2)
+    assert window.canvas._scene.caption.startswith(expected)
+    assert "#2" in window.canvas._scene.caption
+
+    window._on_new()
+    assert window.wafer.fan is None
+    assert window.wafer.map.selected is None
+    assert window.wafer.map._statuses == {}
+    assert window.wafer.isHidden()
+    assert not window._wafer_visible_action.isChecked()
     assert list((tmp_path / "cache").iterdir())  # the fan wrote to the shared directory

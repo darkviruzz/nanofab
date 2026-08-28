@@ -47,6 +47,8 @@ _DEPOSIT = "#5ac8fa"
 _REDEPOSIT = "#ffd166"
 _MOBILITY = "#5ac87a"
 _PARTICLE = "#d6dbe0"
+_ARROW_SAMPLES = 20
+"""Maximum reachable-surface anchor count for one process preview."""
 
 
 def build_step_preview(
@@ -55,41 +57,35 @@ def build_step_preview(
         params: Mapping[str, Any],
         library: MaterialLibrary,
         *,
-        pixels_per_nm: float = 20.0,
+        thickness_scale: float = 1.0,
+        samples: int = _ARROW_SAMPLES,
 ) -> StepPreview:
     """Build a cheap geometric preview; no flux or motion solver is evaluated."""
-    scale = float(pixels_per_nm)
+    scale = float(thickness_scale)
     if not math.isfinite(scale) or scale < 0.0:
-        scale = 20.0
-    if scale == 0.0:
-        return StepPreview(pixels_per_nm=0.0)
+        scale = 1.0
     if not structure.materials:
-        return StepPreview(pixels_per_nm=scale)
+        return StepPreview(thickness_scale=scale)
 
     if step_id == "particle.seed":
         return _particles(structure, params, scale)
+    if scale == 0.0:
+        return StepPreview(thickness_scale=0.0)
 
-    length = _length_nm(structure, step_id, params, library)
-    if length is None or length <= 0.0:
-        return StepPreview(pixels_per_nm=scale)
-    if length * scale < 5.0:
-        return StepPreview(
-            note=f"{length:.3g} nm is {length * scale:.2f} px at {scale:g} px/nm",
-            physical_length_nm=length,
-            pixels_per_nm=scale,
-        )
+    segments = surface_normals(
+        structure, samples=max(1, int(samples)), reachable_only=True
+    )
+    anchors = _surface_anchors(structure, segments)
+    if not anchors:
+        return StepPreview(thickness_scale=scale)
 
     if step_id in _DIRECTED:
-        return _directed(structure, step_id, params, length, scale)
+        return _directed(anchors, step_id, params, library, scale)
     if step_id in _ETCH_CLASS or step_id in _CONFORMAL:
         return _normal_arrows(
-            structure,
-            length,
-            outward=step_id in _CONFORMAL,
-            color=_DEPOSIT if step_id in _CONFORMAL else _ETCH,
-            scale=scale,
+            anchors, step_id, params, library, scale
         )
-    return StepPreview(pixels_per_nm=scale)
+    return StepPreview(thickness_scale=scale)
 
 
 def _number(params: Mapping[str, Any], name: str, default: float = 0.0) -> float:
@@ -100,11 +96,8 @@ def _number(params: Mapping[str, Any], name: str, default: float = 0.0) -> float
     return value if math.isfinite(value) else default
 
 
-def _length_nm(
-        structure: Structure,
-        step_id: str,
-        params: Mapping[str, Any],
-        library: MaterialLibrary,
+def _deposition_length_nm(
+        step_id: str, params: Mapping[str, Any], library: MaterialLibrary
 ) -> float | None:
     if step_id in {"deposit.evaporate", "deposit.sputter", *_CONFORMAL}:
         return _number(params, "thickness")
@@ -116,26 +109,44 @@ def _length_nm(
             if entry is None
             else entry.rate_for(SPUTTER_DEPOSIT) * _number(params, "duration")
         )
-    if step_id == "develop.rate":
-        duration = _number(params, "duration")
-        rates = [
-            entry.develop.bound
-            for material in structure.materials
-            if (entry := library.get(material)) is not None and entry.develop is not None
-        ]
-        return max(rates, default=0.0) * duration
+    return None
+
+
+def _etch_length_nm(
+        material: MaterialId,
+        step_id: str,
+        params: Mapping[str, Any],
+        library: MaterialLibrary,
+) -> float:
     process_class = _ETCH_CLASS.get(step_id)
     if process_class is None:
-        return None
-    rate = max(
-        (
-            entry.rate_for(process_class)
-            for material in structure.materials
-            if (entry := library.get(material)) is not None
-        ),
-        default=0.0,
-    )
+        return 0.0
+    entry = library.get(material)
+    rate = 0.0 if entry is None else entry.rate_for(process_class)
     return rate * _number(params, "duration") * _number(params, "scale", 1.0)
+
+
+def _surface_anchors(
+        structure: Structure, segments: np.ndarray | None
+) -> tuple[tuple[np.ndarray, np.ndarray, MaterialId], ...]:
+    """Reachable front points, outward normals and the material under each point."""
+    if segments is None or not len(segments):
+        return ()
+    starts = np.asarray(segments[:, 0], dtype=float)
+    directions = np.asarray(segments[:, 1] - segments[:, 0], dtype=float)
+    norms = np.linalg.norm(directions, axis=1, keepdims=True)
+    directions = np.divide(directions, np.where(norms == 0.0, 1.0, norms))
+    cells = np.clip(
+        np.round((starts - np.asarray(structure.grid.origin)) / structure.grid.spacing).astype(int),
+        0,
+        np.asarray(structure.grid.shape) - 1,
+    )
+    owners = structure.nearest_material_index[cells[:, 0], cells[:, 1]]
+    return tuple(
+        (start, direction, structure.materials[int(owner)])
+        for start, direction, owner in zip(starts, directions, owners, strict=True)
+        if int(owner) >= 0
+    )
 
 
 def _directions(step_id: str, params: Mapping[str, Any]) -> tuple[np.ndarray, ...]:
@@ -156,23 +167,30 @@ def _directions(step_id: str, params: Mapping[str, Any]) -> tuple[np.ndarray, ..
 
 
 def _directed(
-        structure: Structure,
+        anchors: tuple[tuple[np.ndarray, np.ndarray, MaterialId], ...],
         step_id: str,
         params: Mapping[str, Any],
-        length: float,
+        library: MaterialLibrary,
         scale: float,
 ) -> StepPreview:
     deposition = step_id.startswith("deposit.")
+    deposited_length = _deposition_length_nm(step_id, params, library)
     arrows: list[PreviewArrow] = []
-    for direction in _directions(step_id, params):
-        for fraction in (0.2, 0.5, 0.8):
-            hit = _raycast(structure, direction, fraction)
-            if hit is None:
-                continue
+    lengths: list[float] = []
+    for start, _normal, material in anchors:
+        length = (
+            float(deposited_length or 0.0)
+            if deposition
+            else _etch_length_nm(material, step_id, params, library)
+        )
+        if length <= 0.0:
+            continue
+        lengths.append(length)
+        for direction in _directions(step_id, params):
             draw_direction = -direction if deposition else direction
             arrows.append(
                 PreviewArrow(
-                    tuple(hit),
+                    tuple(start),
                     tuple(draw_direction),
                     length,
                     _DEPOSIT if deposition else _ETCHANT,
@@ -180,18 +198,19 @@ def _directed(
             )
             if step_id == "etch.ion_beam":
                 returned = length * _number(params, "redeposition_yield")
-                if returned * scale >= 5.0:
+                if returned > 0.0:
                     arrows.append(
-                        PreviewArrow(tuple(hit), tuple(-direction), returned, _REDEPOSIT, dashed=True)
+                        PreviewArrow(tuple(start), tuple(-direction), returned, _REDEPOSIT, dashed=True)
                     )
-    mobility = _number(params, "mobility_length")
-    if deposition and mobility > 0.0 and arrows:
-        anchor = arrows[len(arrows) // 2].start
-        arrows.append(PreviewArrow(anchor, (0.0, 1.0), mobility, _MOBILITY, dashed=True))
+        mobility = _number(params, "mobility_length")
+        if deposition and mobility > 0.0:
+            arrows.append(
+                PreviewArrow(tuple(start), (0.0, 1.0), mobility, _MOBILITY, dashed=True)
+            )
     return StepPreview(
         arrows=tuple(arrows),
-        physical_length_nm=length,
-        pixels_per_nm=scale,
+        physical_length_nm=max(lengths, default=0.0),
+        thickness_scale=scale,
     )
 
 
@@ -217,28 +236,35 @@ def _raycast(
 
 
 def _normal_arrows(
-        structure: Structure,
-        length: float,
-        *,
-        outward: bool,
-        color: str,
+        anchors: tuple[tuple[np.ndarray, np.ndarray, MaterialId], ...],
+        step_id: str,
+        params: Mapping[str, Any],
+        library: MaterialLibrary,
         scale: float,
 ) -> StepPreview:
-    segments = surface_normals(structure, samples=16)
-    if segments is None:
-        return StepPreview(pixels_per_nm=scale)
-    arrows = []
-    for start, tip in segments:
-        direction = tip - start
-        norm = float(np.linalg.norm(direction))
-        if norm <= 0.0:
-            continue
-        direction = direction / norm
-        arrows.append(
-            PreviewArrow(tuple(start), tuple(direction if outward else -direction), length, color)
+    outward = step_id in _CONFORMAL
+    deposited_length = _deposition_length_nm(step_id, params, library)
+    arrows: list[PreviewArrow] = []
+    lengths: list[float] = []
+    for start, direction, material in anchors:
+        length = (
+            float(deposited_length or 0.0)
+            if outward
+            else _etch_length_nm(material, step_id, params, library)
         )
+        if length <= 0.0:
+            continue
+        lengths.append(length)
+        arrows.append(PreviewArrow(
+            tuple(start),
+            tuple(direction if outward else -direction),
+            length,
+            _DEPOSIT if outward else _ETCHANT,
+        ))
     return StepPreview(
-        arrows=tuple(arrows), physical_length_nm=length, pixels_per_nm=scale
+        arrows=tuple(arrows),
+        physical_length_nm=max(lengths, default=0.0),
+        thickness_scale=scale,
     )
 
 
@@ -249,14 +275,19 @@ def _particles(
     radius = max(0.0, _number(params, "radius"))
     spread = max(0.0, _number(params, "radius_spread"))
     if count == 0 or radius <= 0.0:
-        return StepPreview(pixels_per_nm=scale)
-    shown = min(count, 12)
+        return StepPreview(thickness_scale=scale)
+    right0, right1 = structure.grid.extent(1)
+    span = right1 - right0
+    diameter_max = 2.0 * radius * (1.0 + spread)
+    capacity = max(0, int(math.floor(0.9 * span / diameter_max)))
+    shown = min(count, capacity)
     sizes = (radius,)
     if 2.0 * radius * spread > structure.grid.spacing:
         sizes = (radius * (1.0 - spread), radius, radius * (1.0 + spread))
     circles: list[PreviewCircle] = []
-    for index in range(shown):
-        hit = _raycast(structure, np.array((-1.0, 0.0)), (index + 1.0) / (shown + 1.0))
+    fractions = (0.5,) if shown == 1 else tuple(np.linspace(0.05, 0.95, shown))
+    for fraction in fractions:
+        hit = _raycast(structure, np.array((-1.0, 0.0)), float(fraction))
         if hit is None:
             continue
         for size in sizes:
@@ -264,4 +295,4 @@ def _particles(
                 PreviewCircle((float(hit[0] + size), float(hit[1])), size, _PARTICLE, dashed=True)
             )
     note = "" if count <= shown else f"{shown} of {count} particle positions shown"
-    return StepPreview(circles=tuple(circles), note=note, pixels_per_nm=scale)
+    return StepPreview(circles=tuple(circles), note=note, thickness_scale=scale)

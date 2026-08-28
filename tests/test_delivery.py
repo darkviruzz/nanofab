@@ -213,6 +213,14 @@ def test_a_typo_in_the_ini_is_reported_and_does_not_stop_the_program():
     assert len(parsed.problems) == 2
 
 
+@pytest.mark.parametrize(("legacy", "expected"), (("0.0", 0.0), ("20.0", 1.0)))
+def test_the_legacy_display_pixel_preview_scale_migrates_safely(legacy, expected):
+    parsed = app_settings.parse(f"[view]\npreview_scale_px_per_nm = {legacy}\n")
+
+    assert parsed["view.thickness_preview_scale"] == expected
+    assert "renamed" in parsed.problems[0]
+
+
 def test_parameter_prefills_are_read_per_step_and_left_as_text():
     parsed = app_settings.parse(
         f"[{app_settings.PARAMETERS_SECTION}]\n"

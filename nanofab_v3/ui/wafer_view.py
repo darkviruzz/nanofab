@@ -219,6 +219,8 @@ class WaferPanel(QWidget):
         """Point the panel at a fan (or at none), and show it immediately."""
         self.fan = fan
         self.map.select(None)
+        if fan is None:
+            self._timer.stop()
         self.refresh()
 
     def start(self) -> None:

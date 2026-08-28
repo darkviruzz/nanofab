@@ -189,13 +189,13 @@ KEYS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         "view",
-        "preview_scale_px_per_nm",
+        "thickness_preview_scale",
         float,
-        20.0,
-        "Absolute scale for process-preview arrows in pixels per nanometre. The\n"
-        "same value applies to every step, so arrow lengths remain comparable;\n"
-        "arrows shorter than 5 px become a note instead of being exaggerated.\n"
-        "Set this to 0.0 to disable process-preview geometry completely.",
+        1.0,
+        "Dimensionless multiplier for physical process-preview lengths. At 1.0 a\n"
+        "10 nm deposition or etch draws a 10 nm arrow, which spans 10 cells on a\n"
+        "1 nm/cell grid regardless of display resolution. Set 0.0 to hide arrows;\n"
+        "particle outlines keep their physical diameter.",
     ),
     SettingSpec(
         "session",
@@ -377,7 +377,22 @@ def parse(text: str, *, source: Path | None = None) -> Settings:
                     continue
                 prefills.setdefault(step_id, {})[parameter] = raw.strip()
                 continue
-            spec = _BY_NAME.get(f"{section}.{key}")
+            name = f"{section}.{key}"
+            if name == "view.preview_scale_px_per_nm":
+                replacement = "view.thickness_preview_scale"
+                if not parser.has_option("view", "thickness_preview_scale"):
+                    try:
+                        legacy = float(raw)
+                    except (TypeError, ValueError):
+                        legacy = 1.0
+                    values[replacement] = 0.0 if legacy == 0.0 else 1.0
+                problems.append(
+                    "[view] preview_scale_px_per_nm was renamed to "
+                    "thickness_preview_scale; the legacy display-pixel scale was "
+                    "normalized to 0 (off) or 1 (physical length)"
+                )
+                continue
+            spec = _BY_NAME.get(name)
             if spec is None:
                 problems.append(f"[{section}] {key} is not a setting this build reads")
                 continue

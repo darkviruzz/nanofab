@@ -2606,21 +2606,25 @@ second edit to `chrome_redeposit.json`.
 
 ### 27.4 `StepPreview` is presentation data, not a cheap solver
 
-The preview is Qt-free data attached to `SceneSnapshot`. It uses surface normals
-and simple ray hits, never `FluxModel2D` or `advect_front`. Its physical length is
-the naive `rate * duration * scale`, or the requested deposition thickness, and
-the independent `view.preview_scale_px_per_nm` converts that length to pixels.
-That absolute scale is intentional: arrows may leave the sample picture, because
-their length is a setting aid rather than a fitted legend. Below 5 px the arrow
-is replaced by a numeric note instead of becoming invisible. The exact value
-`0.0` is the explicit off state: it suppresses the complete process-preview
-geometry, including growth and redeposition arrows, without changing the process.
+The preview is Qt-free data attached to `SceneSnapshot`. It uses reachable surface
+normals and simple ray hits, never `FluxModel2D` or `advect_front`. Its physical
+length is the naive local `rate * duration * process scale`, or the requested
+deposition thickness. `view.thickness_preview_scale` is a dimensionless multiplier
+of that length; only the canvas converts the resulting model-space nm endpoint
+through the domain and cell resolution to display pixels. At the default `1`, a
+10 nm step is therefore ten cells long on a 1 nm/cell grid regardless of zoom.
+The exact value `0.0` suppresses process arrows without changing the process;
+particle outlines remain a physical size preview.
 
 `ParameterForm.valueChanged` rebuilds the preview from the values currently in
 the form, including half-edited safe defaults. Directed steps show ray fans,
 isotropic and conformal steps show normal vectors, sputter mobility is dashed,
-redeposition points back from the impact, and particle seeding shows a bounded
-deterministic raster.
+and redeposition points back from the surface. At most 20 equidistant reachable
+top-surface anchors are used; all variants at an anchor share its start point.
+Etch length uses the material under that anchor, deposition the deposited
+material, and redeposition the local etch length times yield. Particle seeding
+shows a deterministic raster capped by `floor(0.9 * domain width / maximum
+particle diameter)` rather than by an arbitrary display count.
 
 ### 27.5 Measured M11 state
 
@@ -2741,3 +2745,22 @@ presentation-only switch; process execution and its physics are unchanged.
 
 The correction is `0.5.0a2`; the complete suite is **691 passed, 0 skipped** and
 the source acceptance path passes 7/7.
+
+### 28.7 Alpha correction: wafer selection and physical process previews
+
+The wafer map and revision list now form one selection: changing either rebuilds
+the scene from the selected wafer position's chain at the selected revision.
+Changing revision no longer jumps to the centre, and changing position no longer
+jumps to the final revision. A new session, demo, recipe or saved build also
+cancels and clears a fan belonging to the discarded session.
+
+The display-pixel preview scale introduced in E29 could not express physical
+thickness across cell resolutions. It is replaced by the dimensionless
+`view.thickness_preview_scale`; legacy non-zero values migrate to `1`, legacy zero
+stays off, and a new zero suppresses arrows. Surface previews use at most 20
+equidistant reachable anchors, share those anchors across arrow variants, and use
+local material rates. Particle outlines derive their maximum count from domain
+width and maximum diameter.
+
+The complete suite is **695 passed, 0 skipped**, the source acceptance path passes
+7/7, and the correction is `0.5.0a3`.

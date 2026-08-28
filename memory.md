@@ -1925,3 +1925,45 @@ Validation:
 Commit scope:
 - The unrelated local `cross_section_general_prototype.spec`, `keks.zip` and
   `keks/` remain untracked and must not be staged.
+
+Final validation note:
+- After making the particle capacity exact even when no outline fits, the same
+  targeted 40 tests and full 695-test suite passed again; source selftest passed
+  7/7 in 3.6 s. One intermediate full run hit a transient Windows `WinError 5`
+  while replacing a pytest-temporary material file; that isolated test passed
+  immediately and the clean full rerun passed.
+
+## Update 2026-08-28 (0.5.0a3 wafer selection and physical previews)
+
+What changed:
+- Coupled wafer-position and revision selection in the viewer. A position click
+  now renders that position's selected revision instead of its final revision;
+  changing revision retains the selected non-centre position.
+- Session replacement through New, demos, recipe loading or build loading now
+  cancels and clears the old wafer fan, its map data and its visibility state.
+- Replaced display-pixel `view.preview_scale_px_per_nm` with dimensionless
+  `view.thickness_preview_scale`. Scale 1 preserves physical nm length through
+  cell resolution and zoom, and scale 0 hides process arrows. Legacy zero stays
+  zero; other legacy values migrate to 1. Particle outlines remain physical.
+- Limited process arrows to 20 equidistant reachable top-surface anchors. Arrow
+  variants share their surface start; etch and redeposition lengths use the local
+  material rate, and deposition uses the deposited material or typed thickness.
+- Replaced the fixed particle-outline cap with a domain-width / maximum-diameter
+  capacity and bumped the student alpha from `0.5.0a2` to `0.5.0a3`.
+
+Why it changed:
+- The viewer discarded one half of the user's wafer/revision selection, stale fan
+  data survived session replacement, and a screen-pixel arrow scale changed its
+  physical meaning with zoom and cell resolution. Fixed display counts also hid
+  the relationship between preview density, domain width and process geometry.
+
+Validation:
+- Targeted preview/settings/wafer suite: **40 passed**.
+- `.venv/Scripts/python.exe -m compileall nanofab_v3 tests`.
+- `.venv/Scripts/python.exe -m pytest` — **695 passed**, 0 skipped.
+- Source `.venv/Scripts/python.exe -m nanofab_v3 --selftest` — 7/7 in 3.5 s.
+- PyCharm project build completed successfully (limited Python diagnostics).
+
+Commit scope:
+- The unrelated local `cross_section_general_prototype.spec`, `keks.zip` and
+  `keks/` remain untracked and must not be staged.

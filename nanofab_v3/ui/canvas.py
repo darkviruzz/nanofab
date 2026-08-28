@@ -265,16 +265,14 @@ class CrossSectionCanvas(QWidget):
         assert self._scene is not None
         preview = self._scene.preview
         for arrow in preview.arrows:
-            start = self._to_pixels(np.asarray([arrow.start], dtype=float))[0]
-            direction = np.asarray(
-                (arrow.direction[1] * scale_right, -arrow.direction[0] * scale_up),
-                dtype=float,
+            start, end = self._to_pixels(
+                np.asarray([arrow.start, arrow.tip(preview.thickness_scale)], dtype=float)
             )
+            direction = end - start
             norm = float(np.linalg.norm(direction))
             if norm <= 0.0:
                 continue
             unit = direction / norm
-            end = start + unit * arrow.length_nm * preview.pixels_per_nm
             style = Qt.DashLine if arrow.dashed else Qt.SolidLine
             painter.setPen(QPen(QColor(arrow.color), 1.5, style))
             painter.drawLine(QPointF(*start), QPointF(*end))

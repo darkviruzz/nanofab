@@ -416,10 +416,55 @@ class MainWindow(QMainWindow):
             )
         self._refresh_canvas()
 
+    def _selected_wafer_status(self):
+        """The selected fan result, or `None` while the centre session is active."""
+        fan = self.wafer.fan
+        position = self.wafer.map.selected
+        if fan is None or position is None:
+            return None
+        return fan.status(position)
+
+    def _view_structure(self, index: int | None):
+        """Structure at the active wafer position and active revision."""
+        status = self._selected_wafer_status()
+        if status is None:
+            return (
+                self.session.structure
+                if index is None or not len(self.session.chain)
+                else self.session.chain[index].structure
+            )
+        chain = status.chain
+        if chain is None or not len(chain):
+            return None
+        chosen = len(chain) - 1 if index is None else index
+        return chain[chosen].structure if 0 <= chosen < len(chain) else None
+
     def _refresh_canvas(self) -> None:
         overlays = [kind for kind, box in self._overlays.items() if box.isChecked()]
         index = self.revisions.selected_index()
-        scene = self.session.scene(index, overlays=overlays)
+        status = self._selected_wafer_status()
+        if status is None:
+            scene = self.session.scene(index, overlays=overlays)
+        else:
+            chain = status.chain
+            if chain is None or not len(chain):
+                self.statusBar().showMessage(status.describe(), 5000)
+                return
+            chosen = len(chain) - 1 if index is None else index
+            if not 0 <= chosen < len(chain):
+                self.statusBar().showMessage(
+                    f"{status.describe()} — revision #{chosen} is not materialized yet", 5000
+                )
+                return
+            summary = chain.summary(chosen)
+            position = status.position
+            where = f"({position[0] + 0.0:.0f}, {position[1] + 0.0:.0f}) mm"
+            scene = build_scene(
+                chain[chosen].structure,
+                library=self.session.library,
+                overlays=overlays,
+                caption=f"{where} · #{summary.index} {summary.display_name}",
+            )
         light = self._light_preview(index)
         if light is not None:
             scene = scene.with_light(light)
@@ -427,19 +472,19 @@ class MainWindow(QMainWindow):
         self.canvas.set_scene(scene)
 
     def _step_preview(self, index: int | None):
-        structure = (
-            self.session.structure
-            if index is None or not len(self.session.chain)
-            else self.session.chain[index].structure
-        )
+        structure = self._view_structure(index)
+        if structure is None:
+            from nanofab_v3.ui.scene import StepPreview
+
+            return StepPreview()
         try:
             return build_step_preview(
                 structure,
                 self.steps.selected_step_id() or "",
                 self.form.values(),
                 self.session.library,
-                pixels_per_nm=float(
-                    self.settings.get("view.preview_scale_px_per_nm", 20.0)
+                thickness_scale=float(
+                    self.settings.get("view.thickness_preview_scale", 1.0)
                 ),
             )
         except (ValueError, KeyError, TypeError):
@@ -460,11 +505,9 @@ class MainWindow(QMainWindow):
         step_id = self.steps.selected_step_id() or ""
         if not step_id.startswith("litho."):
             return None
-        structure = (
-            self.session.structure
-            if index is None or not len(self.session.chain)
-            else self.session.chain[index].structure
-        )
+        structure = self._view_structure(index)
+        if structure is None:
+            return None
         try:
             pattern = lithography_pattern(structure.grid, self.form.values())
             return light_preview(structure, pattern)
@@ -707,6 +750,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_new(self) -> None:
+        self._reset_wafer()
         self.session.reset()
         self.log.view.clear()
         self._refresh_all()
@@ -723,6 +767,7 @@ class MainWindow(QMainWindow):
         moment somebody wonders about a duration is the moment it is on screen.
         """
         entry = demo(key)
+        self._reset_wafer()
         self.session.reset(entry.grid)
         self.session.recipe = replace(self.session.recipe, steps=tuple(entry.steps))
         self.log.view.clear()
@@ -810,6 +855,12 @@ class MainWindow(QMainWindow):
 
     # -- the wafer fan (plan §8, §14) ----------------------------------------
 
+    def _reset_wafer(self) -> None:
+        """Forget a fan that belongs to the recipe/session being discarded."""
+        self.wafer.cancel()
+        self.wafer.set_fan(None)
+        self._wafer_visible_action.setChecked(False)
+
     def _on_fan_out(self) -> None:
         """Materialize the current recipe at five distinct chamber radii.
 
@@ -851,20 +902,12 @@ class MainWindow(QMainWindow):
         """
         if self.wafer.fan is None:
             return
+        self.wafer.map.select(position)
         status = self.wafer.fan.status(position)
-        structure = status.structure
-        if structure is None:
+        if status.chain is None or not len(status.chain):
             self.statusBar().showMessage(status.describe(), 5000)
             return
-        overlays = [kind for kind, box in self._overlays.items() if box.isChecked()]
-        self.canvas.set_scene(
-            build_scene(
-                structure,
-                library=self.session.library,
-                overlays=overlays,
-                caption=status.describe(),
-            )
-        )
+        self._refresh_canvas()
         self.statusBar().showMessage(status.describe(), 5000)
 
     def _on_save_recipe(self) -> None:
@@ -915,6 +958,7 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, KeyError) as error:
             QMessageBox.warning(self, "Could not open", str(error))
             return
+        self._reset_wafer()
         self.log.view.clear()
         self.log.append(
             (f"{Path(path).name} — {len(steps)} steps, not run yet:",)
@@ -947,6 +991,7 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, "Could not open", str(error))
             return
+        self._reset_wafer()
         self.log.view.clear()
         self.log.append(self.session.chain.logs())
         self._refresh_all()

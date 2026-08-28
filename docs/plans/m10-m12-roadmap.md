@@ -185,11 +185,12 @@ live-tauglich, und eine Vorschau, die beim Tippen ruckelt, schaltet man ab).
 
 Die **Pfeillänge ist die naive Rechnung in nm**: „bei dieser Rate und dieser Zeit
 kommt hier so viel weg" — damit ist die Vorschau ein Werkzeug, um die Ätzzeit
-einzustellen, ohne die Bibliothek zu öffnen. Gemeinsamer absoluter Maßstab
-(Default 20 px pro nm, in `settings.ini`); Pfeile dürfen aus der Domain ragen,
-weil das eine ehrliche Aussage über die Parameter ist. Unter 5 px wird ein
-**Hinweistext** ausgegeben statt umskaliert. Logarithmische Länge wäre die Lüge,
-die der absolute Maßstab gerade vermeidet.
+einzustellen, ohne die Bibliothek zu öffnen. `view.thickness_preview_scale` ist
+ein dimensionsloser Multiplikator dieser physikalischen Länge (Default 1); erst
+der Canvas rechnet nm über die Domainauflösung in Anzeige-Pixel um. `0` schaltet
+die Pfeile aus. Pfeile dürfen aus der Domain ragen, weil das eine ehrliche Aussage
+über die Parameter ist; logarithmische Länge wäre die Lüge, die der absolute
+Maßstab gerade vermeidet.
 
 Schritte ohne `duration` sind zwei Sorten und beide sind gelöst: die vier
 Depositionsschritte tragen eine **Dicke**, dort ist die Pfeillänge direkt die
