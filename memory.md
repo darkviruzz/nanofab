@@ -1967,3 +1967,61 @@ Validation:
 Commit scope:
 - The unrelated local `cross_section_general_prototype.spec`, `keks.zip` and
   `keks/` remain untracked and must not be staged.
+
+## Update 2026-08-28 (German professor handoff: data model and all built-in processes)
+
+What changed:
+- Added `docs/datenmodell-und-prozesse-fuer-lehre.md`, a German technical and
+  didactic description of the active v2 model. It covers Grid, per-material
+  signed-distance fields, scoped fields, metadata, materials, occurrences,
+  kernels, process execution, the commit gate, revisions, runs and wafer
+  positions.
+- Documented every one of the 32 steps in `builtin_registry()` with the same
+  four questions: how it works, how it changes the data model, what mechanism it
+  attempts to simulate, and where its model boundary lies.
+- Added teaching-task suggestions, evaluation questions and an explicit list of
+  limitations so the document does not present a didactic 2D model as a
+  calibrated physical simulator.
+
+Why it changed:
+- The user needs a technically accurate handoff for a professor who is assessing
+  NanoFab as a learning tool, wants to assign feedback tasks to students and
+  needs useful input for further development.
+
+Validation:
+- Compared the document against the explicit `builtin_registry()` tuple: all 32
+  registered step ids are present; no built-in id is missing.
+- Documentation-only change; no Python source or runtime behaviour changed, so
+  compileall and pytest were not rerun.
+
+## Update 2026-08-28 (Phortify student questionnaire for the NanoFab alpha pilot)
+
+What changed:
+- Added `docs/fragebogen-studierenden-evaluation-phortify.md`, a German modular
+  questionnaire for early student involvement before NanoFab is used alongside
+  the micro-/nanotechnology lecture next or the following semester.
+- Separated the instrument into didactic use and learning, UI/function and alpha
+  feedback, an optional objective pre/post knowledge block, and a short follow-up
+  for actual voluntary reuse after two to four weeks.
+- Added a common hands-on task protocol, a 15-20 minute core item selection,
+  privacy and accessibility notes, response scales, an analysis plan and
+  decision criteria for a supervised or independent semester pilot.
+- Grounded the framing in official Phortify sources: harmonised Master's-level
+  photonics education, digital skills, flexible/self-standing modules, open
+  access resources, industry alignment, inclusion, and a listed micro- and
+  nanofabrication specialisation.
+
+Why it changed:
+- The user wants student feedback early in the alpha/prototype phase, covering
+  both how students would learn, practise and study with the tool and how well
+  its interface and functions support that work in the planned lecture context.
+- A satisfaction survey alone cannot establish learning, so the questionnaire
+  keeps perceived benefit, observable task completion and optional objective
+  pre/post knowledge separate.
+
+Validation:
+- Checked 83 numbered item ids: all are unique, with no malformed UTF-8
+  replacement characters. The four official external context links and the
+  local technical model handoff are present.
+- Documentation-only change; no Python source or runtime behaviour changed, so
+  compileall and pytest were not rerun.
