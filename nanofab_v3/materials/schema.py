@@ -129,7 +129,9 @@ def _submodel(payload: Any, factory: Any, what: str) -> Any:
     return factory(**dict(payload))
 
 
-def from_dict(payload: Mapping[str, Any]) -> MaterialType:
+def from_dict(
+        payload: Mapping[str, Any], *, inherited: MaterialType | None = None
+) -> MaterialType:
     """A JSON object back into a `MaterialType`, with the dataclass validating.
 
     Nothing here range-checks a number: `MaterialType.__post_init__` and the
@@ -145,6 +147,20 @@ def from_dict(payload: Mapping[str, Any]) -> MaterialType:
         raise MaterialFileError(
             f"material schema {version!r} is not the {SCHEMA_VERSION} this build reads"
         )
+    parent = fields.pop("inherits", None)
+    if parent is not None:
+        if inherited is None:
+            raise MaterialFileError(f"material inherits {parent!r}, but no such base was resolved")
+        if str(inherited.material_id) != str(parent):
+            raise MaterialFileError(
+                f"material inherits {parent!r}, not resolved base {inherited.material_id!r}"
+            )
+        base = to_dict(inherited)
+        base.pop("schema", None)
+        for name in _MAPPINGS:
+            if name in fields:
+                fields[name] = {**dict(base.get(name, {})), **dict(fields[name])}
+        fields = {**base, **fields}
     known = {spec.name for spec in dataclass_fields(MaterialType)}
     unknown = sorted(set(fields) - known)
     if unknown:
@@ -153,7 +169,7 @@ def from_dict(payload: Mapping[str, Any]) -> MaterialType:
             f"a material takes {sorted(known)}"
         )
     if "material_id" not in fields or "name" not in fields:
-        raise MaterialFileError("a material file needs at least 'material_id' and 'name'")
+        raise MaterialFileError("a material file needs 'material_id' and a name (directly or inherited)")
     fields["material_id"] = MaterialId(str(fields["material_id"]))
     for name, factory in _SUBMODELS.items():
         fields[name] = _submodel(fields.get(name), factory, name)
@@ -174,14 +190,25 @@ def from_json(text: str) -> MaterialType:
     return from_dict(payload)
 
 
-def read_material(path: Path) -> MaterialType:
-    """One material from a file, with the path in any error it raises."""
+def read_definition(path: Path) -> Mapping[str, Any]:
+    """Read one material JSON object without resolving an optional parent."""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as error:
         raise MaterialFileError(f"cannot read {path}: {error}") from None
     try:
-        return from_json(text)
+        payload = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise MaterialFileError(f"{path}: not valid JSON: {error}") from None
+    if not isinstance(payload, Mapping):
+        raise MaterialFileError(f"{path}: a material file must hold a JSON object")
+    return payload
+
+
+def read_material(path: Path, *, inherited: MaterialType | None = None) -> MaterialType:
+    """One material from a file, with the path in any error it raises."""
+    try:
+        return from_dict(read_definition(path), inherited=inherited)
     except MaterialFileError as error:
         raise MaterialFileError(f"{path}: {error}") from None
 

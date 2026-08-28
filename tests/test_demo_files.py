@@ -244,7 +244,7 @@ def test_the_demo_files_are_valid_json_a_person_can_edit() -> None:
 def test_an_identical_file_in_two_roots_is_not_an_override(tmp_path, monkeypatch) -> None:
     """A delivered exe carries the library *and* reads the editable copy beside it.
 
-    Every material therefore shadows an identical twin, and reporting all eleven
+    Every material therefore shadows an identical twin, and reporting all of them
     would bury the one line that means something — a lab's own chromium. Only a
     definition that actually differs is an override.
     """
@@ -260,9 +260,9 @@ def test_an_identical_file_in_two_roots_is_not_an_override(tmp_path, monkeypatch
     _library, report = application_library()
     assert report.overridden == {}
     lines = report.describe()
-    assert lines[0] == "materials: 11 from 2 root(s)"
+    assert lines[0] == "materials: 12 from 2 root(s)"
     # M10 (E36) adds the fingerprint line; what this test is about is that no
-    # *override* line appears for eleven identical twins.
+    # *override* line appears for identical twins.
     assert not any("overrides" in line for line in lines)
 
     edited = json.loads((tmp_path / "chrome.json").read_text(encoding="utf-8"))

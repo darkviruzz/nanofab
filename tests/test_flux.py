@@ -60,7 +60,7 @@ def stepped(grid_2d: Grid) -> Structure:
     ],
 )
 def test_every_distribution_delivers_exactly_one_to_a_flat_surface(
-    distribution: flux.AngularDistribution,
+        distribution: flux.AngularDistribution,
 ) -> None:
     """`sum_k w_k cos(theta_k) = 1` — the contract the rate models rest on.
 
@@ -149,7 +149,7 @@ def test_surface_mobility_moves_flux_towards_the_starved_sidewall(stepped: Struc
 
 
 def test_the_chemical_fraction_is_what_lets_rie_reach_a_shadowed_wall(
-    stepped: Structure,
+        stepped: Structure,
 ) -> None:
     """RIE against IBE: the same lobe, plus a component with no direction at all."""
     beam = flux.ion_beam_etch().on_structure(stepped).arrival
@@ -175,11 +175,27 @@ def test_the_sputter_yield_peaks_off_normal_incidence() -> None:
     assert relative[-1] < 0.05  # grazing ions reflect
 
 
+def test_grazing_yield_loss_becomes_one_specular_ion_bounce(open_trench: Structure) -> None:
+    model = flux.FluxModel2D(
+        distribution=flux.Isotropic(),
+        yield_model=flux.SputterYield(),
+    )
+    outcome = model.on_structure(open_trench)
+
+    assert outcome.reflected is not None
+    assert float(outcome.reflected.max()) > 0.0
+    assert float(outcome.arrival.max()) <= model.max_arrival + 1e-9
+
+
+def test_deposition_yield_never_reflects_particles(stepped: Structure) -> None:
+    assert flux.sputter_deposition().on_structure(stepped).reflected is None
+
+
 # -- visibility --------------------------------------------------------------
 
 
 def test_visibility_is_taken_from_the_repaired_union_and_not_from_solid_phi(
-    stepped: Structure,
+        stepped: Structure,
 ) -> None:
     """A buried seam is not a wall (plan §17.1).
 
@@ -203,7 +219,7 @@ def test_visibility_is_taken_from_the_repaired_union_and_not_from_solid_phi(
 
 
 def test_nothing_receives_more_than_the_bound_the_cfl_condition_was_given(
-    stepped: Structure,
+        stepped: Structure,
 ) -> None:
     """`max_arrival` is derived, not measured — so it has to actually bound.
 
@@ -212,10 +228,10 @@ def test_nothing_receives_more_than_the_bound_the_cfl_condition_was_given(
     condition, and a split dose would stop matching an unsplit one.
     """
     for model in (
-        flux.evaporation(angle=math.radians(45.0)),
-        flux.ion_beam_etch(),
-        flux.reactive_ion_etch(chemical_fraction=0.3),
-        flux.sputter_deposition(exponent=2.0),
+            flux.evaporation(angle=math.radians(45.0)),
+            flux.ion_beam_etch(),
+            flux.reactive_ion_etch(chemical_fraction=0.3),
+            flux.sputter_deposition(exponent=2.0),
     ):
         arrival = model.on_structure(stepped).arrival
         assert float(arrival.max()) <= model.max_arrival + 1e-9
@@ -265,7 +281,7 @@ def open_trench(grid_2d: Grid) -> Structure:
 
 
 def test_the_bounce_puts_material_from_the_floor_onto_the_sidewalls(
-    open_trench: Structure,
+        open_trench: Structure,
 ) -> None:
     """Plan §4.3's one bounce: what leaves the floor lands on what can see it."""
     outcome = flux.ion_beam_etch(redeposition_yield=0.3).on_structure(open_trench)
@@ -278,7 +294,7 @@ def test_the_bounce_puts_material_from_the_floor_onto_the_sidewalls(
 
 
 def test_redeposition_never_exceeds_the_yield_times_what_was_removed(
-    open_trench: Structure,
+        open_trench: Structure,
 ) -> None:
     """The bound the one-bounce approximation deserves, and the CFL's safety net."""
     outcome = flux.ion_beam_etch(redeposition_yield=0.4).on_structure(open_trench)
@@ -313,7 +329,7 @@ def test_no_redeposition_array_without_a_redeposition_yield(open_trench: Structu
 
 
 def test_the_solver_accepts_a_model_and_rebuilds_it_as_the_front_moves(
-    stepped: Structure,
+        stepped: Structure,
 ) -> None:
     """A directional etch has to re-ask what the front can see as it digs."""
     rates = motion.SurfaceRates({"silicon": 1.0, "mask": 0.0})

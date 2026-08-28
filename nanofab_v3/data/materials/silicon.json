@@ -6,9 +6,8 @@
   "rates": {
     "dry_etch": 2.0,
     "icp_fluorine": 0.6667,
-    "ion_beam": 1.0,
+    "ion_beam": 0.2333,
     "sputter_deposit": 0.1667,
-    "sputter_etch": 0.2333,
     "wet_etch": 0.0,
     "wet_etch_cr": 0.0,
     "wet_etch_oxide": 0.0
@@ -22,8 +21,8 @@
   "optical_k": 3.57,
   "rate_notes": {
     "icp_fluorine": "Student process table, roadmap §3 row 2 (40 nm/min).",
+    "ion_beam": "Student process table, roadmap §3 row 1 (14 nm/min).",
     "sputter_deposit": "Student process table, roadmap §3 row 7-9 (10 nm/min).",
-    "sputter_etch": "Student process table, roadmap §3 row 1 (14 nm/min).",
     "wet_etch_cr": "Student process table, roadmap §3 row 5: this bath attacks chromium only.",
     "wet_etch_oxide": "Student process table, roadmap §3 row 6: stated as zero for everything but SiO2 and resist."
   },

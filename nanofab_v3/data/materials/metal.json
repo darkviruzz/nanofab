@@ -6,7 +6,7 @@
   "rates": {
     "deposit": 1.0,
     "dry_etch": 0.2,
-    "ion_beam": 1.5,
+    "ion_beam": 0.345,
     "wet_etch": 0.0
   },
   "sputter_response": {
@@ -16,6 +16,9 @@
   "density": 19.3,
   "optical_n": 0.47,
   "optical_k": 2.83,
+  "rate_notes": {
+    "ion_beam": "Didactic, not in the process table; the former ratio was scaled by 0.23 when M11 unified the ion-beam column."
+  },
   "tags": [
     "metal"
   ]

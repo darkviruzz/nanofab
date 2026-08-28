@@ -204,6 +204,41 @@ state of a resist and a picture where nothing happened should look like it."""
 
 
 @dataclass(frozen=True)
+class PreviewArrow:
+    """One process-preview vector in nm, with a presentation-scaled length."""
+
+    start: tuple[float, float]
+    direction: tuple[float, float]
+    length_nm: float
+    color: str
+    dashed: bool = False
+
+
+@dataclass(frozen=True)
+class PreviewCircle:
+    """One particle outline in the sample's nm coordinates."""
+
+    center: tuple[float, float]
+    radius_nm: float
+    color: str
+    dashed: bool = True
+
+
+@dataclass(frozen=True)
+class StepPreview:
+    """Qt-free geometric preview of a process before it runs (roadmap E29)."""
+
+    arrows: tuple[PreviewArrow, ...] = ()
+    circles: tuple[PreviewCircle, ...] = ()
+    note: str = ""
+    physical_length_nm: float = 0.0
+    pixels_per_nm: float = 20.0
+
+    def __bool__(self) -> bool:
+        return bool(self.arrows or self.circles or self.note)
+
+
+@dataclass(frozen=True)
 class SceneSnapshot:
     """Everything a cross-section picture of one revision needs.
 
@@ -230,10 +265,15 @@ class SceneSnapshot:
     palette: Mapping[MaterialId, str] = dataclass_field(default_factory=dict)
     caption: str = ""
     light: LightPreview = dataclass_field(default_factory=lambda: LightPreview())
+    preview: StepPreview = dataclass_field(default_factory=StepPreview)
 
     def with_light(self, light: LightPreview) -> "SceneSnapshot":
         """The same snapshot with a light preview on it."""
         return replace(self, light=light)
+
+    def with_preview(self, preview: StepPreview) -> "SceneSnapshot":
+        """The same snapshot with the selected process preview on it."""
+        return replace(self, preview=preview)
 
     @property
     def extent(self) -> tuple[float, float, float, float]:
@@ -279,12 +319,12 @@ class SceneSnapshot:
 
 
 def build(
-    structure: Structure,
-    *,
-    library: MaterialLibrary | None = None,
-    overlays: Sequence[str] = (),
-    caption: str = "",
-    index_map: bool = True,
+        structure: Structure,
+        *,
+        library: MaterialLibrary | None = None,
+        overlays: Sequence[str] = (),
+        caption: str = "",
+        index_map: bool = True,
 ) -> SceneSnapshot:
     """Turn one revision's `Structure` into everything a picture of it needs.
 
@@ -410,12 +450,12 @@ def fillable_outlines(grid: Grid, outlines: Sequence[np.ndarray]) -> tuple[np.nd
 
 
 def _next_entry(
-    perimeter: "_Perimeter",
-    pieces: Sequence[np.ndarray],
-    order: Sequence[int],
-    unused: set[int],
-    first: int,
-    exit_at: np.ndarray,
+        perimeter: "_Perimeter",
+        pieces: Sequence[np.ndarray],
+        order: Sequence[int],
+        unused: set[int],
+        first: int,
+        exit_at: np.ndarray,
 ) -> int:
     """The piece whose start comes first counter-clockwise from `exit_at`."""
     here = perimeter.at(exit_at)
@@ -522,10 +562,10 @@ class LightPreview:
 
 
 def light_preview(
-    structure: Structure,
-    pattern: np.ndarray,
-    *,
-    rays_per_opening: int = 5,
+        structure: Structure,
+        pattern: np.ndarray,
+        *,
+        rays_per_opening: int = 5,
 ) -> LightPreview:
     """Rays through the open parts of `pattern`, down to whatever they hit first.
 
@@ -610,7 +650,7 @@ def _clearing_dose(structure: Structure, library: MaterialLibrary | None) -> tup
 
 
 def _field_overlay(
-    structure: Structure, kind: str, library: MaterialLibrary | None = None
+        structure: Structure, kind: str, library: MaterialLibrary | None = None
 ) -> Overlay:
     """`exposed` or `dose` — the latent image, drawn from the field that holds it.
 
@@ -697,13 +737,13 @@ def _field_overlay(
             "development will cut"
             if reference > 0.0
             else f"no clearing dose in the library — bands are fractions of the "
-            f"peak {peak:.0f} mJ/cm^2"
+                 f"peak {peak:.0f} mJ/cm^2"
         ),
     )
 
 
 def _overlay(
-    structure: Structure, kind: str, library: MaterialLibrary | None = None
+        structure: Structure, kind: str, library: MaterialLibrary | None = None
 ) -> Overlay:
     """Compute one inspect overlay (plan §10's "predicate highlights")."""
     grid = structure.grid
@@ -853,13 +893,13 @@ class DisplayScale:
 
 
 def display_scale(
-    span_up: float,
-    span_right: float,
-    usable_up: float,
-    usable_right: float,
-    *,
-    limit: float = ASPECT_LIMIT,
-    isotropic: bool = False,
+        span_up: float,
+        span_right: float,
+        usable_up: float,
+        usable_right: float,
+        *,
+        limit: float = ASPECT_LIMIT,
+        isotropic: bool = False,
 ) -> DisplayScale:
     """Fit a domain into a widget, compressing its long axis only past `limit`.
 

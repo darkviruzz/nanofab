@@ -6,10 +6,9 @@
   "rates": {
     "dry_etch": 1.5,
     "icp_fluorine": 0.8333,
-    "ion_beam": 0.8,
+    "ion_beam": 0.2,
     "rie_chlorine": 0.0,
     "rie_oxygen": 0.0,
-    "sputter_etch": 0.2,
     "wet_etch": 1.0,
     "wet_etch_cr": 0.0,
     "wet_etch_oxide": 16.6667
@@ -25,10 +24,9 @@
   "rate_notes": {
     "dry_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
     "icp_fluorine": "Student process table, roadmap §3 row 2 (50 nm/min).",
-    "ion_beam": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
+    "ion_beam": "Assumed, not measured. The table names silicon oxide in row 1; fused silica takes that 12 nm/min value.",
     "rie_chlorine": "Student process table, roadmap §3 row 3 (0 nm/min).",
     "rie_oxygen": "Student process table, roadmap §3 row 4 (0 nm/min).",
-    "sputter_etch": "Assumed, not measured. The table names silicon oxide for this row and fused silica for the plasma chemistries (roadmap §3.1); this quartz-glass entry takes the silicon-oxide value of row 1.",
     "wet_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
     "wet_etch_cr": "Student process table, roadmap §3 row 5: this bath attacks chromium only.",
     "wet_etch_oxide": "Assumed, not measured. The table names silicon oxide for this row and fused silica for the plasma chemistries (roadmap §3.1); this quartz-glass entry takes the silicon-oxide value of row 6. Row 6's 'everything else zero' is read as covering the materials it names, not as a statement that a buffered oxide etch leaves quartz glass alone."

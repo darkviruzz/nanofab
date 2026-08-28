@@ -2553,3 +2553,79 @@ Two costs worth naming because they are per-step rather than per-build:
   lookup plus, for the spin coat, one interpolation. `ui.derived` never raises,
   because a half-typed value in a spin box is a normal state for a form to be in
   and a hint is not worth an exception.
+
+## 27. Corrections from implementation (M11)
+
+Written 2026-08-28 at the end of the directed-process milestone in
+`docs/plans/m10-m12-roadmap.md`. M11 deliberately changes rates and the flux
+kernel, so unlike M10 its green result is a statement about the new physics
+contracts, not bit-identical behaviour.
+
+### 27.1 One ion beam means one process and one rate key
+
+`etch.ibe`, `etch.sputter` and the `sputter_etch` process class are gone. The one
+registered step is `etch.ion_beam`, and the five materials named by the process
+table carry its converted rates under `ion_beam`. The six unnamed materials keep
+their old didactic ratios scaled by 0.23, with the provenance in `rate_notes`.
+S2c is the only shipped recipe affected: 120 s at scale 1.25 still produces the
+same nominal 30 nm oxide depth. Old recipes naming a removed step fail loudly;
+they are not reinterpreted.
+
+ICP fluorine is now fixed at normal incidence and 3 degrees divergence. Neither
+value is a recipe parameter: the table describes a vertical process, not a
+tiltable beam.
+
+### 27.2 Reflection is one ion bounce, and never deposition
+
+`SputterYield.reflected_fraction` turns only the grazing loss
+`clip(1 - Y(theta)/Y(0), 0, 1)` into a specular ray. The receiver sees the same
+projected-area and yield response as the first surface, and the contribution is
+added to `FluxOutcome.arrival` before the existing extension and CFL-bound seams.
+There is no recursion: one incident ray can create at most one reflected ray.
+The reflected ion carries no material; redeposition remains the separate product
+flux. `UnitYield`, used by deposition, reflects zero by construction.
+
+### 27.3 Redeposition identity is a field split, inheritance is a file feature
+
+`processes.rates.release_maps` returns one masked release field per source
+material. The static redeposition pass runs once per field and deposits that same
+material id. Thus chromium remains chromium and an etched resist cannot relabel
+it. No runtime process mutates the library.
+
+Schema-1 files may declare `inherits`. Resolution happens before the immutable
+`MaterialLibrary` is built, mapping fields merge, roots already read may provide
+parents, and missing parents or cycles are errors. `chrome_redeposit.json` is the
+first example, but the normal IBE identity rule still redeposits `chrome` unless
+a recipe explicitly starts with the derived material.
+
+One report detail only became visible after inheritance existed: overriding a
+parent changes the resolved child value even when the child's file is byte-for-
+byte identical. `LibraryReport.overridden` therefore compares raw definitions,
+not resolved `MaterialType`s; otherwise editing `chrome.json` falsely reports a
+second edit to `chrome_redeposit.json`.
+
+### 27.4 `StepPreview` is presentation data, not a cheap solver
+
+The preview is Qt-free data attached to `SceneSnapshot`. It uses surface normals
+and simple ray hits, never `FluxModel2D` or `advect_front`. Its physical length is
+the naive `rate * duration * scale`, or the requested deposition thickness, and
+the independent `view.preview_scale_px_per_nm` converts that length to pixels.
+That absolute scale is intentional: arrows may leave the sample picture, because
+their length is a setting aid rather than a fitted legend. Below 5 px the arrow
+is replaced by a numeric note instead of becoming invisible.
+
+`ParameterForm.valueChanged` rebuilds the preview from the values currently in
+the form, including half-edited safe defaults. Directed steps show ray fans,
+isotropic and conformal steps show normal vectors, sputter mobility is dashed,
+redeposition points back from the impact, and particle seeding shows a bounded
+deterministic raster.
+
+### 27.5 Measured M11 state
+
+| | after M10 + E31 correction | end of M11 |
+| --- | --- | --- |
+| tests | 673, 0 skipped | **681**, 0 skipped |
+| registered steps | 30 | **29** |
+| materials | 11 | **12** (`chrome_redeposit`) |
+| ion-beam rate keys | 2 | **1** |
+| version | `0.3.0.dev0` | **`0.4.0.dev0`** |

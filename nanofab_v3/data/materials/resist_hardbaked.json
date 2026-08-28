@@ -5,7 +5,7 @@
   "display_color": "#8a6d1f",
   "rates": {
     "dry_etch": 0.25,
-    "ion_beam": 0.9,
+    "ion_beam": 0.207,
     "wet_etch": 0.0
   },
   "sputter_response": {
@@ -16,6 +16,9 @@
   "optical_n": 1.58,
   "optical_k": 0.0,
   "absorption": 0.0015,
+  "rate_notes": {
+    "ion_beam": "Didactic, not in the process table; the former ratio was scaled by 0.23 when M11 unified the ion-beam column."
+  },
   "tags": [
     "resist"
   ]

@@ -24,13 +24,13 @@ from nanofab_v3.model.structure import Structure
 
 
 def surface_rates(
-    library: MaterialLibrary,
-    structure: Structure,
-    process_class: str,
-    *,
-    scale: float = 1.0,
-    default: float = 0.0,
-    only: MaterialId | None = None,
+        library: MaterialLibrary,
+        structure: Structure,
+        process_class: str,
+        *,
+        scale: float = 1.0,
+        default: float = 0.0,
+        only: MaterialId | None = None,
 ) -> motion.SurfaceRates:
     """`SurfaceRates` for the materials present, from the library's rate table.
 
@@ -55,11 +55,11 @@ def surface_rates(
 
 
 def dissolve_rates(
-    library: MaterialLibrary,
-    structure: Structure,
-    solvent: str,
-    *,
-    scale: float = 1.0,
+        library: MaterialLibrary,
+        structure: Structure,
+        solvent: str,
+        *,
+        scale: float = 1.0,
 ) -> motion.SurfaceRates:
     """`SurfaceRates` for a solvent bath — nonzero only where the bath bites.
 
@@ -79,10 +79,10 @@ def dissolve_rates(
 
 
 def develop_rates(
-    library: MaterialLibrary,
-    structure: Structure,
-    material: MaterialId,
-    dose: np.ndarray,
+        library: MaterialLibrary,
+        structure: Structure,
+        material: MaterialId,
+        dose: np.ndarray,
 ) -> tuple[np.ndarray, float]:
     """`(rate map in nm/s, its bound)` from `develop_rate(dose)` (plan §3.4, §6).
 
@@ -121,7 +121,7 @@ def angular_yield(entry: MaterialType) -> flux.AngularYield:
 
 
 def dominant_yield(
-    library: MaterialLibrary, structure: Structure, process_class: str
+        library: MaterialLibrary, structure: Structure, process_class: str
 ) -> flux.AngularYield:
     """The angular yield of the material this process removes fastest.
 
@@ -149,7 +149,7 @@ def dominant_yield(
 
 
 def release_map(
-    library: MaterialLibrary, structure: Structure, process_class: str
+        library: MaterialLibrary, structure: Structure, process_class: str
 ) -> np.ndarray | None:
     """Per-cell `release` for the redeposition bounce — the seam of §18/M2 note 8.
 
@@ -178,3 +178,23 @@ def release_map(
         dtype=PHI_DTYPE,
     )
     return table[structure.nearest_material_index]
+
+
+def release_maps(
+        library: MaterialLibrary, structure: Structure, process_class: str
+) -> dict[MaterialId, np.ndarray]:
+    """Per-material release fields, preserving the identity of sputtered matter."""
+    rates = {
+        material: library[material].rate_for(process_class)
+        for material in structure.materials
+        if material in library
+    }
+    fastest = max(rates.values(), default=0.0)
+    if fastest <= 0.0:
+        return {}
+    owner = structure.nearest_material_index
+    return {
+        material: np.where(owner == index, rate / fastest, 0.0).astype(PHI_DTYPE)
+        for index, material in enumerate(structure.materials)
+        if (rate := rates.get(material, 0.0)) > 0.0
+    }

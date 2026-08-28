@@ -416,19 +416,19 @@ Eine Zahl hat sich bewegt, und sie ist keine Physik: **31 → 30 Schritte**, wei
 E35 das Ellipsometer entfernt. Der Preis der Onedir-Auslieferung ist ebenfalls
 gemessen: 304 MB unkomprimiert gegen 115 MiB als Onefile (Plan §26.1).
 
-### M11 — Gerichtete Prozesse und ihr Bild
+### M11 — Gerichtete Prozesse und ihr Bild ✅ *erledigt 2026-08-28*
 
 **Fasst Raten und den Flusskern an.** Die Vorschau gehört hierher, weil sie die
 *Erklärung* der gerichteten Prozesse ist und beide dasselbe Flussmodell anfassen.
 
-1. **Ratenvereinheitlichung** (E24): ein `etch.ion_beam`, eine Spalte mit den
+1. ✅ **Ratenvereinheitlichung** (E24): ein `etch.ion_beam`, eine Spalte mit den
    Tabellenwerten, S2c nachgezogen, `rate_notes` überall korrekt.
-2. **ICP** (E23): `angle` raus, Divergenz fest 3°.
-3. **Reflexion und Trenching** (E25).
-4. **Redeposition** (E26): Identität erhalten, `inherits` im Schema,
+2. ✅ **ICP** (E23): `angle` raus, Divergenz fest 3°.
+3. ✅ **Reflexion und Trenching** (E25).
+4. ✅ **Redeposition** (E26): Identität erhalten, `inherits` im Schema,
    `chrome_redeposit.json` als erstes Beispiel; keine Reflexion bei Deposition
    (E27), mit dem Satz, warum ALD konform gerechnet wird.
-5. **Live-Vorschau** (E29): `StepPreview`, Strahlen und Normalen, Partikelraster,
+5. ✅ **Live-Vorschau** (E29): `StepPreview`, Strahlen und Normalen, Partikelraster,
    absoluter Maßstab aus `settings.ini`, und der Live-Bug (Vorschau nur bei
    Toggle) fällt dabei weg.
 
@@ -438,6 +438,16 @@ Tabellenwerte stehen unverändert in den Materialdateien und `etch.sputter`
 existiert nicht mehr; während man eine Ätzzeit tippt, ändern sich die Pfeile
 sichtbar mit, und ihre Länge ist die abgetragene Tiefe; die Tests sind grün, S2c
 mit angepasster Zeit.
+
+**DoD — gemessen, alle Vertragsebenen erfüllt:** Der Registry hat **29** Schritte
+und nur noch `etch.ion_beam`; dessen Schema hat kein `redeposit_as`, ICP weder
+Winkel noch Divergenz. S2c läuft mit 120 s und 1.25 auf derselben Solltiefe.
+Der Flusskerntest trifft nach genau einem spiegelnden Ionenbounce eine zweite
+Fläche, während Deposition kein `reflected`-Feld erzeugt. Getrennte Release-Felder
+halten Si und Cr auseinander; `chrome_redeposit` erbt Raten und Tags von `chrome`,
+fehlende Eltern und Zyklen brechen laut ab. Die Qt-freie Vorschau rechnet für S2c
+34.995 nm, reagiert auf Parameteränderungen und erklärt Pfeile unter 5 px. Nach
+der E31-Nachkorrektur ging die Suite **673 → 681**, 0 übersprungen.
 
 ### M12 — Anlage und Prozessführung
 

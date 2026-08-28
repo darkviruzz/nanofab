@@ -1759,3 +1759,52 @@ Why it changed:
 Validated:
 - `python -m compileall nanofab_v3 tests`
 - `python -m pytest` — **673 passed**, 0 skipped.
+
+## Update 2026-08-28 (v2 M11: directed processes, identity-preserving redeposition, live preview)
+
+What changed:
+- Completed roadmap M11/E23-E29. The registry now has one `etch.ion_beam`; the
+  duplicate `etch.ibe`/`etch.sputter` steps and `sputter_etch` rate class are
+  gone. The process-table rates live under `ion_beam`, and S2c uses 120 s at
+  scale 1.25. ICP fluorine is fixed at normal incidence with 3 degree divergence.
+- Added exactly one specular reflected-ion bounce from the grazing loss of
+  `SputterYield`. It contributes etch flux, carries no material, does not recurse,
+  and deposition yield models reflect nothing.
+- Redeposition now runs with one release field per source material and deposits
+  that same material id. Material schema 1 gained build-time `inherits` with
+  parent lookup across roots, mapping merge, and loud missing-parent/cycle errors;
+  `chrome_redeposit.json` is the first derived definition.
+- Added the Qt-free `StepPreview`, live `ParameterForm.valueChanged` refresh,
+  directed rays, normal vectors, redeposition/mobility marks, particle outlines,
+  and the absolute `view.preview_scale_px_per_nm` setting with a numeric note
+  below 5 px.
+- Bumped `nanofab_v3.__version__` from `0.3.0.dev0` to `0.4.0.dev0`. ADR-0004 now
+  records that substantial/final commits and bugfixes or behavioural changes bump
+  the version, with milestone completion as the latest permissible point.
+
+Why it changed:
+- The accepted M10-M12 roadmap requires one physical rate key per ion-beam
+  technique, visible grazing reflection/trenching, source identity through
+  redeposition, and a live explanatory preview whose length is rate x time rather
+  than a fitted renderer decoration.
+
+What implementation measured or corrected:
+- An inherited child resolves differently when its parent is overridden even if
+  the child file is unchanged. Override reporting therefore compares raw file
+  definitions; otherwise editing `chrome.json` falsely also reports
+  `chrome_redeposit.json`.
+- A 65 or 80 degree ray reflected from a flat trench top exits the domain; the
+  reflection test uses an isotropic ion distribution in a deep trench so a real
+  single bounce reaches the opposite surface.
+- Final state: **681 tests**, 0 skipped; **29** registered steps; **12** materials.
+  `--selftest` passed 7/7 in 4.6 s with fingerprint `b56a6ddb63e2`.
+
+Validation:
+- `.venv/Scripts/python.exe -m compileall nanofab_v3 tests`
+- `.venv/Scripts/python.exe -m pytest -q --tb=short` — 681 passed, 0 skipped.
+- `.venv/Scripts/python.exe -m nanofab_v3 --selftest` — 7/7 in 4.6 s.
+
+Known limitation:
+- The PyInstaller onedir artifact was not rebuilt for this internal milestone
+  commit; the source-level packaged DoD path is green, while the last real-folder
+  artifact check remains M10's.

@@ -57,7 +57,8 @@ from nanofab_v3 import paths
 from nanofab_v3.materials.material import MaterialId, MaterialType
 from nanofab_v3.materials.schema import (
     MaterialFileError,
-    read_material,
+    from_dict,
+    read_definition,
     to_json,
     write_material,
 )
@@ -188,11 +189,11 @@ def missing_library_reason() -> str | None:
     expected = material_roots()[0] if material_roots() else None
     where = f"\n  expected: {expected}" if expected is not None else ""
     return (
-        "no material library: this build reads its materials from files beside the "
-        "executable and found none." + where + "\n"
-        "  A delivered NanoFab folder holds the executable, bin/, data/materials/, "
-        "data/demos/ and settings.ini — restore data/materials/ from the delivery "
-        "and start again."
+            "no material library: this build reads its materials from files beside the "
+            "executable and found none." + where + "\n"
+                                                   "  A delivered NanoFab folder holds the executable, bin/, data/materials/, "
+                                                   "data/demos/ and settings.ini — restore data/materials/ from the delivery "
+                                                   "and start again."
     )
 
 
@@ -265,7 +266,9 @@ RootContents = tuple[
 """What one directory yielded: the entries, the file each came from, the failures."""
 
 
-def read_root(root: Path) -> RootContents:
+def read_root(
+        root: Path, inherited: Mapping[MaterialId, MaterialType] | None = None
+) -> RootContents:
     """Every `*.json` in one directory, as `(entries, files, failures)`.
 
     A missing directory is empty, not an error: the writable root does not exist
@@ -277,28 +280,61 @@ def read_root(root: Path) -> RootContents:
     root = Path(root)
     if not root.is_dir():
         return entries, files, tuple(failures)
+    definitions: dict[MaterialId, tuple[Path, Mapping[str, object]]] = {}
     for path in sorted(root.glob("*.json")):
         try:
-            entry = read_material(path)
+            payload = read_definition(path)
+            material = MaterialId(str(payload.get("material_id", "")))
         except MaterialFileError as error:
             failures.append((path, str(error)))
             continue
-        if entry.material_id != path.stem:
+        if not material or material != path.stem:
             failures.append(
                 (
                     path,
-                    f"holds material {entry.material_id!r}, but a file is named after the "
+                    f"holds material {material!r}, but a file is named after the "
                     "material it defines",
                 )
             )
             continue
-        entries[entry.material_id] = entry
-        files[entry.material_id] = path
+        definitions[material] = (path, payload)
+
+    bases = dict(inherited or {})
+    resolving: list[MaterialId] = []
+
+    def resolve(material: MaterialId) -> MaterialType:
+        if material in entries:
+            return entries[material]
+        if material in resolving:
+            chain = " -> ".join(map(str, resolving + [material]))
+            raise MaterialFileError(f"material inheritance cycle: {chain}")
+        path, payload = definitions[material]
+        resolving.append(material)
+        try:
+            parent_id = payload.get("inherits")
+            parent = None
+            if parent_id is not None:
+                key = MaterialId(str(parent_id))
+                parent = resolve(key) if key in definitions else bases.get(key)
+                if parent is None:
+                    raise MaterialFileError(f"material inherits unknown material {parent_id!r}")
+            entry = from_dict(payload, inherited=parent)
+            entries[material] = entry
+            files[material] = path
+            return entry
+        finally:
+            resolving.pop()
+
+    for material, (path, _payload) in definitions.items():
+        try:
+            resolve(material)
+        except MaterialFileError as error:
+            failures.append((path, f"{path}: {error}"))
     return entries, files, tuple(failures)
 
 
 def load_library(
-    roots: Iterable[Path] | None = None, *, strict: bool = False
+        roots: Iterable[Path] | None = None, *, strict: bool = False
 ) -> tuple["MaterialLibrary", LibraryReport]:
     """Read a `MaterialLibrary` from one or more directories, later roots winning.
 
@@ -314,20 +350,25 @@ def load_library(
     overridden: dict[MaterialId, tuple[Path, ...]] = {}
     failures: list[tuple[Path, str]] = []
     for root in paths:
-        entries, found, root_failures = read_root(root)
+        entries, found, root_failures = read_root(root, merged)
         if strict and root_failures:
             path, reason = root_failures[0]
             raise MaterialFileError(reason if str(path) in reason else f"{path}: {reason}")
         failures.extend(root_failures)
         for material, entry in entries.items():
-            # Only a *different* definition counts as an override. Since the
+            # Only a *different file definition* counts as an override. An
+            # inherited material may resolve differently because its parent was
+            # overridden; that change still belongs to the parent's file.
+            # Since the
             # delivered exe carries its own copy of the library and reads the
             # editable one beside it, every material shadows an identical twin —
-            # eleven lines saying nothing, which is exactly how the one line that
+            # a list of lines saying nothing, which is exactly how the one line that
             # means something (a lab's own chromium) becomes invisible. "A count
             # is not a list" cuts both ways: a list of non-events is not one
             # either.
-            if material in files and merged.get(material) != entry:
+            if material in files and read_definition(files[material]) != read_definition(
+                    found[material]
+            ):
                 overridden[material] = overridden.get(material, ()) + (files[material],)
             merged[material] = entry
             files[material] = found[material]
@@ -366,7 +407,7 @@ def invalidate_cache() -> None:
 
 
 def cached_library(
-    roots: Sequence[Path], *, strict: bool = False
+        roots: Sequence[Path], *, strict: bool = False
 ) -> tuple["MaterialLibrary", LibraryReport]:
     """`load_library`, memoised on the root paths.
 

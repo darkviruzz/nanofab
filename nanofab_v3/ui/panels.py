@@ -237,8 +237,10 @@ class ParameterForm(QWidget):
     programmatic writes are made behind `_applying` so they do not count as one.
     """
 
+    valueChanged = Signal()
+
     def __init__(
-        self, parent: QWidget | None = None, library: MaterialLibrary | None = None
+            self, parent: QWidget | None = None, library: MaterialLibrary | None = None
     ) -> None:
         super().__init__(parent)
         self._widgets: dict[str, QWidget] = {}
@@ -276,11 +278,11 @@ class ParameterForm(QWidget):
         layout.addStretch(1)
 
     def set_step(
-        self,
-        step_id: str,
-        display_name: str,
-        specs: Sequence[ParamSpec],
-        description: str = "",
+            self,
+            step_id: str,
+            display_name: str,
+            specs: Sequence[ParamSpec],
+            description: str = "",
     ) -> None:
         """Rebuild the form for one step, with its long description above it."""
         self._clear()
@@ -377,6 +379,7 @@ class ParameterForm(QWidget):
             if not self._applying:
                 self._touched.add(name)
             self.refresh_hints()
+            self.valueChanged.emit()
 
         if isinstance(widget, MaterialBox):
             widget.box.activated.connect(mark)
@@ -424,6 +427,7 @@ class ParameterForm(QWidget):
             self._applying = False
         self._touched -= set(values)
         self.refresh_hints()
+        self.valueChanged.emit()
 
     def values(self) -> dict[str, Any]:
         """What the form currently says, ready for `validate_params`.
@@ -520,10 +524,10 @@ class MaterialBox(QWidget):
     """
 
     def __init__(
-        self,
-        spec: ParamSpec,
-        library: MaterialLibrary | None = None,
-        parent: QWidget | None = None,
+            self,
+            spec: ParamSpec,
+            library: MaterialLibrary | None = None,
+            parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._spec = spec
@@ -674,9 +678,9 @@ class RevisionListPanel(QWidget):
     def eventFilter(self, watched, event) -> bool:  # type: ignore[override]
         """Del removes the selected revision — the shortcut E12 asks for."""
         if (
-            watched is self.list
-            and event.type() == QEvent.KeyPress
-            and event.key() in (Qt.Key_Delete, Qt.Key_Backspace)
+                watched is self.list
+                and event.type() == QEvent.KeyPress
+                and event.key() in (Qt.Key_Delete, Qt.Key_Backspace)
         ):
             index = self.selected_index()
             if index is not None:

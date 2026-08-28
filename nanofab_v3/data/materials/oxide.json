@@ -6,11 +6,10 @@
   "rates": {
     "dry_etch": 1.5,
     "icp_fluorine": 0.8333,
-    "ion_beam": 0.8,
+    "ion_beam": 0.2,
     "rie_chlorine": 0.0,
     "rie_oxygen": 0.0,
     "sputter_deposit": 0.0667,
-    "sputter_etch": 0.2,
     "wet_etch": 1.0,
     "wet_etch_cr": 0.0,
     "wet_etch_oxide": 16.6667
@@ -24,10 +23,10 @@
   "optical_k": 0.0,
   "rate_notes": {
     "icp_fluorine": "Assumed, not measured. The table names fused silica for the plasma chemistries and silicon oxide for sputter etching (roadmap §3.1); this SiO2 entry takes the fused-silica value of row 2.",
+    "ion_beam": "Student process table, roadmap §3 row 1 (12 nm/min).",
     "rie_chlorine": "Assumed, not measured. The table names fused silica for the plasma chemistries and silicon oxide for sputter etching (roadmap §3.1); this SiO2 entry takes the fused-silica value of row 3.",
     "rie_oxygen": "Assumed, not measured. The table names fused silica for the plasma chemistries and silicon oxide for sputter etching (roadmap §3.1); this SiO2 entry takes the fused-silica value of row 4.",
     "sputter_deposit": "Student process table, roadmap §3 row 7-9 (4 nm/min).",
-    "sputter_etch": "Student process table, roadmap §3 row 1 (12 nm/min).",
     "wet_etch_cr": "Student process table, roadmap §3 row 5: this bath attacks chromium only.",
     "wet_etch_oxide": "Student process table, roadmap §3 row 6 (1000 nm/min)."
   },

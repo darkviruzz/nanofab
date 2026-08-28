@@ -73,13 +73,13 @@ def _duration(thickness: float, rate: float) -> float:
 
 
 def evaporate(
-    structure: Structure,
-    material: MaterialId,
-    *,
-    thickness: float,
-    angle: float = 0.0,
-    divergence: float = 0.0,
-    rate: float = 1.0,
+        structure: Structure,
+        material: MaterialId,
+        *,
+        thickness: float,
+        angle: float = 0.0,
+        divergence: float = 0.0,
+        rate: float = 1.0,
 ) -> motion.MotionOutcome:
     """Directional deposition from a distant point source — S1's and S4's metal.
 
@@ -99,14 +99,14 @@ def evaporate(
 
 
 def sputter_deposit(
-    structure: Structure,
-    material: MaterialId,
-    *,
-    thickness: float,
-    exponent: float = 1.0,
-    angle: float = 0.0,
-    mobility_length: float = 0.0,
-    rate: float = 1.0,
+        structure: Structure,
+        material: MaterialId,
+        *,
+        thickness: float,
+        exponent: float = 1.0,
+        angle: float = 0.0,
+        mobility_length: float = 0.0,
+        rate: float = 1.0,
 ) -> motion.MotionOutcome:
     """Broad `cos^n` deposition with surface mobility — S4's fences (plan §6).
 
@@ -129,7 +129,7 @@ def sputter_deposit(
 
 
 def conformal_offset(
-    structure: Structure, material: MaterialId, *, thickness: float
+        structure: Structure, material: MaterialId, *, thickness: float
 ) -> motion.MotionOutcome:
     """Grow the whole front by `thickness` — the exact geometric answer (plan §4.2).
 
@@ -148,12 +148,12 @@ def conformal_offset(
 
 
 def atomic_layer_deposition(
-    structure: Structure,
-    material: MaterialId,
-    *,
-    thickness: float,
-    rate: float = 1.0,
-    faces: tuple[tuple[str, str], ...] | None = None,
+        structure: Structure,
+        material: MaterialId,
+        *,
+        thickness: float,
+        rate: float = 1.0,
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> motion.MotionOutcome:
     """Conformal growth that only reaches what the precursor can reach (plan §4.4).
 
@@ -361,7 +361,7 @@ EVAPORATE = FunctionStep(
         "`angle` tilts the source; `divergence` turns the point into a small lobe, which is the "
         "difference between an idealised evaporation and one from a real crucible. `thickness` "
         "is what an open, normal-facing surface receives — everything else follows from what "
-        "that surface can see."
+        "that surface can see. Incoming metal atoms stick; deposition has no specular ion bounce."
         "\n\n"
         "Needs: something to deposit on."
     ),
@@ -392,7 +392,8 @@ SPUTTER = FunctionStep(
         "`exponent` is the source's directionality — 1 is a thermal cosine law, larger is a "
         "forward-peaked magnetron. `mobility_length` decides whether the sidewall film is "
         "continuous or beaded. Try the same stack with `deposit.evaporate` to see how much of a "
-        "lift-off's outcome is the deposit's angular character rather than the resist."
+        "lift-off's outcome is the deposit's angular character rather than the resist. Incoming "
+        "metal atoms stick; deposition has no specular ion bounce."
         "\n\n"
         "Needs: something to deposit on."
     ),
@@ -435,7 +436,9 @@ ALD = FunctionStep(
         "The gate is rebuilt as the front moves, because that is when the answer can change — "
         "the mouth of a re-entrant profile narrows with every nanometre grown and closes at "
         "half the opening. From that moment the cavity's own front is handed a speed of zero. "
-        "This is what breaks a lift-off that a directional deposition would have left workable."
+        "This is what breaks a lift-off that a directional deposition would have left workable. "
+        "Conformality is represented by reachability and geometric growth, not by reflecting "
+        "low-energy precursor molecules or assigning them a second sticking coefficient."
         "\n\n"
         "Needs: something to deposit on."
     ),

@@ -347,6 +347,15 @@ class AngularYield:
         """Yield relative to normal incidence, given `cos(theta_incidence) > 0`."""
         raise NotImplementedError
 
+    def reflected_fraction(self, cos_incidence: np.ndarray) -> np.ndarray:
+        """Fraction of incident particles reflected specularly; zero by default."""
+        return np.zeros_like(np.asarray(cos_incidence, dtype=np.float64))
+
+    @property
+    def max_reflected_fraction(self) -> float:
+        cosines = np.linspace(1e-3, 1.0, 512)
+        return float(np.max(self.reflected_fraction(cosines)))
+
     @property
     def peak_response(self) -> float:
         """`max_theta cos(theta) * Y(theta)` — the arrival's upper bound per unit weight.
@@ -398,7 +407,11 @@ class SputterYield(AngularYield):
     def relative(self, cos_incidence: np.ndarray) -> np.ndarray:
         cosines = np.clip(np.asarray(cos_incidence, dtype=np.float64), 1e-6, 1.0)
         secant = 1.0 / cosines
-        return secant**float(self.rise) * np.exp(-float(self.fall) * (secant - 1.0))
+        return secant ** float(self.rise) * np.exp(-float(self.fall) * (secant - 1.0))
+
+    def reflected_fraction(self, cos_incidence: np.ndarray) -> np.ndarray:
+        """The normalised yield lost near grazing becomes one reflected ion."""
+        return np.clip(1.0 - self.relative(cos_incidence), 0.0, 1.0)
 
 
 # -- reverse marching --------------------------------------------------------
@@ -595,7 +608,7 @@ class _Window:
         rows = rows - self.offset[0]
         columns = columns - self.offset[1]
         inside = (
-            (rows >= 0) & (rows < self.shape[0]) & (columns >= 0) & (columns < self.shape[1])
+                (rows >= 0) & (rows < self.shape[0]) & (columns >= 0) & (columns < self.shape[1])
         )
         return (rows * self.shape[1] + columns)[inside], inside
 
@@ -632,6 +645,14 @@ class _FrontExtension:
         """Carry a window-local field's front values into the collar, as a full field."""
         return self._view.lift(np.where(self._within, values[self._indices], 0.0))
 
+    def front_flat(self, local_flat: np.ndarray) -> np.ndarray:
+        """Nearest front-cell flat index for arbitrary window-local cells."""
+        rows, columns = np.divmod(local_flat, self._view.shape[1])
+        return (
+                self._indices[0][rows, columns] * self._view.shape[1]
+                + self._indices[1][rows, columns]
+        )
+
 
 # -- the model ---------------------------------------------------------------
 
@@ -646,6 +667,8 @@ class FluxOutcome:
             outside the collar around the front.
         redeposited: Deposition flux from the one redeposition bounce, in the
             same units, or `None` when the model has no redeposition yield.
+        reflected: Etch flux from the one specular ion bounce, in the same units,
+            or `None` when the yield model reflects no ions.
         front_cells: Front cells the arrival was evaluated at.
         angles: Quadrature angles of the source.
         rays: Rays actually marched (angles pointing into a surface are skipped).
@@ -657,6 +680,7 @@ class FluxOutcome:
 
     arrival: np.ndarray
     redeposited: np.ndarray | None = None
+    reflected: np.ndarray | None = None
     front_cells: int = 0
     angles: int = 0
     rays: int = 0
@@ -726,20 +750,20 @@ class FluxModel2D:
         comparable to an unsplit one.
         """
         _, weights = self.distribution.quadrature()
-        return float(np.sum(weights)) * self.yield_model.peak_response + float(
-            self.isotropic_floor
-        )
+        direct = float(np.sum(weights)) * self.yield_model.peak_response
+        reflected = direct * self.yield_model.max_reflected_fraction
+        return direct + reflected + float(self.isotropic_floor)
 
     def on_front(self, grid: Grid, solid: np.ndarray) -> np.ndarray:
         """Arrival per cell for an already-repaired union field — what the solver calls."""
         return self.evaluate(grid, solid).arrival
 
     def on_structure(
-        self,
-        structure: Structure,
-        *,
-        release: np.ndarray | None = None,
-        policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
+            self,
+            structure: Structure,
+            *,
+            release: np.ndarray | None = None,
+            policy: reinit.ReinitPolicy = reinit.ReinitPolicy(),
     ) -> FluxOutcome:
         """Everything this model has to say about one `Structure`.
 
@@ -755,7 +779,7 @@ class FluxModel2D:
     # -- the computation -----------------------------------------------------
 
     def evaluate(
-        self, grid: Grid, solid: np.ndarray, *, release: np.ndarray | None = None
+            self, grid: Grid, solid: np.ndarray, *, release: np.ndarray | None = None
     ) -> FluxOutcome:
         """Arrival (and redeposition) for a union field, as a `FluxOutcome`.
 
@@ -806,6 +830,7 @@ class FluxModel2D:
         starts = np.broadcast_to(feet[:, None, :], (len(cells), len(angles), 2))
         fanned = np.broadcast_to(directions, (len(cells), len(angles), 2))
         rays = np.flatnonzero(lit.ravel())
+        ray_count = int(rays.size)
         blocked = np.zeros(lit.size, dtype=bool)
         unresolved = 0
         if rays.size:
@@ -828,6 +853,30 @@ class FluxModel2D:
         extension = _FrontExtension(view, int(self.extension_cells))
         extended = extension.apply(local)
 
+        reflected = None
+        reflection_fraction = self.yield_model.reflected_fraction(
+            np.clip(cos_incidence, 1e-6, 1.0)
+        )
+        reflecting = visible & (reflection_fraction > 0.0)
+        if np.any(reflecting):
+            reflected_local, reflected_rays, reflected_unresolved = self._reflection(
+                view,
+                feet,
+                front_normals,
+                normals,
+                directions,
+                weights,
+                cos_incidence,
+                reflection_fraction,
+                reflecting,
+                visibility,
+                extension,
+            )
+            reflected = extension.apply(reflected_local)
+            extended = extended + reflected
+            ray_count += reflected_rays
+            unresolved += reflected_unresolved
+
         redeposited = None
         if self.redeposition_yield > 0.0:
             removed = extended
@@ -840,21 +889,71 @@ class FluxModel2D:
         return FluxOutcome(
             arrival=extended,
             redeposited=redeposited,
+            reflected=reflected,
             front_cells=len(cells),
             angles=len(angles),
-            rays=int(rays.size),
+            rays=ray_count,
             unresolved=unresolved,
             visibility_spacing=visibility.spacing,
         )
 
+    def _reflection(
+            self,
+            view: "_Window",
+            feet: np.ndarray,
+            front_normals: np.ndarray,
+            normals: np.ndarray,
+            directions: np.ndarray,
+            weights: np.ndarray,
+            cos_incidence: np.ndarray,
+            fractions: np.ndarray,
+            reflecting: np.ndarray,
+            visibility: _Visibility,
+            extension: _FrontExtension,
+    ) -> tuple[np.ndarray, int, int]:
+        """One specular ion bounce; reflected particles carry no material."""
+        emitter, angle = np.nonzero(reflecting)
+        incident_to_source = directions[angle]
+        emitter_normal = front_normals[emitter]
+        cosine = cos_incidence[emitter, angle]
+        outgoing = -incident_to_source + 2.0 * cosine[:, None] * emitter_normal
+        march = visibility.march(feet[emitter], outgoing)
+        struck = march.blocked & (march.hit_cell >= 0)
+        local_result = np.zeros(view.shape, dtype=np.float64)
+        if not np.any(struck):
+            return local_result, len(emitter), march.unresolved
+
+        hit = np.flatnonzero(struck)
+        local, seen = view.local_flat(march.hit_cell[hit])
+        hit, local = hit[seen], local[seen]
+        receiver_normal = normals.reshape(2, -1)[:, local].T
+        receiver_cos = np.maximum(0.0, -np.sum(receiver_normal * outgoing[hit], axis=1))
+        response = self.yield_model.relative(np.clip(receiver_cos, 1e-6, 1.0))
+        strength = (
+                weights[angle[hit]]
+                * cosine[hit]
+                * fractions[emitter[hit], angle[hit]]
+                * receiver_cos
+                * response
+        )
+        target = extension.front_flat(local)
+        np.add.at(local_result.reshape(-1), target, strength)
+        bound = (
+                float(np.sum(weights))
+                * self.yield_model.peak_response
+                * self.yield_model.max_reflected_fraction
+        )
+        np.minimum(local_result, bound, out=local_result)
+        return local_result, len(emitter), march.unresolved
+
     def _bounce(
-        self,
-        view: "_Window",
-        feet: np.ndarray,
-        front_normals: np.ndarray,
-        normals: np.ndarray,
-        removal: np.ndarray,
-        visibility: _Visibility,
+            self,
+            view: "_Window",
+            feet: np.ndarray,
+            front_normals: np.ndarray,
+            normals: np.ndarray,
+            removal: np.ndarray,
+            visibility: _Visibility,
     ) -> np.ndarray:
         """One isotropic redeposition bounce off the sputtered sites (plan §4.3).
 
@@ -878,8 +977,8 @@ class FluxModel2D:
         # Rotate each front normal by every offset: the local hemisphere.
         tangents = np.stack([-front_normals[:, 1], front_normals[:, 0]], axis=1)
         directions = (
-            front_normals[:, None, :] * cos_out[None, :, None]
-            + tangents[:, None, :] * sin_out[None, :, None]
+                front_normals[:, None, :] * cos_out[None, :, None]
+                + tangents[:, None, :] * sin_out[None, :, None]
         )  # (N, J, 2)
         starts = np.broadcast_to(feet[:, None, :], directions.shape)
 
@@ -905,7 +1004,7 @@ class FluxModel2D:
 
 
 def _smear_along_front(
-    grid: Grid, front: np.ndarray, values: np.ndarray, length: float
+        grid: Grid, front: np.ndarray, values: np.ndarray, length: float
 ) -> np.ndarray:
     """Surface mobility: spread deposited flux over `length` nm of front (plan §4.3).
 
@@ -942,10 +1041,10 @@ def evaporation(angle: float = 0.0, divergence: float = 0.0) -> FluxModel2D:
 
 
 def ion_beam_etch(
-    angle: float = 0.0,
-    divergence: float = math.radians(3.0),
-    redeposition_yield: float = 0.0,
-    yield_model: AngularYield | None = None,
+        angle: float = 0.0,
+        divergence: float = math.radians(3.0),
+        redeposition_yield: float = 0.0,
+        yield_model: AngularYield | None = None,
 ) -> FluxModel2D:
     """Narrow-lobe physical sputtering with an angle-dependent yield (plan §6, IBE).
 
@@ -962,9 +1061,9 @@ def ion_beam_etch(
 
 
 def reactive_ion_etch(
-    angle: float = 0.0,
-    divergence: float = math.radians(5.0),
-    chemical_fraction: float = 0.2,
+        angle: float = 0.0,
+        divergence: float = math.radians(5.0),
+        chemical_fraction: float = 0.2,
 ) -> FluxModel2D:
     """Directional ion lobe plus an orientation-blind chemical component (plan §6, RIE).
 
@@ -982,7 +1081,7 @@ def reactive_ion_etch(
 
 
 def sputter_deposition(
-    exponent: float = 1.0, angle: float = 0.0, mobility_length: float = 0.0
+        exponent: float = 1.0, angle: float = 0.0, mobility_length: float = 0.0
 ) -> FluxModel2D:
     """Broad `cos^n` deposition with optional surface mobility (plan §6, sputter).
 

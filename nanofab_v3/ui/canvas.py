@@ -36,6 +36,8 @@ invariant.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
@@ -198,6 +200,9 @@ class CrossSectionCanvas(QWidget):
             for start, end in flat:
                 painter.drawLine(QPointF(start[0], start[1]), QPointF(end[0], end[1]))
 
+        if scene.preview:
+            self._paint_step_preview(painter, scale_up, scale_right, domain)
+
         for overlay in scene.overlays:
             color = QColor(overlay.color)
             # Roadmap E28: the exposure overlays are *areas*, in discrete bands
@@ -249,6 +254,53 @@ class CrossSectionCanvas(QWidget):
             f"   ·   {ratio.describe()}",
         )
         painter.end()
+
+    def _paint_step_preview(
+            self, painter: QPainter, scale_up: float, scale_right: float, domain: QRectF
+    ) -> None:
+        """Paint E29 vectors; only this method knows pixels or Qt."""
+        assert self._scene is not None
+        preview = self._scene.preview
+        for arrow in preview.arrows:
+            start = self._to_pixels(np.asarray([arrow.start], dtype=float))[0]
+            direction = np.asarray(
+                (arrow.direction[1] * scale_right, -arrow.direction[0] * scale_up),
+                dtype=float,
+            )
+            norm = float(np.linalg.norm(direction))
+            if norm <= 0.0:
+                continue
+            unit = direction / norm
+            end = start + unit * arrow.length_nm * preview.pixels_per_nm
+            style = Qt.DashLine if arrow.dashed else Qt.SolidLine
+            painter.setPen(QPen(QColor(arrow.color), 1.5, style))
+            painter.drawLine(QPointF(*start), QPointF(*end))
+            angle = math.atan2(unit[1], unit[0])
+            for offset in (-0.55, 0.55):
+                head = end - 7.0 * np.array(
+                    (math.cos(angle + offset), math.sin(angle + offset))
+                )
+                painter.drawLine(QPointF(*end), QPointF(*head))
+        for circle in preview.circles:
+            centre = self._to_pixels(np.asarray([circle.center], dtype=float))[0]
+            painter.setPen(
+                QPen(QColor(circle.color), 1.3, Qt.DashLine if circle.dashed else Qt.SolidLine)
+            )
+            painter.drawEllipse(
+                QRectF(
+                    centre[0] - circle.radius_nm * scale_right,
+                    centre[1] - circle.radius_nm * scale_up,
+                    2.0 * circle.radius_nm * scale_right,
+                    2.0 * circle.radius_nm * scale_up,
+                )
+            )
+        if preview.note:
+            painter.setPen(QColor("#ffd166"))
+            painter.drawText(
+                domain.adjusted(6, 4, -6, -24),
+                Qt.AlignLeft | Qt.AlignBottom,
+                preview.note,
+            )
 
     def _path(self, outlines) -> QPainterPath | None:
         """Build a throwaway path from polylines the kernel produced.

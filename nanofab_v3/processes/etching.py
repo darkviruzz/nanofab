@@ -48,7 +48,6 @@ from nanofab_v3.materials import (
     ION_BEAM,
     RIE_CHLORINE,
     RIE_OXYGEN,
-    SPUTTER_ETCH,
     WET_ETCH,
     WET_ETCH_CR,
     WET_ETCH_OXIDE,
@@ -63,16 +62,16 @@ from nanofab_v3.processes.contract import (
     StepContext,
     StepResult,
 )
-from nanofab_v3.processes.rates import dominant_yield, release_map, surface_rates
+from nanofab_v3.processes.rates import dominant_yield, release_maps, surface_rates
 
 
 def wet_etch(
-    structure: Structure,
-    *,
-    duration: float,
-    library,
-    scale: float = 1.0,
-    faces: tuple[tuple[str, str], ...] | None = None,
+        structure: Structure,
+        *,
+        duration: float,
+        library,
+        scale: float = 1.0,
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> motion.MotionOutcome:
     """Isotropic chemical removal, gated on reachability (plan §6, §4.4).
 
@@ -94,13 +93,13 @@ def wet_etch(
 
 
 def isotropic_etch(
-    structure: Structure,
-    *,
-    duration: float,
-    library,
-    process_class: str,
-    scale: float = 1.0,
-    faces: tuple[tuple[str, str], ...] | None = None,
+        structure: Structure,
+        *,
+        duration: float,
+        library,
+        process_class: str,
+        scale: float = 1.0,
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> motion.MotionOutcome:
     """Removal at one material rate in every direction, gated on reachability.
 
@@ -127,16 +126,16 @@ def isotropic_etch(
 
 
 def directional_etch(
-    structure: Structure,
-    *,
-    duration: float,
-    library,
-    process_class: str,
-    angle: float = 0.0,
-    divergence: float = math.radians(5.0),
-    chemical_fraction: float = 0.0,
-    scale: float = 1.0,
-    faces: tuple[tuple[str, str], ...] | None = None,
+        structure: Structure,
+        *,
+        duration: float,
+        library,
+        process_class: str,
+        angle: float = 0.0,
+        divergence: float = math.radians(5.0),
+        chemical_fraction: float = 0.0,
+        scale: float = 1.0,
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> motion.MotionOutcome:
     """A narrow ion lobe at one material rate — the table's "vertical" rows.
 
@@ -158,15 +157,15 @@ def directional_etch(
 
 
 def reactive_ion_etch(
-    structure: Structure,
-    *,
-    duration: float,
-    library,
-    angle: float = 0.0,
-    divergence: float = math.radians(5.0),
-    chemical_fraction: float = 0.2,
-    scale: float = 1.0,
-    faces: tuple[tuple[str, str], ...] | None = None,
+        structure: Structure,
+        *,
+        duration: float,
+        library,
+        angle: float = 0.0,
+        divergence: float = math.radians(5.0),
+        chemical_fraction: float = 0.2,
+        scale: float = 1.0,
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> motion.MotionOutcome:
     """Directional ion lobe plus an orientation-blind chemical component (plan §6).
 
@@ -186,17 +185,15 @@ def reactive_ion_etch(
 
 
 def ion_beam_etch(
-    structure: Structure,
-    *,
-    duration: float,
-    library,
-    angle: float = 0.0,
-    divergence: float = math.radians(3.0),
-    redeposition_yield: float = 0.0,
-    redeposit_as: MaterialId | None = None,
-    scale: float = 1.0,
-    faces: tuple[tuple[str, str], ...] | None = None,
-    process_class: str = ION_BEAM,
+        structure: Structure,
+        *,
+        duration: float,
+        library,
+        angle: float = 0.0,
+        divergence: float = math.radians(3.0),
+        redeposition_yield: float = 0.0,
+        scale: float = 1.0,
+        faces: tuple[tuple[str, str], ...] | None = None,
 ) -> motion.MotionOutcome:
     """Narrow-lobe physical sputtering, optionally with a redeposition bounce (plan §6).
 
@@ -207,52 +204,46 @@ def ion_beam_etch(
     just produced, evaluated once, rather than a coupled removal/redeposition
     problem the didactic tier has no business solving.
 
-    `release` is what stops a hard mask from redepositing material it is not
-    losing: `rates.release_map` weights each site by its own material's etch rate
-    relative to the fastest. Without it the flux model, which knows only geometry,
-    would treat every surface in sight as a source.
-
-    `process_class` exists because M6's table has a sputter-etch row of its own
-    (roadmap §3 row 1) whose numbers are not the didactic `ion_beam` ones. Same
-    physics, same wrapper, a different rate key — plan §5.4's "several processes
-    may model the same technique", here differing only in which column of the
-    library they read.
+    The second pass is split by source material. A chromium cell therefore emits
+    chromium and a resist cell emits resist; no recipe parameter may relabel the
+    returned matter. `rates.release_maps` also prevents an inert mask from
+    becoming a source merely because the flux kernel can see its geometry.
     """
     model = flux.ion_beam_etch(
         angle=float(angle),
         divergence=float(divergence),
         redeposition_yield=float(redeposition_yield),
-        yield_model=dominant_yield(library, structure, process_class),
+        yield_model=dominant_yield(library, structure, ION_BEAM),
     )
-    rates = surface_rates(library, structure, process_class, scale=scale)
+    rates = surface_rates(library, structure, ION_BEAM, scale=scale)
     gate = motion.gated(model, predicates.ReachableFront(faces=faces))
     outcome = motion.advect_front(structure, rates, float(duration), flux=gate)
-    if redeposition_yield <= 0.0 or redeposit_as is None:
+    if redeposition_yield <= 0.0:
         return outcome
 
     etched = outcome.structure
-    bounce = model.on_structure(etched, release=release_map(library, etched, process_class))
-    if bounce.redeposited is None:
-        return outcome
-    # The bounce is an arrival per unit front like any other, so the deposition
-    # that follows is a plain motion: the redeposited layer's thickness is what
-    # that flux lays down over the same time at the same rate.
-    back = motion.advect_front(
-        etched,
-        motion.SurfaceRates(rates={}, default=rates.bound),
-        float(duration),
-        deposit_material=redeposit_as,
-        flux=bounce.redeposited,
-    )
-    return motion.MotionOutcome(
-        structure=back.structure,
-        swept=outcome.swept + back.swept,
-        sub_steps=outcome.sub_steps + back.sub_steps,
-        dt=outcome.dt,
-        max_speed=max(outcome.max_speed, back.max_speed),
-        reinit_passes=outcome.reinit_passes + back.reinit_passes,
-        flux_rebuilds=outcome.flux_rebuilds + back.flux_rebuilds,
-    )
+    returned = outcome
+    for material, release in release_maps(library, etched, ION_BEAM).items():
+        bounce = model.on_structure(etched, release=release)
+        if bounce.redeposited is None or not bounce.redeposited.any():
+            continue
+        back = motion.advect_front(
+            returned.structure,
+            motion.SurfaceRates(rates={}, default=rates.bound),
+            float(duration),
+            deposit_material=material,
+            flux=bounce.redeposited,
+        )
+        returned = motion.MotionOutcome(
+            structure=back.structure,
+            swept=returned.swept + back.swept,
+            sub_steps=returned.sub_steps + back.sub_steps,
+            dt=returned.dt,
+            max_speed=max(returned.max_speed, back.max_speed),
+            reinit_passes=returned.reinit_passes + back.reinit_passes,
+            flux_rebuilds=returned.flux_rebuilds + back.flux_rebuilds,
+        )
+    return returned
 
 
 # -- registered steps ---------------------------------------------------------
@@ -292,7 +283,6 @@ def _run_rie(ctx: StepContext) -> StepResult:
 
 
 def _run_ibe(ctx: StepContext) -> StepResult:
-    redeposit = ctx["redeposit_as"].strip()
     outcome = ion_beam_etch(
         ctx.structure,
         duration=ctx["duration"],
@@ -300,7 +290,6 @@ def _run_ibe(ctx: StepContext) -> StepResult:
         angle=math.radians(ctx["angle"]),
         divergence=math.radians(ctx["divergence"]),
         redeposition_yield=ctx["redeposition_yield"],
-        redeposit_as=MaterialId(redeposit) if redeposit else None,
         scale=ctx["scale"],
     )
     return _etch_result(
@@ -378,6 +367,7 @@ RIE_STEP = FunctionStep(
     ),
 )
 
+
 # -- the chemistries of roadmap §3's process table -----------------------------
 #
 # Seven wrappers over the two functions above, and nothing else. What separates
@@ -452,8 +442,8 @@ def _run_icp_fluorine(ctx: StepContext) -> StepResult:
         duration=ctx["duration"],
         library=ctx.library,
         process_class=ICP_FLUORINE,
-        angle=math.radians(ctx["angle"]),
-        divergence=math.radians(ctx["divergence"]),
+        angle=0.0,
+        divergence=math.radians(3.0),
         chemical_fraction=ctx["chemical_fraction"],
         scale=ctx["scale"],
     )
@@ -462,24 +452,6 @@ def _run_icp_fluorine(ctx: StepContext) -> StepResult:
         outcome,
         f"ICP fluorine etch, {ctx['duration']:.1f} s, chemical fraction "
         f"{ctx['chemical_fraction']:.2f}",
-    )
-
-
-def _run_sputter_etch(ctx: StepContext) -> StepResult:
-    redeposit = ctx["redeposit_as"].strip()
-    outcome = ion_beam_etch(
-        ctx.structure,
-        duration=ctx["duration"],
-        library=ctx.library,
-        angle=math.radians(ctx["angle"]),
-        divergence=math.radians(ctx["divergence"]),
-        redeposition_yield=ctx["redeposition_yield"],
-        redeposit_as=MaterialId(redeposit) if redeposit else None,
-        scale=ctx["scale"],
-        process_class=SPUTTER_ETCH,
-    )
-    return _etch_result(
-        ctx, outcome, f"sputter etch, {ctx['duration']:.1f} s at {ctx['angle']:.0f} deg"
     )
 
 
@@ -492,36 +464,6 @@ _DIVERGENCE = ParamSpec(
     description="Angular half-width of the ion lobe",
 )
 
-SPUTTER_ETCH_STEP = FunctionStep(
-    step_id="etch.sputter",
-    display_name="Sputter etching (Ar+)",
-    fidelity=DIDACTIC,
-    schema=(
-        _DURATION,
-        _SCALE,
-        _ANGLE,
-        ParamSpec("divergence", float, unit="deg", default=3.0, minimum=0.0, maximum=45.0,
-                  description="Angular half-width of the ion lobe"),
-        ParamSpec("redeposition_yield", float, default=0.0, minimum=0.0, maximum=1.0,
-                  description="Fraction of removed material that lands again"),
-        ParamSpec("redeposit_as", str, default="",
-                  description="Material the redeposited film is recorded as; empty = none"),
-    ),
-    required=frozenset(),
-    provided=frozenset(),
-    run_function=_run_sputter_etch,
-    description=(
-        "Argon sputter etching at the process table's own rates — the same physics as "
-        "`etch.ibe`, reading a different column of the material library."
-        "\n\n"
-        "Two steps for one technique is deliberate: `etch.ibe` carries the didactic numbers the "
-        "acceptance scenarios are tuned to, and this one carries a measured table. Mixing them "
-        "under one name would make the library's own provenance unreadable."
-        "\n\n"
-        "Needs: a sample."
-    ),
-)
-
 ICP_FLUORINE_STEP = FunctionStep(
     step_id="etch.icp_fluorine",
     display_name="ICP etching (fluorine)",
@@ -529,8 +471,6 @@ ICP_FLUORINE_STEP = FunctionStep(
     schema=(
         _DURATION,
         _SCALE,
-        _ANGLE,
-        _DIVERGENCE,
         ParamSpec(
             "chemical_fraction", float, default=0.0, minimum=0.0, maximum=0.95,
             description=(
@@ -548,8 +488,8 @@ ICP_FLUORINE_STEP = FunctionStep(
         "silica and silicon quickly, resist faster still, and chromium 25 times more slowly — "
         "which is why a chromium hard mask survives it and a resist mask does not."
         "\n\n"
-        "The direction is not in the rate. A rate here is the speed of an open, normal-facing "
-        "surface; what makes this one vertical is the narrow angular distribution of the step. "
+        "The direction is not in the rate. This step is fixed at normal incidence with 3 deg "
+        "divergence; recipes cannot turn a table process into a tilted beam. "
         "`chemical_fraction` is 0 by default because the table gives no lateral rate — raise it "
         "to watch the vertical wall become an undercutting one."
         "\n\n"
@@ -638,8 +578,8 @@ WET_OXIDE_STEP = FunctionStep(
     ),
 )
 
-IBE_STEP = FunctionStep(
-    step_id="etch.ibe",
+ION_BEAM_STEP = FunctionStep(
+    step_id="etch.ion_beam",
     display_name="Ion beam etch",
     fidelity=DIDACTIC,
     schema=(
@@ -651,8 +591,6 @@ IBE_STEP = FunctionStep(
                   description="Angular half-width of the ion lobe"),
         ParamSpec("redeposition_yield", float, default=0.0, minimum=0.0, maximum=1.0,
                   description="Fraction of removed material that lands again"),
-        ParamSpec("redeposit_as", str, default="",
-                  description="Material the redeposited film is recorded as; empty = none"),
     ),
     required=frozenset(),
     provided=frozenset(),
@@ -663,9 +601,8 @@ IBE_STEP = FunctionStep(
         "and it is the material's own property rather than the beam's."
         "\n\n"
         "`redeposition_yield` turns on the one process here that runs the solver twice: once to "
-        "remove material, once to put back what did not leave. `redeposit_as` names the "
-        "material the returned film is recorded as — that is what lines a trench sidewall with "
-        "what came off its floor."
+        "remove material, once to put back what did not leave. Returned matter keeps its source "
+        "identity, so chromium from a trench floor remains chromium on the resist sidewall."
         "\n\n"
         "Needs: a sample."
     ),

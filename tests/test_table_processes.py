@@ -39,15 +39,15 @@ from nanofab_v3.processes import builtin_registry, run_step
 from nanofab_v3.processes import lithography, substrate
 
 TABLE_STEPS = (
-    "etch.sputter",        # row 1  — sputter etching
-    "etch.icp_fluorine",   # row 2  — ICP, fluorine, vertical
-    "etch.rie_chlorine",   # row 3  — RIE, chlorine, isotropic
-    "etch.rie_oxygen",     # row 4  — RIE, oxygen, isotropic
-    "etch.wet_cr",         # row 5  — chromium etchant
-    "etch.wet_oxide",      # row 6  — buffered oxide etch
+    "etch.ion_beam",  # row 1  — ion-beam / sputter etching
+    "etch.icp_fluorine",  # row 2  — ICP, fluorine, vertical
+    "etch.rie_chlorine",  # row 3  — RIE, chlorine, isotropic
+    "etch.rie_oxygen",  # row 4  — RIE, oxygen, isotropic
+    "etch.wet_cr",  # row 5  — chromium etchant
+    "etch.wet_oxide",  # row 6  — buffered oxide etch
     "deposit.sputter_rate",  # rows 7-9 — one step, the material is the row
-    "clean.particles",     # row 10 — since M5
-    "resist.spin_coat",    # row 11 — the spin curve
+    "clean.particles",  # row 10 — since M5
+    "resist.spin_coat",  # row 11 — the spin curve
 )
 
 
@@ -96,20 +96,27 @@ def test_all_eleven_table_processes_are_registered_steps() -> None:
         assert step_id in registry, step_id
 
 
-def test_the_didactic_steps_they_sit_beside_are_untouched() -> None:
-    """Nothing renamed (roadmap §3): the older ids still answer, at their own rates."""
+def test_m11_exposes_one_ion_beam_step_and_retires_both_old_ids() -> None:
     registry = builtin_registry()
 
-    for step_id in ("etch.wet", "etch.rie", "etch.ibe", "deposit.sputter"):
+    for step_id in ("etch.wet", "etch.rie", "etch.ion_beam", "deposit.sputter"):
         assert step_id in registry, step_id
-    assert registry["etch.ibe"].step_id != registry["etch.sputter"].step_id
+    assert "etch.ibe" not in registry
+    assert "etch.sputter" not in registry
+
+
+def test_icp_direction_is_fixed_by_the_table_process() -> None:
+    names = {spec.name for spec in builtin_registry()["etch.icp_fluorine"].parameter_schema()}
+
+    assert "angle" not in names
+    assert "divergence" not in names
 
 
 # -- selectivity: each column attacks what it names ---------------------------
 
 
 def test_the_chromium_etchant_takes_the_chromium_and_leaves_the_glass(
-    chrome_on_glass: Structure, library: MaterialLibrary
+        chrome_on_glass: Structure, library: MaterialLibrary
 ) -> None:
     """Row 5, and the reason `wet_etch_cr` is its own class: a bath is selective.
 
@@ -138,7 +145,7 @@ def test_the_chromium_etchant_takes_the_chromium_and_leaves_the_glass(
 
 
 def test_the_oxygen_plasma_strips_the_resist_and_nothing_else(
-    chrome_on_glass: Structure, library: MaterialLibrary
+        chrome_on_glass: Structure, library: MaterialLibrary
 ) -> None:
     """Row 4. The table gives chromium and fused silica a rate of exactly zero."""
     before_resist = _height_of(chrome_on_glass, RESIST, 30)
@@ -157,7 +164,7 @@ def test_the_oxygen_plasma_strips_the_resist_and_nothing_else(
 
 
 def test_the_fluorine_etch_goes_through_the_glass_and_barely_touches_the_chromium(
-    chrome_on_glass: Structure, library: MaterialLibrary
+        chrome_on_glass: Structure, library: MaterialLibrary
 ) -> None:
     """Row 2 — a 25:1 selectivity, which is why the chromium is the hard mask."""
     library_entry = library[CHROME]
@@ -183,7 +190,7 @@ def test_the_fluorine_etch_goes_through_the_glass_and_barely_touches_the_chromiu
 
 
 def test_horizontal_equals_vertical_undercuts_and_vertical_does_not(
-    library: MaterialLibrary
+        library: MaterialLibrary
 ) -> None:
     """Roadmap §3's central schema point, as the one measurement that separates them.
 
@@ -220,7 +227,7 @@ def test_horizontal_equals_vertical_undercuts_and_vertical_does_not(
 
 
 def test_raising_the_chemical_fraction_turns_the_vertical_etch_into_an_undercutting_one(
-    library: MaterialLibrary
+        library: MaterialLibrary
 ) -> None:
     """The parameter is the didactic payload, not a leftover (see the step's help)."""
     grid = substrate.cross_section_grid(width=240.0, thickness=40.0, headroom=200.0)
@@ -243,7 +250,7 @@ def test_raising_the_chemical_fraction_turns_the_vertical_etch_into_an_undercutt
 
 
 def test_the_timed_sputter_deposition_derives_its_thickness_from_the_rate(
-    library: MaterialLibrary
+        library: MaterialLibrary
 ) -> None:
     """Rows 7-9 as the operator states them: a time in, a film out."""
     grid = substrate.cross_section_grid(width=240.0, thickness=40.0, headroom=200.0)
@@ -264,7 +271,7 @@ def test_the_timed_sputter_deposition_derives_its_thickness_from_the_rate(
 
 
 def test_a_target_with_no_sputter_rate_says_so_instead_of_depositing_nothing(
-    library: MaterialLibrary
+        library: MaterialLibrary
 ) -> None:
     """E15's rule at the step: a zero rate is "nobody stated one", not "it does not grow"."""
     grid = substrate.cross_section_grid(width=240.0, thickness=40.0, headroom=200.0)

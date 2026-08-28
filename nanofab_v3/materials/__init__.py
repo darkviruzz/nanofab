@@ -20,6 +20,7 @@ from __future__ import annotations
 from nanofab_v3.materials.library import (
     ALUMINA,
     CHROME,
+    CHROME_REDEPOSIT,
     FUSED_SILICA,
     TITANIA,
     HARD_RESIST,
@@ -45,7 +46,6 @@ from nanofab_v3.materials.material import (
     RIE_CHLORINE,
     RIE_OXYGEN,
     SPUTTER_DEPOSIT,
-    SPUTTER_ETCH,
     WET_ETCH,
     WET_ETCH_CR,
     WET_ETCH_OXIDE,
@@ -92,6 +92,7 @@ from nanofab_v3.materials.unknown import (
 __all__ = [
     "ALUMINA",
     "CHROME",
+    "CHROME_REDEPOSIT",
     "DEPOSIT",
     "DEVELOP",
     "DISSOLVE",
@@ -110,7 +111,6 @@ __all__ = [
     "FUSED_SILICA",
     "SILICON",
     "SPUTTER_DEPOSIT",
-    "SPUTTER_ETCH",
     "TITANIA",
     "UNDERLAYER",
     "WET_ETCH",

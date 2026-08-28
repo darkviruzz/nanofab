@@ -52,6 +52,7 @@ from nanofab_v3.ui.panels import (
 )
 from nanofab_v3.ui.scene import ALWAYS_ON, OVERLAY_KINDS, light_preview
 from nanofab_v3.ui.scene import build as build_scene
+from nanofab_v3.ui.preview import build_step_preview
 from nanofab_v3.ui.demos import demo, demos as all_demos
 from nanofab_v3.ui.session import Session, autosaved_recipe_path
 from nanofab_v3.ui.wafer import WaferFan, default_cache_dir
@@ -65,7 +66,7 @@ class MainWindow(QMainWindow):
     """Steps, sample, chain, log — the four panels of plan §10."""
 
     def __init__(
-        self, session: Session | None = None, settings: "app_settings.Settings | None" = None
+            self, session: Session | None = None, settings: "app_settings.Settings | None" = None
     ) -> None:
         super().__init__()
         # Roadmap E39: what is switched on at startup comes from `settings.ini`,
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
         self.revisions.repeat_requested.connect(self._on_repeat)
         self.revisions.adjust_requested.connect(self._on_adjust)
         self.revisions.remove_requested.connect(self._on_remove)
+        self.form.valueChanged.connect(self._refresh_canvas)
         self.canvas.hovered.connect(self.statusBar().showMessage)
         self.wafer.position_chosen.connect(self._on_wafer_position)
 
@@ -155,7 +157,7 @@ class MainWindow(QMainWindow):
         for kind in OVERLAY_KINDS:
             box = QCheckBox(kind)
             if kind in app_settings.overlay_names(self.settings, OVERLAY_KINDS) or (
-                kind in ALWAYS_ON and not self.settings.get("view.overlays")
+                    kind in ALWAYS_ON and not self.settings.get("view.overlays")
             ):
                 # Roadmap E9: the exposure *result* colours without being asked,
                 # because a latent image you have to remember to look for is a
@@ -246,19 +248,19 @@ class MainWindow(QMainWindow):
         """
         session_menu = self.menuBar().addMenu("&Session")
         for text, shortcut, slot, tip in (
-            ("&New", QKeySequence.New, self._on_new, "Start over on an empty domain"),
-            (
-                "&Open recipe…",
-                QKeySequence.Open,
-                self._on_open_recipe,
-                "Read a recipe file. Nothing is computed — run it when you want it.",
-            ),
-            (
-                "&Save recipe…",
-                QKeySequence.Save,
-                self._on_save_recipe,
-                "Write the steps as one JSON file. Kilobytes, and no structures.",
-            ),
+                ("&New", QKeySequence.New, self._on_new, "Start over on an empty domain"),
+                (
+                        "&Open recipe…",
+                        QKeySequence.Open,
+                        self._on_open_recipe,
+                        "Read a recipe file. Nothing is computed — run it when you want it.",
+                ),
+                (
+                        "&Save recipe…",
+                        QKeySequence.Save,
+                        self._on_save_recipe,
+                        "Write the steps as one JSON file. Kilobytes, and no structures.",
+                ),
         ):
             action = QAction(text, self)
             action.setShortcut(shortcut)
@@ -267,16 +269,16 @@ class MainWindow(QMainWindow):
             session_menu.addAction(action)
         session_menu.addSeparator()
         for text, slot, tip in (
-            (
-                "Open &build…",
-                self._on_open_build,
-                "Read a saved build back: the recipe and every computed revision.",
-            ),
-            (
-                "Save &build…",
-                self._on_save_build,
-                "Write <name>.recipe.json and a <name>/ folder with every step in it.",
-            ),
+                (
+                        "Open &build…",
+                        self._on_open_build,
+                        "Read a saved build back: the recipe and every computed revision.",
+                ),
+                (
+                        "Save &build…",
+                        self._on_save_build,
+                        "Write <name>.recipe.json and a <name>/ folder with every step in it.",
+                ),
         ):
             action = QAction(text, self)
             action.setToolTip(tip)
@@ -398,8 +400,32 @@ class MainWindow(QMainWindow):
         overlays = [kind for kind, box in self._overlays.items() if box.isChecked()]
         index = self.revisions.selected_index()
         scene = self.session.scene(index, overlays=overlays)
-        preview = self._light_preview(index)
-        self.canvas.set_scene(scene if preview is None else scene.with_light(preview))
+        light = self._light_preview(index)
+        if light is not None:
+            scene = scene.with_light(light)
+        scene = scene.with_preview(self._step_preview(index))
+        self.canvas.set_scene(scene)
+
+    def _step_preview(self, index: int | None):
+        structure = (
+            self.session.structure
+            if index is None or not len(self.session.chain)
+            else self.session.chain[index].structure
+        )
+        try:
+            return build_step_preview(
+                structure,
+                self.steps.selected_step_id() or "",
+                self.form.values(),
+                self.session.library,
+                pixels_per_nm=float(
+                    self.settings.get("view.preview_scale_px_per_nm", 20.0)
+                ),
+            )
+        except (ValueError, KeyError, TypeError):
+            from nanofab_v3.ui.scene import StepPreview
+
+            return StepPreview()
 
     def _light_preview(self, index: int | None):
         """E9's preview, from the form's own values — never from the sample.
@@ -435,6 +461,7 @@ class MainWindow(QMainWindow):
             step.parameter_schema(),
             registry.describe(step_id),
         )
+        self._refresh_canvas()
 
     def _on_revision_chosen(self, index: int) -> None:
         """Show that revision, and fill the form **only if it is the same step**.

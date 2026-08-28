@@ -154,7 +154,7 @@ def test_the_window_lists_every_material_and_says_where_it_came_from(qt_app, roo
 
     window = LibraryWindow()
     tab = window.materials
-    assert tab.list.count() == 11
+    assert tab.list.count() == 12
     tab._select("chrome")
     assert "chrome.json" in tab.source.text()
     assert tab._notes["ion_beam"].text()  # rate_notes are visible, not hidden

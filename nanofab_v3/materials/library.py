@@ -52,7 +52,6 @@ from nanofab_v3.materials.material import (
     RIE_CHLORINE,
     RIE_OXYGEN,
     SPUTTER_DEPOSIT,
-    SPUTTER_ETCH,
     WET_ETCH,
     WET_ETCH_CR,
     WET_ETCH_OXIDE,
@@ -78,6 +77,7 @@ METAL = MaterialId("metal")
 ALUMINA = MaterialId("alumina")
 PARTICLE = MaterialId("particle")
 HARD_RESIST = MaterialId("resist_hardbaked")
+CHROME_REDEPOSIT = MaterialId("chrome_redeposit")
 
 
 @dataclass(frozen=True)
@@ -137,7 +137,7 @@ class MaterialLibrary:
         return MaterialLibrary(updated)
 
     def blanket_rates(
-        self, process_class: str, materials: Mapping[MaterialId, object] | None = None
+            self, process_class: str, materials: Mapping[MaterialId, object] | None = None
     ) -> dict[MaterialId, float]:
         """`{material: nm/s}` for one process class — the input of `SurfaceRates`.
 
@@ -206,6 +206,7 @@ def application_library() -> tuple[MaterialLibrary, LibraryReport]:
 __all__ = [
     "ALUMINA",
     "CHROME",
+    "CHROME_REDEPOSIT",
     "FUSED_SILICA",
     "TITANIA",
     "HARD_RESIST",
@@ -228,7 +229,6 @@ __all__ = [
     "RIE_CHLORINE",
     "RIE_OXYGEN",
     "SPUTTER_DEPOSIT",
-    "SPUTTER_ETCH",
     "WET_ETCH",
     "WET_ETCH_CR",
     "WET_ETCH_OXIDE",

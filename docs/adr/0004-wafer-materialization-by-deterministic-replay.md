@@ -24,3 +24,13 @@ positions later, pays for unviewed positions); one run carrying N cross-sections
 (forces a position axis into every view, metric and artifact). Determinism is
 promised per machine + code version; cross-machine float drift is accepted and
 absorbed by the code-version cache key.
+
+## Version discipline
+
+`nanofab_v3.__version__` is part of cache correctness, not only a release label.
+It must be increased for every substantial or concluding commit and for every
+bugfix or behavioural change. Milestone completion is the latest permissible
+point for that bump. Documentation-only changes that cannot affect replay may
+share the current version; code, material data, schemas and runtime settings may
+not. A library fingerprint diagnoses edited material roots, but it does not
+replace the code version.

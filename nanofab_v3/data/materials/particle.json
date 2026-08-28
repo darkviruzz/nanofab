@@ -5,7 +5,7 @@
   "display_color": "#8d6e63",
   "rates": {
     "dry_etch": 0.3,
-    "ion_beam": 0.6,
+    "ion_beam": 0.138,
     "wet_etch": 0.0
   },
   "sputter_response": {
@@ -15,6 +15,9 @@
   "density": 2.5,
   "optical_n": 1.6,
   "optical_k": 0.1,
+  "rate_notes": {
+    "ion_beam": "Didactic, not in the process table; the former ratio was scaled by 0.23 when M11 unified the ion-beam column."
+  },
   "tags": [
     "contamination"
   ]

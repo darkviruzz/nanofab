@@ -67,7 +67,7 @@ def test_a_delivered_build_reads_one_library_root_and_it_is_the_visible_one(deli
     assert store.delivered_only() is True
     assert store.material_roots() == (materials,)
     assert store.didactic_roots() == (materials,)
-    assert len(didactic_library()) == 11
+    assert len(didactic_library()) == 12
 
 
 def test_a_rate_edited_in_the_delivered_folder_is_the_rate_that_runs(delivered):
@@ -237,7 +237,7 @@ def test_the_icon_is_an_ico_with_the_four_sizes_windows_asks_for():
     assert (reserved, kind) == (0, 1)
     sizes = []
     for index in range(count):
-        entry = blob[6 + 16 * index : 6 + 16 * (index + 1)]
+        entry = blob[6 + 16 * index: 6 + 16 * (index + 1)]
         width = entry[0] or 256
         sizes.append(width)
     assert sorted(sizes) == [16, 32, 48, 256]

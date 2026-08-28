@@ -102,7 +102,7 @@ def lift_off_steps(*, metal_thickness: float = 20.0, resist_thickness: float = 9
 
 
 def bilayer_steps(
-    *, mouth: float = 80.0, cavity: float = 120.0, under: float = 50.0, imaging: float = 60.0
+        *, mouth: float = 80.0, cavity: float = 120.0, under: float = 50.0, imaging: float = 60.0
 ) -> Steps:
     """A real lift-off stack: an underlayer that clears wider than the imaging resist.
 
@@ -361,9 +361,10 @@ def scenarios() -> tuple[Scenario, ...]:
             name="S2c",
             title="control: an ion beam of the same depth undercuts nothing",
             grid=cross_section_grid(width=300.0, thickness=SURFACE, headroom=220.0),
-            # `scale` brings the oxide's 0.8 nm/s ion-beam rate up to the wet
-            # etch's 1.0, so the two are compared at equal depth, not equal time.
-            steps=masked_oxide_steps() + (("etch.ibe", {"duration": 30.0, "scale": 1.25}),),
+            # M11's table rate is 0.2 nm/s; scale 1.25 for 120 s still removes
+            # 30 nm, so this remains the equal-depth control for the wet etch.
+            steps=masked_oxide_steps()
+                  + (("etch.ion_beam", {"duration": 120.0, "scale": 1.25}),),
             check=_check_s2_control,
         ),
         Scenario(
@@ -371,10 +372,10 @@ def scenarios() -> tuple[Scenario, ...]:
             title="a conformal film seals the resist, so nothing lifts off",
             grid=cross_section_grid(width=300.0, thickness=SURFACE, headroom=200.0),
             steps=lift_off_steps()
-            + (
-                ("deposit.ald", {"material": ALUMINA, "thickness": 15.0}),
-                ("strip.lift_off", {"material": RESIST}),
-            ),
+                  + (
+                      ("deposit.ald", {"material": ALUMINA, "thickness": 15.0}),
+                      ("strip.lift_off", {"material": RESIST}),
+                  ),
             check=_check_s3,
         ),
         Scenario(
@@ -382,14 +383,14 @@ def scenarios() -> tuple[Scenario, ...]:
             title="a broad lobe leaves fences standing at the pattern's edges",
             grid=cross_section_grid(width=300.0, thickness=SURFACE, headroom=230.0),
             steps=bilayer_steps()
-            + (
-                (
-                    "deposit.sputter",
-                    {"material": METAL, "thickness": 25.0, "exponent": 1.0,
-                     "mobility_length": 10.0},
-                ),
-                ("strip.lift_off", {"material": UNDERLAYER}),
-            ),
+                  + (
+                      (
+                          "deposit.sputter",
+                          {"material": METAL, "thickness": 25.0, "exponent": 1.0,
+                           "mobility_length": 10.0},
+                      ),
+                      ("strip.lift_off", {"material": UNDERLAYER}),
+                  ),
             check=_check_s4,
         ),
         Scenario(
@@ -442,11 +443,11 @@ Progress = Callable[[ScenarioResult], None]
 
 
 def run_scenario(
-    scenario: Scenario,
-    *,
-    registry: ProcessRegistry | None = None,
-    library: MaterialLibrary | None = None,
-    recipe_id: str = "",
+        scenario: Scenario,
+        *,
+        registry: ProcessRegistry | None = None,
+        library: MaterialLibrary | None = None,
+        recipe_id: str = "",
 ) -> ScenarioResult:
     """Run one scenario and check it. Never raises for the scenario's sake.
 
@@ -487,11 +488,11 @@ def run_scenario(
 
 
 def run_all(
-    names: Sequence[str] | None = None,
-    *,
-    registry: ProcessRegistry | None = None,
-    library: MaterialLibrary | None = None,
-    progress: Progress | None = None,
+        names: Sequence[str] | None = None,
+        *,
+        registry: ProcessRegistry | None = None,
+        library: MaterialLibrary | None = None,
+        progress: Progress | None = None,
 ) -> tuple[ScenarioResult, ...]:
     """Run every scenario (or the named ones) and return what each did.
 

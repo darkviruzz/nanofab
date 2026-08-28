@@ -303,10 +303,10 @@ class ProcessRegistry:
         return text.step_name(step_id, step.display_name)
 
     def matching(
-        self,
-        query: str = "",
-        fidelities: Iterable[str] | None = None,
-        capabilities: Iterable[str] | None = None,
+            self,
+            query: str = "",
+            fidelities: Iterable[str] | None = None,
+            capabilities: Iterable[str] | None = None,
     ) -> tuple[ProcessStep, ...]:
         """The steps a search box and a set of fidelity tags select (roadmap E11).
 
@@ -381,39 +381,36 @@ def builtin_registry() -> ProcessRegistry:
 
     registry = ProcessRegistry()
     for step in (
-        substrate.SELECT_SUBSTRATE,
-        lithography.SPIN_COAT,
-        lithography.EXPOSE_IDEAL,
-        lithography.EXPOSE_DOSE,
-        lithography.THRESHOLD_DOSE,
-        lithography.DEVELOP_IDEAL,
-        lithography.DEVELOP_RATE,
-        deposition.EVAPORATE,
-        deposition.SPUTTER,
-        deposition.CONFORMAL_OFFSET,
-        deposition.ALD,
-        etching.WET_ETCH_STEP,
-        etching.RIE_STEP,
-        etching.IBE_STEP,
-        # The chemistries of roadmap §3's process table (M6). Beside the three
-        # above rather than instead of them: same techniques, a second set of
-        # rate keys, which is plan §5.4 in the library rather than in the step.
-        etching.SPUTTER_ETCH_STEP,
-        etching.ICP_FLUORINE_STEP,
-        etching.RIE_CHLORINE_STEP,
-        etching.RIE_OXYGEN_STEP,
-        etching.WET_CR_STEP,
-        etching.WET_OXIDE_STEP,
-        deposition.SPUTTER_RATE,
-        removal.DISSOLVE,
-        removal.STRIP_RATE,
-        removal.LIFT_OFF,
-        removal.REMOVE_UNSUPPORTED,
-        contamination.PARTICLES,
-        contamination.CLEAN,
-        inspection.SEM,
-        inspection.PROFILOMETER,
-        anneal.ANNEAL,
+            substrate.SELECT_SUBSTRATE,
+            lithography.SPIN_COAT,
+            lithography.EXPOSE_IDEAL,
+            lithography.EXPOSE_DOSE,
+            lithography.THRESHOLD_DOSE,
+            lithography.DEVELOP_IDEAL,
+            lithography.DEVELOP_RATE,
+            deposition.EVAPORATE,
+            deposition.SPUTTER,
+            deposition.CONFORMAL_OFFSET,
+            deposition.ALD,
+            etching.WET_ETCH_STEP,
+            etching.RIE_STEP,
+            etching.ION_BEAM_STEP,
+            # The chemistries of roadmap §3's process table (M6).
+            etching.ICP_FLUORINE_STEP,
+            etching.RIE_CHLORINE_STEP,
+            etching.RIE_OXYGEN_STEP,
+            etching.WET_CR_STEP,
+            etching.WET_OXIDE_STEP,
+            deposition.SPUTTER_RATE,
+            removal.DISSOLVE,
+            removal.STRIP_RATE,
+            removal.LIFT_OFF,
+            removal.REMOVE_UNSUPPORTED,
+            contamination.PARTICLES,
+            contamination.CLEAN,
+            inspection.SEM,
+            inspection.PROFILOMETER,
+            anneal.ANNEAL,
     ):
         registry.register(step)
     return registry

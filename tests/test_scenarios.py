@@ -240,7 +240,7 @@ def s2_masked(registry, library):
 
 
 def test_s2_an_isotropic_wet_etch_undercuts_the_mask_by_what_it_etches_down(
-    registry, library, s2_masked
+        registry, library, s2_masked
 ) -> None:
     """Plan §13.3: "S2 undercut ratio".
 
@@ -260,17 +260,16 @@ def test_s2_an_isotropic_wet_etch_undercuts_the_mask_by_what_it_etches_down(
 
 
 def test_s2_an_ion_beam_of_the_same_depth_undercuts_nothing(
-    registry, library, s2_masked
+        registry, library, s2_masked
 ) -> None:
     """The contrast that makes the ratio mean something (plan §1, S2).
 
     The same nominal depth, from a narrow lobe with no chemistry: the walls stand
-    where the mask edge is. `scale` brings the oxide's 0.8 nm/s ion-beam rate up
-    to the wet etch's 1.0, so the two etches are compared at equal depth rather
-    than at equal time.
+    where the mask edge is. M11's 0.2 nm/s table rate, scaled by 1.25 for 120 s,
+    gives the same 30 nm nominal depth as the wet etch.
     """
     outcomes = run_chain(
-        [(registry["etch.ibe"], {"duration": 30.0, "scale": 1.25})],
+        [(registry["etch.ion_beam"], {"duration": 120.0, "scale": 1.25})],
         s2_masked,
         library=library,
     )
@@ -281,7 +280,7 @@ def test_s2_an_ion_beam_of_the_same_depth_undercuts_nothing(
 
 
 def test_s2_a_chemical_fraction_is_what_puts_the_undercut_back(
-    registry, library, s2_masked
+        registry, library, s2_masked
 ) -> None:
     """RIE sits between the two, and the knob that moves it is the chemistry.
 
@@ -440,7 +439,7 @@ def test_s4_leaves_fences_standing_at_the_edges_of_the_pattern(s4) -> None:
 
 
 def test_s4_control_an_evaporation_on_the_same_stack_leaves_a_flat_pattern(
-    registry, library
+        registry, library
 ) -> None:
     """One process changed, and the fences are gone (plan §1, S1 vs S4).
 
@@ -671,7 +670,7 @@ def test_a_headline_check_actually_checks(registry, library) -> None:
     wrong_bath = replace(
         acceptance.scenarios()[0],
         steps=acceptance.lift_off_steps()
-        + (("strip.lift_off", {"material": UNDERLAYER}),),
+              + (("strip.lift_off", {"material": UNDERLAYER}),),
         strict=False,
     )
 

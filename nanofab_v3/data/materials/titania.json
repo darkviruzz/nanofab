@@ -7,7 +7,7 @@
     "deposit": 1.0,
     "dry_etch": 0.8,
     "icp_fluorine": 0.5,
-    "ion_beam": 0.9,
+    "ion_beam": 0.207,
     "wet_etch": 0.0
   },
   "sputter_response": {
@@ -22,7 +22,7 @@
     "deposit": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
     "dry_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
     "icp_fluorine": "Didactic, not from the process table (backlog B12). The table has no TiO2 or Al2O3 row, and M8's grating demo needs an etch stop, so the *ratio* was chosen and the reason it is this way round is real: a fluorine plasma makes AlF3, which is not volatile, so alumina stops a fluorine etch where titania does not. The numbers carry that contrast and nothing else.",
-    "ion_beam": "Didactic: chosen for the acceptance scenarios' scale, not from the student table.",
+    "ion_beam": "Didactic, not in the process table; the former ratio was scaled by 0.23 when M11 unified the ion-beam column.",
     "wet_etch": "Didactic: chosen for the acceptance scenarios' scale, not from the student table."
   },
   "tags": [

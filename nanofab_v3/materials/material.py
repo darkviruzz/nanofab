@@ -74,16 +74,6 @@ DISSOLVE = "dissolve"
 # separate keys — mixing a measured rate and a didactic one under one name would
 # make the library's own provenance unreadable (see `rate_notes`).
 
-SPUTTER_ETCH = "sputter_etch"
-"""Physical sputter etching at the table's rates (roadmap §3 row 1).
-
-Not a rename of `ION_BEAM` and not a replacement for it: the two are the same
-*technique* at two sets of numbers, which is plan §5.4's "several processes may
-model the same technique" applied to the rate table rather than to the step.
-`ION_BEAM` carries the didactic ratios S1-S5 are tuned to; this carries the
-table's.
-"""
-
 ICP_FLUORINE = "icp_fluorine"
 """ICP etching in fluorine chemistry — the table's row 2, and *directional*.
 
@@ -152,7 +142,6 @@ Closed because an open vocabulary is a vocabulary with three spellings of
 lose the file that said `Dielectric`. A new class is a decision, and a decision
 has a place to be written down."""
 
-
 PROCESS_CLASSES = (
     WET_ETCH,
     DRY_ETCH,
@@ -160,7 +149,6 @@ PROCESS_CLASSES = (
     DEPOSIT,
     DEVELOP,
     DISSOLVE,
-    SPUTTER_ETCH,
     ICP_FLUORINE,
     RIE_CHLORINE,
     RIE_OXYGEN,

@@ -42,7 +42,6 @@ from nanofab_v3.materials import (
     RIE_OXYGEN,
     SILICON,
     SPUTTER_DEPOSIT,
-    SPUTTER_ETCH,
     TITANIA,
     UNDERLAYER,
     WET_ETCH,
@@ -163,14 +162,12 @@ _PRE_MIGRATION: tuple[MaterialType, ...] = (
 
 _M6_RATE_ADDITIONS: dict[str, dict[str, float]] = {
     "silicon": {
-        SPUTTER_ETCH: 0.2333,
         ICP_FLUORINE: 0.6667,
         SPUTTER_DEPOSIT: 0.1667,
         WET_ETCH_CR: 0.0,
         WET_ETCH_OXIDE: 0.0,
     },
     "oxide": {
-        SPUTTER_ETCH: 0.2,
         SPUTTER_DEPOSIT: 0.0667,
         WET_ETCH_OXIDE: 16.6667,
         WET_ETCH_CR: 0.0,
@@ -179,7 +176,6 @@ _M6_RATE_ADDITIONS: dict[str, dict[str, float]] = {
         RIE_OXYGEN: 0.0,
     },
     "resist": {
-        SPUTTER_ETCH: 0.25,
         ICP_FLUORINE: 1.0,
         RIE_CHLORINE: 0.1667,
         RIE_OXYGEN: 1.6667,
@@ -200,7 +196,6 @@ Not the *didactic* classes: no `wet_etch`, `dry_etch`, `ion_beam`, `deposit`,
 erweitern, nichts umbenennen" as an assertion rather than as an intention.
 """
 
-
 _M6_MODEL_ADDITIONS: dict[str, dict] = {
     "resist": {
         "spin_curve": SpinCurve(
@@ -210,7 +205,6 @@ _M6_MODEL_ADDITIONS: dict[str, dict] = {
     },
 }
 """Everything else M6 added to a migrated entry — one spin curve (E17, §3.1)."""
-
 
 _M8_RATE_ADDITIONS: dict[str, dict[str, float]] = {
     "alumina": {ICP_FLUORINE: 0.02},
@@ -226,6 +220,17 @@ A second dict rather than an entry in the first, because which milestone changed
 what is exactly the thing this file exists to keep legible.
 """
 
+_M11_RATE_CHANGES = {
+    "silicon": {ION_BEAM: 0.2333},
+    "oxide": {ION_BEAM: 0.2},
+    "resist": {ION_BEAM: 0.25},
+    "resist_hardbaked": {ION_BEAM: 0.207},
+    "underlayer": {ION_BEAM: 0.299},
+    "metal": {ION_BEAM: 0.345},
+    "particle": {ION_BEAM: 0.138},
+    "alumina": {ION_BEAM: 0.161},
+}
+
 
 def _expected() -> MaterialLibrary:
     """The pre-migration entries, plus exactly the changes since, milestone by milestone."""
@@ -237,6 +242,7 @@ def _expected() -> MaterialLibrary:
                     **entry.rates,
                     **_M6_RATE_ADDITIONS.get(str(entry.material_id), {}),
                     **_M8_RATE_ADDITIONS.get(str(entry.material_id), {}),
+                    **_M11_RATE_CHANGES.get(str(entry.material_id), {}),
                 },
                 **_M6_MODEL_ADDITIONS.get(str(entry.material_id), {}),
             )
@@ -266,8 +272,8 @@ def test_the_shipped_library_is_the_pre_migration_one_bit_for_bit() -> None:
         # pre-migration models did not carry at all and which no rate depends on.
         # What has to be bit-identical is the model a revision was computed under.
         assert (
-            replace(loaded[material], notes="", rate_notes={}, tags=())
-            == expected[material]
+                replace(loaded[material], notes="", rate_notes={}, tags=())
+                == expected[material]
         ), material
 
 
@@ -294,8 +300,8 @@ def test_every_id_constant_names_a_material_that_ships() -> None:
     library = didactic_library()
 
     for material in (
-        SILICON, OXIDE, RESIST, UNDERLAYER, METAL, ALUMINA, PARTICLE, HARD_RESIST,
-        CHROME, FUSED_SILICA, TITANIA,
+            SILICON, OXIDE, RESIST, UNDERLAYER, METAL, ALUMINA, PARTICLE, HARD_RESIST,
+            CHROME, FUSED_SILICA, TITANIA,
     ):
         assert material in library, material
 
@@ -320,7 +326,8 @@ def test_every_material_survives_a_round_trip_through_json() -> None:
 def test_a_file_is_named_after_the_material_it_defines() -> None:
     """Otherwise `chrome.json` could define `silicon` and shadow it from nowhere."""
     for path in sorted(builtin_materials_dir().glob("*.json")):
-        assert from_json(path.read_text(encoding="utf-8")).material_id == path.stem
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["material_id"] == path.stem
 
 
 def test_the_shipped_files_are_the_canonical_encoding_of_what_they_hold() -> None:
@@ -332,7 +339,11 @@ def test_the_shipped_files_are_the_canonical_encoding_of_what_they_hold() -> Non
     """
     for path in sorted(builtin_materials_dir().glob("*.json")):
         text = path.read_text(encoding="utf-8")
-        assert to_json(from_json(text)) == text, path.name
+        payload = json.loads(text)
+        if "inherits" in payload:
+            assert json.dumps(payload, indent=2, ensure_ascii=False) + "\n" == text, path.name
+        else:
+            assert to_json(from_json(text)) == text, path.name
 
 
 def test_an_unknown_schema_version_is_refused_rather_than_guessed() -> None:
@@ -375,7 +386,7 @@ def test_a_later_root_overrides_an_earlier_one(tmp_path: Path) -> None:
 
 
 def test_a_malformed_file_in_a_writable_root_costs_that_material_and_no_other(
-    tmp_path: Path,
+        tmp_path: Path,
 ) -> None:
     """`plugins.discover_plugins`' rule, one layer down: report, never raise.
 
@@ -403,7 +414,7 @@ def test_the_shipped_root_is_read_strictly(tmp_path: Path) -> None:
 
 
 def test_the_application_library_reads_the_operators_directory_too(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """E15 writes there, so the next session has to see it without a rebuild."""
     monkeypatch.setenv(store.MATERIALS_ENV, str(tmp_path))
@@ -424,7 +435,7 @@ def test_the_application_library_reads_the_operators_directory_too(
 # -- the student process table (roadmap §3) -----------------------------------
 
 _TABLE_CLASSES = (
-    SPUTTER_ETCH,
+    ION_BEAM,
     ICP_FLUORINE,
     RIE_CHLORINE,
     RIE_OXYGEN,
@@ -445,7 +456,7 @@ def test_the_table_rows_are_in_the_library_as_the_table_gives_them() -> None:
     """
     library = didactic_library()
     expected = {
-        SPUTTER_ETCH: {CHROME: 0.1667, OXIDE: 0.2, SILICON: 0.2333, RESIST: 0.25},
+        ION_BEAM: {CHROME: 0.1667, OXIDE: 0.2, SILICON: 0.2333, RESIST: 0.25},
         ICP_FLUORINE: {CHROME: 0.0333, FUSED_SILICA: 0.8333, SILICON: 0.6667, RESIST: 1.0},
         RIE_CHLORINE: {CHROME: 0.8333, FUSED_SILICA: 0.0, RESIST: 0.1667},
         RIE_OXYGEN: {CHROME: 0.0, FUSED_SILICA: 0.0, RESIST: 1.6667},
@@ -471,7 +482,7 @@ def test_a_rate_the_table_did_not_measure_says_so_where_a_reader_will_see_it() -
 
     assumed = {
         (OXIDE, ICP_FLUORINE), (OXIDE, RIE_CHLORINE), (OXIDE, RIE_OXYGEN),
-        (FUSED_SILICA, SPUTTER_ETCH), (FUSED_SILICA, WET_ETCH_OXIDE),
+        (FUSED_SILICA, ION_BEAM), (FUSED_SILICA, WET_ETCH_OXIDE),
     }
     for material, process_class in assumed:
         note = library[material].rate_note(process_class)
@@ -499,23 +510,18 @@ def test_no_rate_in_the_shipped_library_is_without_a_stated_provenance() -> None
                 assert entry.rate_note(process_class), (material, process_class)
 
 
-def test_the_didactic_classes_kept_every_name_and_every_number() -> None:
-    """"Additiv erweitern, nichts umbenennen" (roadmap §3), as a check.
-
-    S1-S5 and the rest of the suite hang on these six keys. The new chemistry
-    classes sit beside them; `ion_beam` in particular is *not* the table's
-    sputter-etch row, which is why `sputter_etch` exists as a thirteenth class.
-    """
+def test_m11_consolidates_the_ion_beam_rate_without_changing_other_classes() -> None:
+    """E24 gives every ion-beam process one rate key and preserves other contrasts."""
     assert PROCESS_CLASSES[:6] == (WET_ETCH, DRY_ETCH, ION_BEAM, DEPOSIT, "develop", "dissolve")
+    assert "sputter_etch" not in PROCESS_CLASSES
 
     library = didactic_library()
-    assert library[SILICON].rate_for(ION_BEAM) == 1.0  # didactic, not the table's 0.2333
-    assert library[SILICON].rate_for(SPUTTER_ETCH) == 0.2333
+    assert library[SILICON].rate_for(ION_BEAM) == 0.2333
     assert library[OXIDE].rate_for(WET_ETCH) == 1.0  # didactic BOE, not the table's 16.6667
     assert library[OXIDE].rate_for(WET_ETCH_OXIDE) == 16.6667
 
 
-def test_titania_carries_no_table_rate_and_says_which_numbers_are_didactic() -> None:
+def test_titania_marks_every_non_table_rate_as_didactic() -> None:
     """E16 puts TiO2 in the library; the table has no TiO2 row, so nothing is invented.
 
     Backlog B11's rule about spin curves, applied to rates: a plausible made-up
@@ -529,10 +535,11 @@ def test_titania_carries_no_table_rate_and_says_which_numbers_are_didactic() -> 
 
     assert "nothing here is table-derived" in titania.notes and "B12" in titania.notes
     for process_class in _TABLE_CLASSES:
-        if process_class == ICP_FLUORINE:
+        if process_class in {ICP_FLUORINE, ION_BEAM}:
             continue
         assert process_class not in titania.rates, process_class
     assert titania.rate_note(ICP_FLUORINE).startswith("Didactic, not from the process table")
+    assert titania.rate_note(ION_BEAM).startswith("Didactic, not in the process table")
     # The one thing the number has to do: stop a fluorine etch at the alumina.
     assert titania.rate_for(ICP_FLUORINE) / library[ALUMINA].rate_for(ICP_FLUORINE) == 25.0
 
@@ -557,7 +564,7 @@ def test_chromium_is_the_material_the_table_exercises_everywhere() -> None:
     assert chrome.rate_for(RIE_OXYGEN) == 0.0  # an oxygen plasma does not touch it
     # The wet etchant takes chromium exactly 100x faster than the ion beam does —
     # 1000 against 10 nm/min. That is the didactic contrast of row 5.
-    assert chrome.rate_for(WET_ETCH_CR) / chrome.rate_for(SPUTTER_ETCH) == pytest.approx(
+    assert chrome.rate_for(WET_ETCH_CR) / chrome.rate_for(ION_BEAM) == pytest.approx(
         100.0, rel=2e-3
     )
     # ... and the chromium etchant attacks nothing else the table names.
@@ -581,7 +588,7 @@ def test_the_oxygen_plasma_is_a_resist_strip_and_the_fluorine_one_is_not() -> No
 # -- E21/E22: substance classes, and the dropdowns they let a step filter -----
 
 
-def test_every_shipped_material_carries_a_substance_class(): 
+def test_every_shipped_material_carries_a_substance_class():
     """E21: `tags` is what an *ideal* step filters on, so a gap is an unfiltered list."""
     from nanofab_v3.materials.material import MATERIAL_TAGS
 
@@ -615,6 +622,27 @@ def test_tags_survive_the_canonical_round_trip(tmp_path):
     entry = didactic_library()["titania"]
     path = write_material(entry, tmp_path / "titania.json")
     assert read_material(path).tags == entry.tags
+
+
+def test_material_inheritance_is_resolved_before_the_library_is_built() -> None:
+    library = didactic_library()
+
+    inherited = library["chrome_redeposit"]
+    base = library["chrome"]
+    assert inherited.rates == base.rates
+    assert inherited.tags == base.tags == ("metal",)
+    assert inherited.name == "Chromium redeposit"
+
+
+def test_material_inheritance_cycles_are_refused(tmp_path: Path) -> None:
+    for material, parent in (("a", "b"), ("b", "a")):
+        (tmp_path / f"{material}.json").write_text(
+            json.dumps({"schema": 1, "material_id": material, "inherits": parent}),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(MaterialFileError, match="inheritance cycle"):
+        load_library((tmp_path,), strict=True)
 
 
 def test_the_spin_coat_offers_no_metals_and_says_what_it_filtered_by():

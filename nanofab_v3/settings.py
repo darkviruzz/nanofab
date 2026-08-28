@@ -139,6 +139,15 @@ KEYS: tuple[SettingSpec, ...] = (
         "before the exposure runs. Only while a litho step is selected.",
     ),
     SettingSpec(
+        "view",
+        "preview_scale_px_per_nm",
+        float,
+        20.0,
+        "Absolute scale for process-preview arrows in pixels per nanometre. The\n"
+        "same value applies to every step, so arrow lengths remain comparable;\n"
+        "arrows shorter than 5 px become a note instead of being exaggerated.",
+    ),
+    SettingSpec(
         "session",
         "autosave",
         bool,
