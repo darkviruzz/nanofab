@@ -6,11 +6,11 @@ This file defines how the **Coding Assistant** should operate in this repository
 1. Read this `AGENTS.md`.
 2. Read [`memory.md`](memory.md) before making edits.
 3. Check current workspace state:
-   - `./ripgrep/rg.exe --files`
+   - `rg --files`
    - `git status --short`
 4. Detect current build/version dynamically (do not hardcode):
-   - structure model v2: `./ripgrep/rg.exe -n "^__version__" nanofab_v3/__init__.py`
-   - a snapshotted application: `./ripgrep/rg.exe -n "^APP_NAME|^APP_VERSION" ui_backups/*/nanofab_manager.py`
+   - structure model v2: `rg -n "^__version__" nanofab_v3/__init__.py`
+   - a snapshotted application: `rg -n "^APP_NAME|^APP_VERSION" ui_backups/*/nanofab_manager.py`
 5. There is one actively built code base (`nanofab_v3/`). The PySide6 applications live in `ui_backups/` and are read-only history — never edit a snapshot in place.
 
 ## 2) Repository Map (Read in This Order)
@@ -48,11 +48,12 @@ This file defines how the **Coding Assistant** should operate in this repository
 1. Read `memory.md` first for latest decisions and known issues.
 2. Read only documentation chapters relevant to the task.
 3. Use targeted search instead of broad scanning:
-   - `./ripgrep/rg.exe -n "pattern" <path>`
+   - `rg -n "pattern" <path>`
 4. Open only the specific files needed to complete the current request.
 
 ## 4) Tool Use Rules
-- Use local ripgrep for file discovery and text search:
+- Use local ripgrep for file discovery and text search 
+- if `rg ` is NOT working, try:
   - `./ripgrep/rg.exe --files`
   - `./ripgrep/rg.exe -n "text" path`
 - Use local virtualenv Python for all runs/checks:
